@@ -61,7 +61,7 @@ void AbstractBridge::send_mine_channels() {
 }
 
 void AbstractBridge::apply_their_channels(ChannelList lst) {
-    std::string_view node_id = _ptr->get_node_id();
+    std::string_view node_id = _ptr->get_cycle_detect_channel_name();
     std::sort(lst.begin(), lst.end());
     bool cd; {
         auto iter = std::lower_bound(lst.begin(), lst.end(), node_id);
@@ -72,6 +72,7 @@ void AbstractBridge::apply_their_channels(ChannelList lst) {
         send_mine_channels();
     }
     if (cd) lst = {};
+
     std::set_difference(_cur_channels.begin(), _cur_channels.end(),
                         lst.begin(), lst.end(), LambdaOutputIterator(
                                 [&](const ChannelID &id) {_ptr->unsubscribe(this, id);}));

@@ -38,7 +38,7 @@ public:
     virtual bool is_channel(ChannelID id) const override;
     virtual void unsubcribe_private(IListener *listener) override;
     virtual std::string get_random_channel_name(std::string_view prefix) const override;
-    virtual std::string_view get_node_id() const override;
+    virtual std::string_view get_cycle_detect_channel_name() const override;
 
     ///Create local message broker;
     static Bus create();
@@ -155,7 +155,8 @@ protected:
     BackPathStorage _back_path;
     mvector<IMonitor *> _monitors;      //list of monitors
     mutable std::vector<ChannelID> _tmp_channels;    //temporary vector for get_active_channels
-    std::string _cycle_detector_id;    //contains a random string which is used to detect cycles
+    mutable std::string _cycle_detector_id = {};    //contains a random string which is used to detect cycles
+    mutable const IListener *_last_proxy=nullptr;    //pointer to last proxy - to check, whether there are more proxies
 
     ///removes channel from existing listener.
     /**
@@ -181,6 +182,7 @@ protected:
      */
     std::string_view get_mailbox(IListener *listener);
 
+    bool unsubscribe_all_channels_lk(IListener *listener);
 
 
     std::pair<PChanMapItem,bool> get_channel_lk(ChannelID name);

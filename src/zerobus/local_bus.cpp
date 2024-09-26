@@ -13,8 +13,6 @@
 
 namespace zerobus {
 
-
-
 template<typename Iter>
 Iter to_base62(std::uint64_t x, Iter iter, int digits = 1) {
     if (x>0 || digits>0) {
@@ -72,7 +70,6 @@ LocalBus::LocalBus()
     ,_mailboxes_by_name(MailboxToListenerMap::allocator_type(&_mem_resource))
     ,_back_path(_mem_resource)
     ,_monitors(mvector<IMonitor *>::allocator_type(&_mem_resource))
-    ,_cycle_detector_id(LocalBus::get_random_channel_name("cdp_"))
 {
 
 }
@@ -89,7 +86,12 @@ std::pair<LocalBus::PChanMapItem,bool> LocalBus::get_channel_lk(ChannelID channe
 
 void LocalBus::subscribe(IListener *listener, ChannelID channel)
 {
+    if (channel.empty()) throw std::invalid_argument("Channel name can't be empty");
     std::lock_guard _(_mx);
+    if (channel == _cycle_detector_id) {
+        unsubscribe_all_channels_lk(listener);
+        throw CycleDetectedException();
+    }
     auto chan = get_channel_lk(channel);
     chan.first->add_listener(listener);
     auto iter = _listeners.find(listener);
@@ -118,6 +120,17 @@ void LocalBus::unsubscribe_all(IListener *listener)
     std::lock_guard _(_mx);
     erase_mailbox_lk(listener);
     _back_path.remove_listener(listener);
+    if (unsubscribe_all_channels_lk(listener)) {
+        channel_list_updated_lk();
+    }
+}
+
+void LocalBus::unsubcribe_private(IListener *listener) {
+    std::lock_guard _(_mx);
+    erase_mailbox_lk(listener);
+}
+
+bool LocalBus::unsubscribe_all_channels_lk(IListener *listener) {
     bool ech = false;
     auto iter = _listeners.find(listener);
     if (iter != _listeners.end()) {
@@ -131,13 +144,9 @@ void LocalBus::unsubscribe_all(IListener *listener)
         }
         _listeners.erase(iter);
     }
-    if (ech) channel_list_updated_lk();
+    return ech;
 }
 
-void LocalBus::unsubcribe_private(IListener *listener) {
-    std::lock_guard _(_mx);
-    erase_mailbox_lk(listener);
-}
 std::string LocalBus::get_random_channel_name(std::string_view prefix) const {
     std::string out(prefix);
     generate_mailbox_id(std::back_inserter(out));
@@ -178,6 +187,7 @@ Message LocalBus::create_message(ChannelID sender, ChannelID channel, MessageCon
 }
 bool LocalBus::send_message(IListener *listener, ChannelID channel, MessageContent message, ConversationID cid)
 {
+    if (channel.empty()) throw std::invalid_argument("Channel name can't be empty");
     //no lock needed there
     if (listener == nullptr) {
         return forward_message_internal(nullptr, create_message({},channel,message,cid));
@@ -274,12 +284,22 @@ void LocalBus::channel_list_updated_lk() {
 void LocalBus::get_active_channels(IListener *listener,FunctionRef<void(ChannelList)> &&cb) const {
     std::lock_guard _(_mx);
     _tmp_channels.clear();
+    if (_last_proxy && listener != _last_proxy) {
+        if (!_cycle_detector_id.empty()) {
+            _cycle_detector_id = get_random_channel_name("cdp_");
+        }
+    } else {
+        _last_proxy = listener;
+    }
     for (const auto &[k,v]: _channels) {
         if (v->can_export(listener)) {
             _tmp_channels.push_back(k);
         }
     }
-    _tmp_channels.push_back(_cycle_detector_id);
+    if (!_cycle_detector_id.empty()) {
+        _tmp_channels.push_back(_cycle_detector_id);
+    }
+
     cb({_tmp_channels.begin(), _tmp_channels.end()});
 }
 
@@ -322,8 +342,6 @@ void LocalBus::ChanDef::enum_listeners(Fn &&fn) {
         if (l) fn(l);
     }
 }
-
-
 
 bool LocalBus::ChanDef::empty() const {
     std::lock_guard _(_mx);
@@ -415,7 +433,6 @@ void LocalBus::BackPathItem::promote(BackPathItem *root) {
     }
 }
 
-
 void LocalBus::BackPathStorage::store_path(const ChannelID &chan, IListener *lsn) {
     auto iter = _entries.find(chan);
     if (iter == _entries.end()) {
@@ -453,7 +470,7 @@ void LocalBus::BackPathStorage::remove_listener(IListener *l) {
     }
 }
 
-std::string_view LocalBus::get_node_id() const {
+std::string_view LocalBus::get_cycle_detect_channel_name() const {
     return _cycle_detector_id;
 }
 

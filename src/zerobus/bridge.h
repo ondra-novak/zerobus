@@ -14,10 +14,24 @@ public:
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList) > &&cb) const = 0;
     virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
     virtual bool dispatch_message(IListener *listener, const Message &msg, bool subscribe_return_path) = 0;
-    virtual std::string_view get_node_id() const = 0;
+    ///retieve channel name used to detect cycles
+    /**
+     * @return name of channel which should not be subscribed. It is intended to detect
+     * cyclces. The bridge should check incoming channels for this string. If the
+     * string is found, the bridge knows, that it closes the cycle, so it should
+     * temporarily disable its bridging function
+     */
+    virtual std::string_view get_cycle_detect_channel_name() const = 0;
+};
+
+///exception is thrown when cycle is detected during subscribtion
+class CycleDetectedException : public std::exception {
+public:
+    virtual const char *what() const noexcept override {return "zerobus: Cycle detected";}
 };
 
 
+///Abstract bridge class. Extend this class to implement the bridge
 class AbstractBridge: public IListener {
 public:
 
