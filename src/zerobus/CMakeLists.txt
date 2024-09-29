@@ -5,4 +5,8 @@ add_library(zerobus
     binary_bridge.cpp 
     network_linux.cpp
     bridge_tcp_client.cpp
+    bridge_tcp_common.cpp
+    bridge_tcp_server.cpp
     )
+
+    

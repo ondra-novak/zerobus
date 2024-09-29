@@ -78,6 +78,8 @@ protected:
         TimerInfo(const TimerInfo &pos) = delete;
         TimerInfo &operator=(const TimerInfo &pos) = delete;
 
+        void refresh_pos();
+
         std::chrono::system_clock::time_point get_tp() const;
         IPeerServerCommon *get_peer() const;
 

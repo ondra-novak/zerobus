@@ -9,6 +9,8 @@ namespace zerobus {
 class IBridgeAPI : public IBus {
 public:
 
+    using ChannelList = std::span<ChannelID>;
+
     virtual void register_monitor(IMonitor *mon) = 0;
     virtual void unregister_monitor(const IMonitor *mon) = 0;
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList) > &&cb) const = 0;
@@ -22,6 +24,9 @@ public:
      * temporarily disable its bridging function
      */
     virtual std::string_view get_cycle_detect_channel_name() const = 0;
+    static std::shared_ptr<IBridgeAPI> from_bus(const std::shared_ptr<IBus> &bus) {
+        return std::static_pointer_cast<IBridgeAPI>(bus);
+    }
 };
 
 ///exception is thrown when cycle is detected during subscribtion
@@ -30,12 +35,19 @@ public:
     virtual const char *what() const noexcept override {return "zerobus: Cycle detected";}
 };
 
+struct ChannelFilter {
+    using ChannelList = IBridgeAPI::ChannelList;
+    std::vector<std::pair<std::string, bool> > _whitelist;
+    std::vector<std::pair<std::string, bool> > _blacklist;
+    bool check(ChannelID id) const;
+    ChannelList filter(ChannelList lst) const;
+};
 
 ///Abstract bridge class. Extend this class to implement the bridge
 class AbstractBridge: public IListener {
 public:
 
-    using ChannelList = std::span<ChannelID>;
+    using ChannelList = IBridgeAPI::ChannelList;
 
     AbstractBridge(Bus bus);
 
@@ -88,6 +100,14 @@ public:
      */
     void peer_reset();
 
+    void register_monitor(IMonitor *mon) {
+        _ptr->register_monitor(mon);
+    }
+    void unregister_monitor(const IMonitor *mon) {
+        _ptr->unregister_monitor(mon);
+    }
+
+    void set_filter(ChannelFilter flt);
 
 
 protected:
@@ -103,33 +123,30 @@ protected:
     std::vector<char> _char_buffer = {};
     std::vector<ChannelID> _cur_channels = {};
     std::size_t _chan_hash = 0;
+    ChannelFilter _filter;
     bool _cycle_detected = false;
 
     static std::size_t hash_of_channel_list(const ChannelList &list);
     virtual void on_message(const Message &message, bool pm) noexcept override;
 };
 
-class AbstractBridgeWithMonitor: public IMonitor , public AbstractBridge{
+class AbstractMonitor: public IMonitor {
 public:
-    AbstractBridgeWithMonitor(Bus bus):AbstractBridge(std::move(bus)) {
-        _ptr->register_monitor(this);
+    AbstractMonitor(AbstractBridge &b):_b(b) {
+        _b.register_monitor(this);
     }
-    ~AbstractBridgeWithMonitor() {
-        _ptr->unregister_monitor(this);
+    ~AbstractMonitor() {
+        _b.unregister_monitor(this);
     }
+    AbstractMonitor(const AbstractMonitor &other):_b(other._b) {
+        _b.register_monitor(this);
+    }
+    AbstractMonitor &operator=(const AbstractMonitor &other) = delete;
 
-    ///Called by broker when list of channels has been changed (channels added or removed)
-    /**
-     * Default implementation calls send_mine_channels(). If the bridge has a processing thread, it is
-     * recommended to use this function to signal the processing thread to call send_mine_channels in
-     * its context
-     *
-     * @note @b mt-safety: this function must be mt-safe
-     */
-    virtual void on_channels_update() noexcept override;
-
-    virtual bool on_message_dropped(IListener *l, const Message &msg) noexcept override;
+protected:
+    AbstractBridge &_b;
 };
+
 
 
 }

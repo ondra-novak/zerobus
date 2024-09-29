@@ -50,7 +50,8 @@ void AbstractBridge::send_mine_channels() {
         _chan_hash = 0;
         send_channels({});
     } else {
-        _ptr->get_active_channels(this, [&](const ChannelList &lst){
+        _ptr->get_active_channels(this, [&](ChannelList lst){
+           lst = _filter.filter(lst);
            auto h = hash_of_channel_list(lst);
            if (h != _chan_hash) {
                _chan_hash = h;
@@ -75,10 +76,14 @@ void AbstractBridge::apply_their_channels(ChannelList lst) {
 
     std::set_difference(_cur_channels.begin(), _cur_channels.end(),
                         lst.begin(), lst.end(), LambdaOutputIterator(
-                                [&](const ChannelID &id) {_ptr->unsubscribe(this, id);}));
+                                [&](const ChannelID &id) {
+            _ptr->unsubscribe(this, id);
+        }));
     std::set_difference(lst.begin(), lst.end(),
                         _cur_channels.begin(), _cur_channels.end(),LambdaOutputIterator(
-                                [&](const ChannelID &id) {_ptr->subscribe(this, id);}));
+                                [&](const ChannelID &id) {
+            if (_filter.check(id)) _ptr->subscribe(this, id);
+        }));
     _char_buffer.resize(std::accumulate(lst.begin(), lst.end(), std::size_t(0),
             [](std::size_t x, const ChannelID &id){return x + id.size();}));
     _cur_channels.resize(lst.size());{
@@ -93,7 +98,9 @@ void AbstractBridge::apply_their_channels(ChannelList lst) {
 }
 
 void AbstractBridge::dispatch_message(const Message &msg) {
-    _ptr->dispatch_message(this, msg, true);
+    if (_filter.check(msg.get_channel())) {
+        _ptr->dispatch_message(this, msg, true);
+    }
 }
 
 AbstractBridge::~AbstractBridge() {
@@ -105,17 +112,33 @@ void AbstractBridge::peer_reset() {
     send_mine_channels();
 }
 
-bool AbstractBridgeWithMonitor::on_message_dropped(IListener *,const Message &) noexcept {
-    return false;
-}
-
-void AbstractBridgeWithMonitor::on_channels_update() noexcept {
-    send_mine_channels();
-}
 
 
 void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
     if (!pm) send_message(message);
+}
+
+inline bool check_channel(const std::vector<std::pair<std::string, bool> > &lst, ChannelID id) {
+    return std::find_if(lst.begin(), lst.end(), [&](const auto &p) -> bool{
+        if (p.second) {
+            if (p.first.empty()) return true;
+            else return id.substr(0, p.first.size()) == p.first;
+        } else {
+            return p.first == id;
+        }
+    }) != lst.end();
+}
+
+bool ChannelFilter::check(ChannelID id) const {
+    if (!_whitelist.empty() && !check_channel(_whitelist, id)) return false;
+    return !check_channel(_blacklist, id);
+}
+
+ChannelFilter::ChannelList ChannelFilter::filter(ChannelList lst) const {
+    auto iter = std::remove_if(lst.begin(), lst.end(), [&](const ChannelID &id){
+        return !check(id);
+    });
+    return ChannelList(lst.begin(), iter);
 }
 
 }

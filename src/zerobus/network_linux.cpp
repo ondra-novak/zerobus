@@ -1,4 +1,5 @@
 #include "network_linux.h"
+#include "utility.h"
 
 #include <arpa/inet.h>
 #include <stdexcept>
@@ -56,46 +57,6 @@ NetContext::~NetContext() {
 
 }
 
-template<typename _Container, typename _Cmp>
-void heapify_down(_Container &cont, std::size_t index, _Cmp cmp) {
-    std::size_t n = cont.size();
-
-    while (true) {
-        auto left = 2 * index + 1;
-        auto right = 2 * index + 2;
-        auto largest = index;
-
-        if (left < n && cmp(cont.operator[](largest), cont.operator[](left))) {
-            largest = left;
-        }
-
-        if (right < n && cmp(cont.operator[](largest), cont.operator[](right))) {
-            largest = right;
-        }
-
-        if (largest != index) {
-            std::swap(cont.operator[](index),cont.operator[](largest));
-            index = largest;
-        } else {
-            break;
-        }
-    }
-}
-
-template<typename _Container, typename _Cmp>
-void heapify_up(_Container &cont, std::size_t index, _Cmp cmp) {
-
-    while (index > 0) {
-        auto parent = (index - 1) / 2;
-
-        if (cmp(cont.operator[](parent) , cont.operator[](index))) {
-            std::swap(cont.operator[](index), cont.operator[](parent));
-            index = parent;
-        } else {
-            break;
-        }
-    }
-}
 int NetContext::get_epoll_timeout() {
     std::lock_guard _(_tmx);
     auto now = std::chrono::system_clock::now();
@@ -449,20 +410,9 @@ void NetContext::set_timeout(std::chrono::system_clock::time_point tp, IPeerServ
     if (aux->timeout_ptr) {
         std::size_t idx = reinterpret_cast<const TimerInfo *>(aux->timeout_ptr) - _pqueue.data();
         if (idx <_pqueue.size()) {
-            auto &z =  _pqueue[idx];
-            auto cur_tm = z.get_tp();
-            z = TimerInfo(tp, p);
-            if (cur_tm < tp) {
-                heapify_down(_pqueue, idx, &TimerInfo::compare);
-            } else {
-                heapify_up(_pqueue, idx, &TimerInfo::compare);
-            }
-            if (ntf) {
-                auto ef = _cur_timer_thread.load();
-                if (ef >= 0) {
-                    eventfd_write(_cur_timer_thread, 1);
-                }
-            }
+            _pqueue.push_back(TimerInfo(tp, p));
+            heapify_remove(_pqueue, idx, TimerInfo::compare);
+            _pqueue[idx].refresh_pos();
             return;
         }
     }
@@ -480,11 +430,7 @@ void NetContext::clear_timeout(IPeerServerCommon *p) {
     if (aux->timeout_ptr) {
         std::size_t idx = reinterpret_cast<const TimerInfo *>(aux->timeout_ptr) - _pqueue.data();
         if (idx <_pqueue.size()) {
-            if (idx+1 < _pqueue.size()) {
-                std::swap(_pqueue[idx], _pqueue.back());
-                heapify_down(_pqueue, idx, TimerInfo::compare);
-            }
-            _pqueue.pop_back();
+            heapify_remove(_pqueue, idx, TimerInfo::compare);
         }
     }
 

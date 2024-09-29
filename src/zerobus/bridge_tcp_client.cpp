@@ -2,68 +2,42 @@
 
 namespace zerobus {
 
-std::shared_ptr<BridgeTCPClient> BridgeTCPClient::connect(Bus bus,
-                std::shared_ptr<INetContext> ctx, std::string address) {
-    auto aux = ctx->peer_connect(address);
-    return std::make_shared<BridgeTCPClient>(bus, std::move(ctx), aux, std::move(address));
-}
 
-BridgeTCPClient::BridgeTCPClient(Bus bus, std::shared_ptr<INetContext> ctx,
-        NetContextAux *aux, std::string address)
-:_bridge(std::move(bus), [this](std::string_view data){
-    output_fn(data);
-}),_ctx(std::move(ctx))
-,_aux(aux)
-,_address(address)
-
+BridgeTCPClient::BridgeTCPClient(Bus bus, std::shared_ptr<INetContext> ctx, std::string address, AuthCallback acb)
+:BridgeTCPCommon(std::move(bus), ctx, ctx->peer_connect(address))
+,_address(std::move(address))
+,_acb(std::move(acb))
 {
-    begin_read();
-    _ctx->callback_on_send_available(this);
+    register_monitor(this);
 }
 
-void BridgeTCPClient::on_send_available() {
-    std::lock_guard _(_mx);
-    if (!_output_buff.empty())  {
-        auto s = _ctx->send(std::string_view(_output_buff.data(), _output_buff.size()), this);
-        if (s == 0) {
-            reconnect();
-            return;
-        } else {
-            _output_buff.erase(_output_buff.begin(),_output_buff.begin()+s);
-            if (!_output_buff.empty()) {
-                _ctx->callback_on_send_available(this);
-                return;
-            }
-        }
-    }
-    _output_allowed = true;
+BridgeTCPClient::BridgeTCPClient(Bus bus, std::string address, AuthCallback acb)
+:BridgeTCPClient(std::move(bus), make_context(1), std::move(address), std::move(acb)) {
+
 }
 
-void BridgeTCPClient::output_fn(std::string_view data) {
-    std::lock_guard _(_mx);
-    BinaryBridge::write_string(std::back_inserter(_output_buff), data);
-    if (_output_allowed) {
-        auto s = _ctx->send(std::string_view(_output_buff.data(), _output_buff.size()), this);
-        _output_buff.erase(_output_buff.begin(),_output_buff.begin()+s);
-        if (!_output_buff.empty()) {
-            _output_allowed = false;
-            _ctx->callback_on_send_available(this);
-        }
-    }
+BridgeTCPClient::~BridgeTCPClient() {
+    unregister_monitor(this);
 }
 
 void BridgeTCPClient::on_timeout() {
     if (_timeout_reconnect) {
         _timeout_reconnect = false;
-        reconnect();
+        lost_connection();
+    } else {
+        BridgeTCPCommon::on_timeout();
+        send_mine_channels();
     }
 }
 
-void BridgeTCPClient::reconnect() {
+
+void BridgeTCPClient::lost_connection() {
     try {
         _ctx->reconnect(this, _address);
-        begin_read();
-        _ctx->callback_on_send_available(this);
+        _input_data.clear();  //any incomplete message is lost
+        _output_cursor = 0; //last output incomplete message will be send again
+        read_from_connection(); //start reading
+        _ctx->callback_on_send_available(this); //generate signal to write
     } catch (...) {
         _timeout_reconnect = true;
         _ctx->set_timeout(std::chrono::system_clock::now()+std::chrono::seconds(2), this);
@@ -71,30 +45,16 @@ void BridgeTCPClient::reconnect() {
 
 }
 
-void BridgeTCPClient::on_read_complete(std::string_view data) {
-    if (data.empty()) {
-        reconnect();
-    } else {
-        std::copy(data.begin(), data.end(), std::back_inserter(_input_buff));
-        begin_read();
-        std::string_view msgtext(_input_buff.data(), _input_buff.size());
-        auto sz = BinaryBridge::read_uint(msgtext);
-        if (sz > msgtext.size()) return;
-        auto m = msgtext.substr(0,sz);
-        auto rm = msgtext.substr(sz);
-        _bridge.dispatch_message(m);
-        std::copy(rm.begin(), rm.end(), _input_buff.begin());
-        _input_buff.resize(rm.size());
+void BridgeTCPClient::on_channels_update() noexcept {
+    _ctx->set_timeout(std::chrono::system_clock::now(), this);
+}
+
+void BridgeTCPClient::on_auth_request(std::string_view proof_type, std::string_view salt) {
+    if (_acb) {
+        _acb(AuthRequest{proof_type, salt}, [this](AuthResponse r){
+            send_auth_response(r.ident, r.proof);
+        });
     }
-
-}
-
-NetContextAux* BridgeTCPClient::get_context_aux() {
-    return _aux;
-}
-
-void BridgeTCPClient::begin_read() {
-    _ctx->receive(_input_buffer, this);
 }
 
 }
