@@ -18,10 +18,11 @@ BridgeTCPCommon::~BridgeTCPCommon() {
 }
 
 void BridgeTCPCommon::on_send_available() {
-    std::lock_guard _(_mx);
+    std::unique_lock lk(_mx);
     if (!_output_data.empty())  {
         auto s = _ctx->send(get_view_to_send(), this);
         if (s == 0) {
+            lk.unlock();
             lost_connection();
             return;
         } else {

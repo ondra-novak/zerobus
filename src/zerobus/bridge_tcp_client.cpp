@@ -33,6 +33,8 @@ void BridgeTCPClient::on_timeout() {
 
 void BridgeTCPClient::lost_connection() {
     try {
+        std::lock_guard _(_mx);
+        this->_output_allowed = false;
         _ctx->reconnect(this, _address);
         _input_data.clear();  //any incomplete message is lost
         _output_cursor = 0; //last output incomplete message will be send again

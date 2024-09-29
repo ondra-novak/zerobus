@@ -9,7 +9,7 @@
 
 namespace zerobus {
 
-class NetContextAux {
+class NetContextAux { // @suppress("Miss copy constructor or assignment operator")
 public:
     std::mutex mx;
     Socket sock = {};

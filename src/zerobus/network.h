@@ -25,10 +25,18 @@ public:
      * @param address_port address and port entered as "address:port"
      * @return pointer to ContextAux. This pointer must be stored within peer and
      * returned every-time the context calls a function IPeer::get_context_aux. The
-     * peer also must call peer_destroy during its destruction
+     * peer also must call destroy() during its destruction
      *
      */
     virtual NetContextAux *peer_connect(std::string address_port) = 0;
+
+    ///creates server
+    /** @param address_port address and port entered as "address:port"
+    * @return pointer to ContextAux. This pointer must be stored within the server and
+    * returned every-time the context calls a function IServer::get_context_aux. The
+    * peer also must call destroy() during its destruction
+    */
+    virtual NetContextAux *create_server(std::string address_port) = 0;
 
     ///closes connection and connects it again to address
     /**
@@ -47,8 +55,6 @@ public:
     ///ask context whether send is available
     virtual void callback_on_send_available(IPeer *peer) = 0;
 
-    ///creates server
-    virtual NetContextAux *create_server(std::string address_port) = 0;
 
     ///request to accept next connection
     virtual void accept(IServer *server) = 0;
