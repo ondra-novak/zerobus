@@ -97,9 +97,15 @@ void AbstractBridge::apply_their_channels(ChannelList lst) {
 
 }
 
-void AbstractBridge::dispatch_message(const Message &msg) {
+void AbstractBridge::dispatch_message(Message &&msg) {
     if (_filter.check(msg.get_channel())) {
-        _ptr->dispatch_message(this, msg, true);
+        _ptr->dispatch_message(this, std::move(msg), true);
+    }
+}
+
+void AbstractBridge::dispatch_message(Message &msg) {
+    if (_filter.check(msg.get_channel())) {
+        _ptr->dispatch_message(this, std::move(msg), true);
     }
 }
 

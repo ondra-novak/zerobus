@@ -15,7 +15,7 @@ public:
     virtual void unregister_monitor(const IMonitor *mon) = 0;
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList) > &&cb) const = 0;
     virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
-    virtual bool dispatch_message(IListener *listener, const Message &msg, bool subscribe_return_path) = 0;
+    virtual bool dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) = 0;
     ///retieve channel name used to detect cycles
     /**
      * @return name of channel which should not be subscribed. It is intended to detect
@@ -89,7 +89,8 @@ public:
      *
      * @note @b mt-safety: this method is mt-safe
      */
-    void dispatch_message(const Message &msg);
+    void dispatch_message(Message &msg);
+    void dispatch_message(Message &&msg);
 
     ///Call this function if peer has been reset
     /**

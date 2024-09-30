@@ -29,7 +29,7 @@ public:
     virtual void unsubscribe(IListener *listener, ChannelID channel) override;
     virtual void unsubscribe_all(IListener *listener) override;
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) override;
-    virtual bool dispatch_message(IListener *listener, const Message &msg, bool subscribe_return_path) override;
+    virtual bool dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) override;
     virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) override;
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList)> &&callback) const override;
     virtual void get_subscribed_channels(IListener *listener, FunctionRef<void(ChannelList)> &&callback) const override;
@@ -189,7 +189,11 @@ protected:
 
     void channel_list_updated_lk();
 
-    bool forward_message_internal(IListener *listener, const Message &msg) ;
+    bool forward_message_internal(IListener *listener,  Message &&msg) ;
+
+    struct TLSQueueItem;
+    struct TLState;
+
 
 };
 

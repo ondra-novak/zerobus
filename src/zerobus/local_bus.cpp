@@ -1,7 +1,8 @@
 #include "local_bus.h"
 #include <algorithm>
 #include <random>
-
+#include <queue>
+#include <utility>
 #include <atomic>
 #ifdef _WIN32
 #define WIN32_LEAN_AND_MEAN
@@ -12,6 +13,10 @@
 
 
 namespace zerobus {
+
+
+
+
 
 template<typename Iter>
 Iter to_base62(std::uint64_t x, Iter iter, int digits = 1) {
@@ -196,7 +201,7 @@ bool LocalBus::send_message(IListener *listener, ChannelID channel, MessageConte
     }
 }
 
-bool LocalBus::dispatch_message(IListener *listener, const Message &msg, bool subscribe_return_path) {
+bool LocalBus::dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) {
     if (listener && subscribe_return_path) {
         auto sender = msg.get_sender();
         if (!sender.empty()) {
@@ -206,7 +211,7 @@ bool LocalBus::dispatch_message(IListener *listener, const Message &msg, bool su
             }
         }
     }
-    return forward_message_internal(listener, msg);
+    return forward_message_internal(listener, std::move(msg));
 }
 
 bool LocalBus::remove_channel_from_listener_lk(std::string_view channel, IListener *listener)
@@ -223,7 +228,36 @@ bool LocalBus::remove_channel_from_listener_lk(std::string_view channel, IListen
     return true;
 }
 
-bool LocalBus::forward_message_internal(IListener *listener, const Message &msg) {
+struct LocalBus::TLSQueueItem { // @suppress("Miss copy constructor or assignment operator")
+    PChanMapItem channel;
+    Message msg;
+    IListener *listener;
+};
+
+struct LocalBus::TLState {
+
+    std::queue<TLSQueueItem> _queue;
+    void run_queue(TLSQueueItem item) {
+        auto can_run = _queue.empty();
+        _queue.push(std::move(item));
+        if (can_run) {
+            while (!_queue.empty()) {
+                TLSQueueItem &x = _queue.front();
+                x.channel->enum_listeners([&x](IListener *l){
+                    if (l != x.listener) l->on_message(x.msg, false);
+                });
+                _queue.pop();
+            }
+        }
+    }
+
+    static thread_local TLState _tls_state;
+};
+
+thread_local LocalBus::TLState LocalBus::TLState::_tls_state = {};
+
+
+bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
     PChanMapItem ch;
     ChannelID chanid = msg.get_channel();
 
@@ -255,9 +289,7 @@ bool LocalBus::forward_message_internal(IListener *listener, const Message &msg)
     }
 
     //process channel outside of lock (has own lock)
-    ch->enum_listeners([listener, &msg](IListener *l){
-        if (l != listener) l->on_message(msg, false);
-    });
+    TLState::_tls_state.run_queue({std::move(ch), std::move(msg), std::move(listener)});
     return true;
 }
 
