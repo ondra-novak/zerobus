@@ -93,7 +93,7 @@ std::pair<LocalBus::PChanMapItem,bool> LocalBus::get_channel_lk(ChannelID channe
 void LocalBus::subscribe(IListener *listener, ChannelID channel)
 {
     if (channel.empty()) throw std::invalid_argument("Channel name can't be empty");
-    std::lock_guard _(_mx);
+    std::lock_guard _(*this);
     if (channel == _cycle_detector_id) {
         unsubscribe_all_channels_lk(listener);
         throw CycleDetectedException();
@@ -105,34 +105,34 @@ void LocalBus::subscribe(IListener *listener, ChannelID channel)
         iter = _listeners.emplace(listener, mvector<ChannelID>(mvector<ChannelID>::allocator_type(&_mem_resource))).first;
     }
     iter->second.push_back(chan.first->get_id());
-    if (chan.second) channel_list_updated_lk();
+    if (chan.second) _channels_change = true;
 }
 
 void LocalBus::unsubscribe(IListener *listener, ChannelID channel)
 {
-    std::lock_guard _(_mx);
+    std::lock_guard _(*this);
 
     if (remove_channel_from_listener_lk(channel,listener)) {
         auto chan = get_channel_lk(channel);
         if (chan.first->remove_listener(listener)) {
             _channels.erase(channel);
-            channel_list_updated_lk();
+            _channels_change = true;
         }
     }
 }
 
 void LocalBus::unsubscribe_all(IListener *listener)
 {
-    std::lock_guard _(_mx);
+    std::lock_guard _(*this);
     erase_mailbox_lk(listener);
     _back_path.remove_listener(listener);
     if (unsubscribe_all_channels_lk(listener)) {
-        channel_list_updated_lk();
+        _channels_change = true;
     }
 }
 
 void LocalBus::unsubcribe_private(IListener *listener) {
-    std::lock_guard _(_mx);
+    std::lock_guard _(*this);
     erase_mailbox_lk(listener);
 }
 
@@ -172,7 +172,7 @@ std::string_view LocalBus::get_mailbox(IListener *listener)
 {
     static constexpr std::string_view mbx_prefix = "!mbx_";
 
-    std::lock_guard _(_mx);
+    std::lock_guard _(*this);
     auto iter = _mailboxes_by_ptr.find(listener);
     if (iter != _mailboxes_by_ptr.end()) return iter->second;
     mstring mbid((mstring::allocator_type(&_mem_resource)));
@@ -206,7 +206,7 @@ bool LocalBus::dispatch_message(IListener *listener, Message &&msg, bool subscri
     if (listener && subscribe_return_path) {
         auto sender = msg.get_sender();
         if (!sender.empty()) {
-            std::lock_guard _(_mx);
+            std::lock_guard _(*this);
             if (_mailboxes_by_name.find(sender) == _mailboxes_by_name.end()) {
                 _back_path.store_path(sender, listener);
             }
@@ -263,7 +263,7 @@ bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
     ChannelID chanid = msg.get_channel();
 
     {
-        std::lock_guard _(_mx);
+        std::lock_guard _(*this);
         auto miter = _mailboxes_by_name.find(chanid);
         if (miter != _mailboxes_by_name.end()) {
             auto l = miter->second;
@@ -308,12 +308,12 @@ void LocalBus::run_priv_queue(IListener *target, Message &&msg, bool pm) {
 }
 
 void LocalBus::register_monitor(IMonitor *mon) {
-    std::lock_guard lk(_mx);
+    std::lock_guard _(*this);
     _monitors.push_back(mon);
 }
 
 void LocalBus::unregister_monitor(const IMonitor *mon) {
-    std::lock_guard lk(_mx);
+    std::lock_guard _(*this);
     auto iter = std::find(_monitors.begin(), _monitors.end(), mon);
     if (iter != _monitors.end()) {
         std::swap(*iter, _monitors.back());
@@ -322,16 +322,11 @@ void LocalBus::unregister_monitor(const IMonitor *mon) {
 }
 
 
-void LocalBus::channel_list_updated_lk() {
-    //always under lock
-    for (const auto &m: _monitors) m->on_channels_update();
-}
-
 void LocalBus::get_active_channels(IListener *listener,FunctionRef<void(ChannelList)> &&cb) const {
-    std::lock_guard _(_mx);
+    std::lock_guard _(*this);
     _tmp_channels.clear();
     if (_last_proxy && listener != _last_proxy) {
-        if (!_cycle_detector_id.empty()) {
+        if (_cycle_detector_id.empty()) {
             _cycle_detector_id = get_random_channel_name("cdp_");
         }
     } else {
@@ -350,7 +345,7 @@ void LocalBus::get_active_channels(IListener *listener,FunctionRef<void(ChannelL
 }
 
 void LocalBus::get_subscribed_channels(IListener *listener,FunctionRef<void(ChannelList)> &&cb) const {
-    std::lock_guard _(_mx);
+    std::lock_guard _(*this);
     auto iter = _listeners.find(listener);
     if (iter == _listeners.end()) return;
     _tmp_channels.clear();
@@ -426,7 +421,7 @@ Bus LocalBus::create() {
 }
 
 bool LocalBus::is_channel(ChannelID id) const {
-    std::lock_guard _(_mx);
+    std::lock_guard _(*this);
     auto iter = _channels.find(id);
     return iter != _channels.end() && !iter->second->empty();
 }
@@ -523,5 +518,21 @@ std::string_view LocalBus::get_cycle_detect_channel_name() const {
 Bus Bus::create() {
     return Bus(std::make_shared<LocalBus>());
 }
+
+void LocalBus::lock() const {
+    _mutex.lock();
+    ++_recursion;
+}
+void LocalBus::unlock() const {
+    if (_recursion == 1) {
+        while (_channels_change) {
+            _channels_change = false;
+            for (const auto &m: _monitors) m->on_channels_update();
+        }
+    }
+    --_recursion;
+    _mutex.unlock();
+}
+
 
 }

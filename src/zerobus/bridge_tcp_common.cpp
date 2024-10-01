@@ -9,8 +9,12 @@ BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,NetCo
 ,_aux(aux)
 
 {
+}
+
+void BridgeTCPCommon::init() {
     read_from_connection();
     _ctx->callback_on_send_available(this);
+
 }
 
 BridgeTCPCommon::~BridgeTCPCommon() {

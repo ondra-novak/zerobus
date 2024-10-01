@@ -44,27 +44,13 @@ std::string sockaddr_to_string(const sockaddr* addr) {
     }
 }
 
-NetContext::NetContext() {
-    _epollfd = epoll_create1(EPOLL_CLOEXEC);
-    if (_epollfd < 0) {
-        int e = errno;
-        throw std::system_error(e, std::system_category(), "epoll creation failed");
-    }
-}
 
-NetContext::~NetContext() {
-    ::close(_epollfd);
-
-}
-
-int NetContext::get_epoll_timeout() {
+std::chrono::system_clock::time_point NetContext::get_epoll_timeout() {
     std::lock_guard _(_tmx);
-    auto now = std::chrono::system_clock::now();
     if (!_pqueue.empty()) {
-        auto nx = _pqueue.front().get_tp();
-        return nx < now?0:std::chrono::duration_cast<std::chrono::milliseconds>(nx - now).count();
+        return  _pqueue.front().get_tp();
     }
-    return -1;
+    return std::chrono::system_clock::time_point::max();
 
 }
 
@@ -73,33 +59,21 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
         eventfd_write(efd, 1);
     });
 
-    {
-        epoll_event ev;
-        ev.data.ptr = nullptr;
-        ev.events = EPOLLIN|EPOLLONESHOT;
-        epoll_ctl(_epollfd, EPOLL_CTL_ADD, efd, &ev);
-    }
+    _epoll.add(efd, EPOLLIN, -1);
 
     while (!tkn.stop_requested()) {
-        epoll_event events[events_per_wait];
-        int timeout = -1;
+        auto timeout = std::chrono::system_clock::time_point::max();
+        int needfd = -1;
         bool timeout_thread = false;
-        if (_cur_timer_thread.compare_exchange_strong(timeout, efd)) {
+        if (_cur_timer_thread.compare_exchange_strong(needfd, efd)) {
             timeout = get_epoll_timeout();
             timeout_thread= true;
         }
-        int count = epoll_wait(_epollfd, events, events_per_wait, timeout);
-        if (count == -1) {
-            int e = errno;
-            if (e != EINTR) {
-                throw std::system_error(e, std::system_category(), "epoll_wait failed");
-            }
-            continue;
-        }
+        auto res = _epoll.wait(timeout);
         if (timeout_thread) {
             _cur_timer_thread = -1;
         }
-        if (count == 0) {
+        if (!res) {
             std::lock_guard _(_tmx);
             auto now = std::chrono::system_clock::now();
             while (!_pqueue.empty() && _pqueue.front().get_tp() <= now) {
@@ -110,9 +84,9 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
                 p->on_timeout();
                 if (tkn.stop_requested()) break;
             }
-        } else for (int i = 0; i < count; ++i) {
-            epoll_event &e = events[i];
-            if (e.data.ptr != nullptr) {
+        } else {
+            auto &e = *res;
+            if (e.ident >= 0) {
                 process_event(e);
             } else {
                 eventfd_t dummy;
@@ -125,28 +99,12 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
 }
 
 void NetContext::receive(std::span<char> buffer, IPeer *peer) {
-    int r;
-    {
-        auto ctx = peer->get_context_aux();
-        std::lock_guard _(ctx->mx);
-        r = ::recv(ctx->sock, buffer.data(), buffer.size(), MSG_DONTWAIT);
-        if (r < 0) {
-            int e = errno;
-            if (e == EWOULDBLOCK) {
-                ctx->flags |= EPOLLIN;
-                epoll_event ev;
-                ev.data.ptr = static_cast<IPeerServerCommon *>(peer);
-                ev.events = ctx->flags | EPOLLONESHOT;
-                epoll_ctl(_epollfd, EPOLL_CTL_MOD, ctx->sock, &ev);
-                return;
-            } else if (e == EPIPE || e == ECONNRESET ) {
-                r = 0;
-            } else {
-                throw std::system_error(e, std::system_category(), "recv failed");
-            }
-        }
-    }
-    peer->on_read_complete(std::string_view(buffer.data(), r));
+    auto ctx = peer->get_context_aux();
+    std::lock_guard _(ctx->mx);
+    ctx->flags |= EPOLLIN;
+    ctx->buffer = buffer;
+    ctx->peer = peer;
+    apply_flags(ctx);
 }
 
 std::size_t NetContext::send(std::string_view data, IPeer *peer) {
@@ -169,10 +127,8 @@ void NetContext::callback_on_send_available( IPeer *peer) {
     auto ctx = peer->get_context_aux();
     std::lock_guard _(ctx->mx);
     ctx->flags |= EPOLLOUT;
-    epoll_event ev;
-    ev.data.ptr = static_cast<IPeerServerCommon *>(peer);
-    ev.events = ctx->flags | EPOLLONESHOT;
-    epoll_ctl(_epollfd, EPOLL_CTL_MOD, ctx->sock, &ev);
+    ctx->peer = peer;
+    apply_flags(ctx);
 }
 
 NetContextAux* NetContext::create_server(std::string address_port) {
@@ -243,10 +199,7 @@ NetContextAux* NetContext::create_server(std::string address_port) {
         throw std::system_error(errno, std::generic_category(), "Failed to listen on socket");
     }
 
-    epoll_event ev;
-    ev.data.ptr = nullptr;
-    ev.events = EPOLLIN | EPOLLONESHOT;
-    epoll_ctl(_epollfd, EPOLL_CTL_ADD, listen_fd, &ev);
+    _epoll.add(listen_fd, 0, -1);
     return new NetContextAux(listen_fd);
 
 }
@@ -256,19 +209,18 @@ void NetContext::accept(IServer *server) {
     std::lock_guard _(ctx->mx);
     ctx->flags |= EPOLLIN;
     ctx->server = true;
-    epoll_event ev;
-    ev.data.ptr = static_cast<IPeerServerCommon *>(server);
-    ev.events = ctx->flags | EPOLLONESHOT;
-    epoll_ctl(_epollfd, EPOLL_CTL_MOD, ctx->sock, &ev);
+    ctx->peer = server;
+    apply_flags(ctx);
 }
 
 void NetContext::destroy(IPeerServerCommon *p) {
     auto ctx = p->get_context_aux();
-    std::lock_guard _(ctx->mx);
-    epoll_event ev = {};
-    epoll_ctl(_epollfd, EPOLL_CTL_DEL, ctx->sock, &ev);
+    {
+        std::lock_guard _(ctx->mx);
+        _epoll.del(ctx->sock);
+        clear_timeout(p);
+    }
     delete ctx;
-    clear_timeout(p);
 }
 
 
@@ -320,10 +272,7 @@ NetContextAux *NetContext::peer_connect(std::string address_port)  {
         throw std::system_error(errno, std::generic_category(), "Failed to connect");
     }
 
-    epoll_event ev;
-    ev.data.ptr = nullptr;
-    ev.events = EPOLLOUT | EPOLLONESHOT;
-    epoll_ctl(_epollfd, EPOLL_CTL_ADD, sockfd, &ev);
+    _epoll.add(sockfd, 0, -1);
     return new NetContextAux(sockfd);
 
 }
@@ -334,14 +283,18 @@ NetContextAux *NetContext::peer_connect(std::string address_port)  {
      auto new_aux = peer_connect(address_port);
      std::swap(new_aux->sock, ctx->sock);
      ctx->flags = 0;
+     ctx->cur_flags = 0;
  }
 
 NetContextAux::NetContextAux(Socket s):sock(s) {
 
 }
 NetContextAux::~NetContextAux() {
+    std::lock_guard _(mx);
     ::close(sock);
 }
+
+
 
 std::jthread NetContext::run_thread() {
     return std::jthread([this](auto tkn){
@@ -397,7 +350,10 @@ std::chrono::system_clock::time_point NetContext::TimerInfo::get_tp() const {
     return _tp;
 }
 
-
+void NetContext::TimerInfo::refresh_pos() {
+    auto aux = _peer->get_context_aux();
+    aux->timeout_ptr = this;
+}
 
 IPeerServerCommon* NetContext::TimerInfo::get_peer() const {
     return _peer;
@@ -436,41 +392,30 @@ void NetContext::clear_timeout(IPeerServerCommon *p) {
 
 }
 
-void NetContext::process_event(const epoll_event &e) {
-    IPeerServerCommon *sp = reinterpret_cast<IPeer *>(e.data.ptr);
-    auto *ctx = sp->get_context_aux();
-    std::lock_guard _(ctx->mx);
-    if ((ctx->flags &= ~e.events) != 0) {
-        epoll_event ev;
-        ev.data.ptr = sp;
-        ev.events = ctx->flags | EPOLLONESHOT;
-        epoll_ctl(_epollfd, EPOLL_CTL_MOD, ctx->sock, &ev);
-    }
+void NetContext::process_event(const WaitRes &e) {
+    NetContextAux *ctx = lock_from_id(e.ident);
+    std::unique_lock _(ctx->mx, std::adopt_lock);
     if (e.events & EPOLLIN) {
+        ctx->flags &= ~EPOLLIN;
         if (ctx->server) {
             sockaddr_storage saddr_stor;
             socklen_t slen = sizeof(saddr_stor);
             sockaddr *saddr = reinterpret_cast<sockaddr *>(&saddr_stor);
 
-            auto srv = static_cast<IServer *>(sp);
+            auto srv = static_cast<IServer *>(ctx->peer);
 
             auto n = accept4(ctx->sock, saddr, &slen, SOCK_CLOEXEC|SOCK_NONBLOCK);
-            if (n < 0) {
-                srv->on_accept(nullptr, {});
-            } else {
+            if (n >= 0) {
+                _epoll.add(n,0, -1);
                 srv->on_accept(new NetContextAux(n), sockaddr_to_string(saddr));
             }
         } else {
-            auto p = static_cast<IPeer *>(sp);
+            auto p = static_cast<IPeer *>(ctx->peer);
             int r = recv(ctx->sock, ctx->buffer.data(), ctx->buffer.size(), MSG_DONTWAIT);
             if (r < 0) {
                 int e = errno;
                 if (e == EWOULDBLOCK) {
                     ctx->flags |= EPOLLIN;
-                    epoll_event ev;
-                    ev.data.ptr = sp;
-                    ev.events = ctx->flags | EPOLLONESHOT;
-                    epoll_ctl(_epollfd, EPOLL_CTL_MOD, ctx->sock, &ev);
                 } else {
                     p->on_read_complete({});
                 }
@@ -480,12 +425,22 @@ void NetContext::process_event(const epoll_event &e) {
         }
     }
     if (e.events & EPOLLOUT) {
-        auto p = static_cast<IPeer *>(sp);
+        ctx->flags &= ~EPOLLOUT;
+        auto p = static_cast<IPeer *>(ctx->peer);
         p->on_send_available();
     }
+    apply_flags(ctx);
 
 }
 
+void NetContext::apply_flags(NetContextAux *aux) {
+    if (aux->mx.level1()) {
+        if (aux->flags != aux->cur_flags) {
+            _epoll.mod(aux->sock, aux->flags, aux->ident);
+            aux->cur_flags = aux->flags;
+        }
+    }
+}
 
 
 std::shared_ptr<INetContext> make_context(int iothreads) {
@@ -513,5 +468,33 @@ void NetThreadedContext::start() {
         t = run_thread();
     }
 }
+
+NetContextAux *NetContext::lock_from_id(std::size_t id) {
+    std::lock_guard _(_imx);
+    auto aux =  _identMap.size() <= id?nullptr:_identMap[id].get();
+    if (aux) aux->mx.lock();
+    return aux;
+}
+
+NetContextAux *NetContext::alloc_aux(Socket sock) {
+    std::lock_guard _(_imx);
+    auto aux = std::make_unique<NetContextAux>(sock);
+    if (_first)
+
+
+}
+
+void NetContext::register_ident(int id, NetContextAux *peer) {
+    std::lock_guard _(_imx);
+    if (static_cast<std::size_t>(id) >=_identMap.size()) _identMap.resize(id+1, nullptr);
+    _identMap[id] = peer;
+}
+
+void NetContext::unregister_ident(int id) {
+    std::lock_guard _(_imx);
+    _identMap[id] = nullptr;
+}
+
+
 
 }

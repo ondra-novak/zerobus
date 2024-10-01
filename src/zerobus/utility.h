@@ -45,7 +45,7 @@ void heapify_up(_Container &cont, std::size_t index, _Cmp &&cmp) {
 
 template<typename _Container, typename _Cmp>
 void heapify_remove(_Container &cont, std::size_t index, _Cmp &&cmp) {
-    if (index < cont.size()-1) {
+    if (index == cont.size()-1) {
         cont.pop_back();
     } else {
         bool cmpres = cmp(cont[index], cont.back());

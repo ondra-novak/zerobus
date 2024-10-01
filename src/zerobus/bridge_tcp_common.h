@@ -13,7 +13,6 @@ public:
     static constexpr std::string_view magic = "zbus";
 
 
-    BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx, NetContextAux *aux);
     virtual ~BridgeTCPCommon() override;
     BridgeTCPCommon(const BridgeTCPCommon &) = delete;
     BridgeTCPCommon &operator=(const BridgeTCPCommon &) = delete;
@@ -32,7 +31,7 @@ protected:
     virtual void on_welcome() override;
     virtual void on_timeout() override;
 
-    virtual void lost_connection() = 0;
+    virtual void lost_connection() {}
 
     std::shared_ptr<INetContext> _ctx;
     NetContextAux *_aux;
@@ -56,6 +55,11 @@ protected:
 
     std::string_view parse_messages(std::string_view data);
     void flush_buffer();
+
+    BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx, NetContextAux *aux);
+    void init();
+
+
 };
 
 }

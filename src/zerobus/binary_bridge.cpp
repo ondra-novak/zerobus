@@ -111,7 +111,7 @@ void AbstractBinaryBridge::send_pong() {
 }
 
 void AbstractBinaryBridge::send_welcome() {
-    _disabled = true;
+    _disabled = false;
     char m = static_cast<char>(MessageType::welcome);
     output_message({&m, 1});
 }
@@ -124,7 +124,6 @@ void AbstractBinaryBridge::send_auth_response(std::string_view ident, std::strin
     output_message({buff.data(), buff.size()});
 }
 
-
 void AbstractBinaryBridge::parse_message(std::string_view message) {
     auto msg = read_message([&](auto sender, auto channel, auto msg, auto cid){
         return _ptr->create_message(sender, channel, msg, cid);
@@ -135,6 +134,19 @@ void AbstractBinaryBridge::parse_message(std::string_view message) {
 void AbstractBinaryBridge::send_auth_failed() {
     char m = static_cast<char>(MessageType::auth_failed);
     output_message({&m, 1});
+}
+
+void AbstractBinaryBridge::parse_auth_req(std::string_view message) {
+    std::string_view proof_type = read_string(message);
+    std::string_view salt = read_string(message);
+    on_auth_request(proof_type, salt);
+}
+
+void AbstractBinaryBridge::parse_auth_resp(std::string_view message) {
+    std::string_view ident = read_string(message);
+    std::string_view proof = read_string(message);
+    on_auth_response(ident, proof, std::string_view(_salt, sizeof(_salt)));
+
 }
 
 }

@@ -9,6 +9,7 @@ BridgeTCPClient::BridgeTCPClient(Bus bus, std::shared_ptr<INetContext> ctx, std:
 ,_acb(std::move(acb))
 {
     register_monitor(this);
+    init();
 }
 
 BridgeTCPClient::BridgeTCPClient(Bus bus, std::string address, AuthCallback acb)

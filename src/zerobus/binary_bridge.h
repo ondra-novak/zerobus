@@ -152,7 +152,7 @@ public:
      static Iter read_channel_list(std::string_view &msgtext, Iter iter);
 
 
-     static std::size_t read_channel_list_count(std::string_view &msgtext);
+     static std::size_t read_channel_list_count(std::string_view msgtext);
 
 
 protected:
@@ -273,7 +273,7 @@ inline Iter AbstractBinaryBridge::write_channel_list(Iter out, const ChanList & 
 
 
 
-inline std::size_t AbstractBinaryBridge::read_channel_list_count(std::string_view &msgtext) {
+inline std::size_t AbstractBinaryBridge::read_channel_list_count(std::string_view msgtext) {
     return read_uint(msgtext);;
 }
 

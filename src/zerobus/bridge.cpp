@@ -118,7 +118,9 @@ void AbstractBridge::peer_reset() {
     send_mine_channels();
 }
 
-
+void AbstractBridge::set_filter(ChannelFilter flt) {
+    _filter = std::move(flt);
+}
 
 void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
     if (!pm) send_message(message);

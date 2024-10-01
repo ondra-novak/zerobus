@@ -14,6 +14,7 @@ BridgeTCPServer::BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std:
         br->register_monitor(this);
         _next_ping = std::chrono::system_clock::now()+std::chrono::seconds(_ping_interval);
         _ctx->set_timeout(_next_ping, this);
+        _ctx->accept(this);
     }
 
 BridgeTCPServer::BridgeTCPServer(Bus bus, std::string address_port, AuthConfig auth_cfg)
@@ -21,6 +22,11 @@ BridgeTCPServer::BridgeTCPServer(Bus bus, std::string address_port, AuthConfig a
 }
 
 BridgeTCPServer::~BridgeTCPServer() {
+    std::unique_lock lk(_mx);
+    auto p = std::move(_peers);
+    lk.unlock();
+    p.clear();
+    lk.lock();
     auto br = IBridgeAPI::from_bus(_bus.get_handle());
     br->unregister_monitor(this);
     _ctx->destroy(this);
@@ -38,6 +44,7 @@ void BridgeTCPServer::on_accept(NetContextAux *aux, std::string /*peer_addr*/) {
     std::lock_guard _(_mx);
     auto p = std::make_unique<Peer>(*this, aux, _id_cntr++);
     _peers.push_back(std::move(p));
+    _ctx->accept(this);
 }
 
 NetContextAux* BridgeTCPServer::get_context_aux() {
@@ -73,6 +80,7 @@ BridgeTCPServer::Peer::Peer(BridgeTCPServer &owner, NetContextAux *aux, unsigned
     ,_owner(owner)
     ,_ws_parser(BridgeTCPCommon::_input_data)
     {
+    init();
 }
 
 void BridgeTCPServer::Peer::initial_handshake() {

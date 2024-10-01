@@ -44,6 +44,9 @@ public:
     ///Create local message broker;
     static Bus create();
 
+    void lock() const;
+    void unlock() const;
+
 protected:
 
     class MessageDef;
@@ -157,7 +160,7 @@ protected:
     using PrivateQueue = std::deque<PrivQueueItem, std::pmr::polymorphic_allocator<PrivQueueItem> >;
 
 
-    mutable std::recursive_mutex _mx;               //recursive mutex
+    mutable std::recursive_mutex _mutex;               //recursive mutex
     std::pmr::synchronized_pool_resource _mem_resource; //contains memory resource for messages
     ChannelMap _channels;                   //main map mapping channel name to channel instance
     ListenerToChannelMap _listeners;        //helps to find subscribed channels
@@ -169,7 +172,8 @@ protected:
     mutable std::vector<ChannelID> _tmp_channels;    //temporary vector for get_active_channels
     mutable std::string _cycle_detector_id = {};    //contains a random string which is used to detect cycles
     mutable const IListener *_last_proxy=nullptr;    //pointer to last proxy - to check, whether there are more proxies
-
+    mutable bool _channels_change = false;
+    mutable unsigned int _recursion = 0;
     ///removes channel from existing listener.
     /**
      * @param channel channel to remove
@@ -199,7 +203,6 @@ protected:
 
     std::pair<PChanMapItem,bool> get_channel_lk(ChannelID name);
 
-    void channel_list_updated_lk();
 
     bool forward_message_internal(IListener *listener,  Message &&msg) ;
 
