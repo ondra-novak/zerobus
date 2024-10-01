@@ -24,12 +24,12 @@ public:
     /**
      * @param channel
      */
-    void unsubscribe(ChannelID channel) {_bus.unsubcribe(this,channel);}
+    void unsubscribe(ChannelID channel) {_bus.unsubscribe(this,channel);}
     ///unsubscribe listener from all channels
     /**
      * after return, the associated object can be destroyed
      */
-    void unsubscribe_all(IListener *listener) {_bus.unsubscribe_all(this);}
+    void unsubscribe_all() {_bus.unsubscribe_all(this);}
 
     ///unsubscribe private channel
     /**
@@ -41,7 +41,7 @@ public:
      * with a different address
      *
      */
-    void unsubcribe_private(IListener *listener) {_bus.unsubcribe_private(this);}
+    void unsubcribe_private() {_bus.unsubcribe_private(this);}
     ///send message
     /**
      * @param channel channel
@@ -50,7 +50,7 @@ public:
      * @retval true message has been posted (it doesn't indicate that has been delivered)
      * @retval false message was not posted (no information about how to route message)
      */
-    bool send_message(ChannelID channel, MessageContent msg, ConversationID cid) {
+    bool send_message(ChannelID channel, MessageContent msg, ConversationID cid = 0) {
         return _bus.send_message(this, channel, msg, cid);
     }
     ///Generate random channel name

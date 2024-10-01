@@ -161,12 +161,7 @@ void BridgeTCPCommon::output_message(std::string_view data) {
     std::lock_guard _(_mx);
     _output_msg_sp.push_back(_output_data.size());
     AbstractBinaryBridge::write_string(std::back_inserter(_output_data), data);
-    if (_output_allowed) {
-        auto s = _ctx->send(get_view_to_send(), this);
-        after_send(s);
-        _output_allowed = false;
-        _ctx->callback_on_send_available(this);
-    }
+    flush_buffer();
 }
 
 void BridgeTCPCommon::on_auth_request(std::string_view , std::string_view ) {
@@ -178,6 +173,15 @@ void BridgeTCPCommon::on_welcome() {
 }
 
 void BridgeTCPCommon::on_timeout() {
+}
+
+void BridgeTCPCommon::flush_buffer() {
+    if (_output_allowed) {
+        auto s = _ctx->send(get_view_to_send(), this);
+        after_send(s);
+        _output_allowed = false;
+        _ctx->callback_on_send_available(this);
+    }
 }
 
 }

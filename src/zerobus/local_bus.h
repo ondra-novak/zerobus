@@ -7,6 +7,7 @@
 #include <vector>
 #include <unordered_map>
 #include <memory_resource>
+#include <deque>
 
 namespace zerobus {
 
@@ -146,6 +147,16 @@ protected:
 
     };
 
+    struct PrivQueueItem { // @suppress("Miss copy constructor or assignment operator")
+        IListener *target;
+        Message msg;
+        bool pm;
+
+    };
+
+    using PrivateQueue = std::deque<PrivQueueItem, std::pmr::polymorphic_allocator<PrivQueueItem> >;
+
+
     mutable std::recursive_mutex _mx;               //recursive mutex
     std::pmr::synchronized_pool_resource _mem_resource; //contains memory resource for messages
     ChannelMap _channels;                   //main map mapping channel name to channel instance
@@ -154,6 +165,7 @@ protected:
     MailboxToListenerMap _mailboxes_by_name; //maps mailbox name to listener ptr
     BackPathStorage _back_path;
     mvector<IMonitor *> _monitors;      //list of monitors
+    PrivateQueue _private_queue;
     mutable std::vector<ChannelID> _tmp_channels;    //temporary vector for get_active_channels
     mutable std::string _cycle_detector_id = {};    //contains a random string which is used to detect cycles
     mutable const IListener *_last_proxy=nullptr;    //pointer to last proxy - to check, whether there are more proxies
@@ -190,6 +202,8 @@ protected:
     void channel_list_updated_lk();
 
     bool forward_message_internal(IListener *listener,  Message &&msg) ;
+
+    void run_priv_queue(IListener *target, Message &&msg, bool pm);
 
     struct TLSQueueItem;
     struct TLState;

@@ -20,6 +20,7 @@ BridgeTCPClient::~BridgeTCPClient() {
     unregister_monitor(this);
 }
 
+
 void BridgeTCPClient::on_timeout() {
     if (_timeout_reconnect) {
         _timeout_reconnect = false;
@@ -56,6 +57,19 @@ void BridgeTCPClient::on_auth_request(std::string_view proof_type, std::string_v
         _acb(AuthRequest{proof_type, salt}, [this](AuthResponse r){
             send_auth_response(r.ident, r.proof);
         });
+    }
+}
+
+void BridgeTCPClient::on_send_available() {
+    if (_handshake) {
+        if (_ctx->send(magic, this) < magic.size()) {   //magic should fit to the buffer whole
+            lost_connection();
+        } else {
+            _handshake = false;
+            _ctx->callback_on_send_available(this);
+        }
+    } else {
+        BridgeTCPCommon::on_send_available();
     }
 }
 

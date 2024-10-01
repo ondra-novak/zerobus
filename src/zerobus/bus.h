@@ -79,7 +79,7 @@ public:
      * @retval true message has been posted (it doesn't indicate that has been delivered)
      * @retval false message was not posted (no information about how to route message)
      */
-    bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) {
+    bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid = 0) {
         return _ptr->send_message(listener, channel, msg, cid);
     }
     ///Generate random channel name

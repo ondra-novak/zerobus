@@ -46,11 +46,13 @@ protected:
     virtual void on_timeout() override;
     virtual void on_channels_update() noexcept override;
     virtual bool on_message_dropped(IListener *, const Message &) noexcept override {return false;}
+    virtual void on_send_available() override;
 
     virtual void on_auth_request(std::string_view proof_type, std::string_view salt) override;
 
     std::string _address;
     AuthCallback _acb;
+    bool _handshake = true;
 
     bool _timeout_reconnect = false;
 

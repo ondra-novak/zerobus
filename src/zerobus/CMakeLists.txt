@@ -7,6 +7,7 @@ add_library(zerobus
     bridge_tcp_client.cpp
     bridge_tcp_common.cpp
     bridge_tcp_server.cpp
+    websocket.cpp
     )
 
     

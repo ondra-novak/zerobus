@@ -75,6 +75,7 @@ LocalBus::LocalBus()
     ,_mailboxes_by_name(MailboxToListenerMap::allocator_type(&_mem_resource))
     ,_back_path(_mem_resource)
     ,_monitors(mvector<IMonitor *>::allocator_type(&_mem_resource))
+    ,_private_queue(PrivateQueue::allocator_type(&_mem_resource))
 {
 
 }
@@ -266,13 +267,13 @@ bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
         auto miter = _mailboxes_by_name.find(chanid);
         if (miter != _mailboxes_by_name.end()) {
             auto l = miter->second;
-            l->on_message(msg,true);
+            run_priv_queue(l, std::move(msg), true);
             return true;
         }
 
         IListener *bpath = _back_path.find_path(chanid);
         if (bpath) {
-            bpath->on_message(msg, false);
+            run_priv_queue(bpath, std::move(msg), false);
             return true;
         }
 
@@ -291,6 +292,19 @@ bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
     //process channel outside of lock (has own lock)
     TLState::_tls_state.run_queue({std::move(ch), std::move(msg), std::move(listener)});
     return true;
+}
+
+void LocalBus::run_priv_queue(IListener *target, Message &&msg, bool pm) {
+    bool run = _private_queue.empty();
+    _private_queue.push_back({target,  std::move(msg), pm});
+    if (run) {
+        while (!_private_queue.empty()) {
+            auto &x = _private_queue.front();
+            x.target->on_message(x.msg, pm);
+            _private_queue.pop_front();
+        }
+    }
+
 }
 
 void LocalBus::register_monitor(IMonitor *mon) {
@@ -504,6 +518,10 @@ void LocalBus::BackPathStorage::remove_listener(IListener *l) {
 
 std::string_view LocalBus::get_cycle_detect_channel_name() const {
     return _cycle_detector_id;
+}
+
+Bus Bus::create() {
+    return Bus(std::make_shared<LocalBus>());
 }
 
 }

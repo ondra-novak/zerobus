@@ -1,6 +1,7 @@
 #pragma once
 #include "bus.h"
 #include "monitor.h"
+#include "websocket.h"
 
 #include "bridge_tcp_common.h"
 namespace zerobus {
@@ -85,6 +86,10 @@ protected:
 
     class Peer : public BridgeTCPCommon {
     public:
+        enum class Format {
+            unknown, zbus, websocket
+        };
+
         Peer(BridgeTCPServer &owner, NetContextAux *aux, unsigned int id);
         Peer(const Peer &) = delete;
         Peer &operator=(const Peer &) = delete;
@@ -95,14 +100,24 @@ protected:
 
         bool check_dead();
         unsigned int get_id() const {return _id;}
+
+        virtual void output_message(std::string_view message) override;
+
     protected:
+        Format _format = Format::unknown;
         bool _activity_check = false;
         bool _ping_sent = false;
         unsigned int _id;
 
+        bool websocket_handshake(std::string_view &data);
+        bool parse_websocket_stream(std::string_view data);
+        void send_websocket_message(std::string_view data);
+        void send_websocket_message(const ws::Message &msg);
+        void start_peer();
 
     private:
         BridgeTCPServer &_owner;
+        ws::Parser _ws_parser;
     };
 
 

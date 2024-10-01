@@ -10,6 +10,7 @@ class BridgeTCPCommon: public AbstractBinaryBridge, public IPeer {
 public:
 
     static constexpr int input_buffer_size = 8192;
+    static constexpr std::string_view magic = "zbus";
 
 
     BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx, NetContextAux *aux);
@@ -54,6 +55,7 @@ protected:
     std::string_view get_view_to_send() const;
 
     std::string_view parse_messages(std::string_view data);
+    void flush_buffer();
 };
 
 }

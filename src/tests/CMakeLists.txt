@@ -1,6 +1,8 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests/)
 
-set(testFiles compile.cpp)
+set(testFiles compile.cpp
+             local_bus.cpp
+)
                 
 
 foreach (testFile ${testFiles})
