@@ -3,114 +3,102 @@
 #include "epollpp.h"
 #include "recursive_mutex.h"
 
+#include <condition_variable>
 #include <memory>
 #include <thread>
+#include <set>
 
 
 namespace zerobus {
 
 class NetContext;
 
-class NetContextAux { // @suppress("Miss copy constructor or assignment operator")
-public:
-    RecursiveMutex mx;
-    Socket sock = {};
-    std::size_t ident = 0;
-    int flags = 0;
-    int cur_flags = 0;
-    const void *timeout_ptr = {};
-    bool server = false;
-    IPeerServerCommon *peer = {};
-    std::span<char> buffer = {};
-    NetContextAux(Socket s);
-   ~NetContextAux();
-
-   void on_unlock();
-};
 
 
 class NetContext: public INetContext, public std::enable_shared_from_this<NetContext> {
 public:
 
 
-    virtual NetContextAux *peer_connect(std::string address) override;
-    virtual void reconnect(IPeer *peer, std::string address_port) override;
+    virtual SocketIdent peer_connect(std::string address) override;
+    virtual void reconnect(SocketIdent ident, std::string address_port) override;
     ///start receiving data
-    virtual void receive(std::span<char> buffer, IPeer *peer) override;
+    virtual void receive(SocketIdent ident, std::span<char> buffer, IPeer *peer) override;
     ///send data
-    virtual std::size_t send(std::string_view data, IPeer *peer) override;
+    virtual std::size_t send(SocketIdent ident, std::string_view data) override;
 
-    virtual void callback_on_send_available(IPeer *peer) override;
+    virtual void callback_on_send_available(SocketIdent ident, IPeer *peer) override;
 
     ///creates server
-    virtual NetContextAux *create_server(std::string address_port) override;
+    virtual SocketIdent create_server(std::string address_port) override;
 
     ///request to accept next connection
-    virtual void accept(IServer *server) override;
+    virtual void accept(SocketIdent ident, IServer *server) override;
 
     ///request to destroy server
-    virtual void destroy(IPeerServerCommon *server) override;
+    virtual void destroy(SocketIdent ident) override;
 
     std::jthread run_thread();
 
     void run(std::stop_token tkn);
 
-    virtual void set_timeout(std::chrono::system_clock::time_point tp, IPeerServerCommon *p) override;
+    virtual void set_timeout(SocketIdent ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) override;
 
     ///Clear existing timeout
-    virtual void clear_timeout(IPeerServerCommon *p) override;
+    virtual void clear_timeout(SocketIdent ident) override;
 
 
 protected:
 
-    using MyEPoll = EPoll<std::size_t>;
+    using MyEPoll = EPoll<SocketIdent>;
     using WaitRes = MyEPoll::WaitRes;
-
-    MyEPoll _epoll;
-    void run_worker(std::stop_token tkn, int efd) ;
+    using TimeoutSet = std::set<std::pair<std::chrono::system_clock::time_point, SocketIdent>  >;
 
 
-    class TimerInfo {
-    public:
-        TimerInfo() = default;
-        ~TimerInfo();
-        TimerInfo(std::chrono::system_clock::time_point tp, IPeerServerCommon *p);
-        TimerInfo(TimerInfo &&pos);
-        TimerInfo &operator=(TimerInfo &&pos);
-        TimerInfo(const TimerInfo &pos) = delete;
-        TimerInfo &operator=(const TimerInfo &pos) = delete;
+    struct SocketInfo {
+        SocketIdent _ident = static_cast<SocketIdent>(-1);
+        int _socket = -1;
+        std::span<char> _recv_buffer;
+        int _flags = 0;
+        int _cur_flags = 0;
+        std::chrono::system_clock::time_point _tmtp = {};
+        IPeer *_recv_cb = {};
+        IPeer *_send_cb = {};
+        IServer *_accept_cb = {};
+        IPeerServerCommon *_timeout_cb = {};
+        int _cbprotect = {};
 
-        void refresh_pos();
-
-        std::chrono::system_clock::time_point get_tp() const;
-        IPeerServerCommon *get_peer() const;
-
-        static bool compare(const TimerInfo &a, const TimerInfo &b) {
-            return a._tp > b._tp;
-        }
-
-
-    protected:
-        IPeerServerCommon *_peer = {};
-        std::chrono::system_clock::time_point _tp = {};
+        ///invoke one of callbacks
+        /**
+         * @param lk global lock
+         * @param cond condition variable (activated when waiting on exit)
+         * @param fn a callback function
+         */
+        template<typename Fn>
+        void invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn);
     };
 
-    mutable std::recursive_mutex _tmx;
-    mutable std::recursive_mutex _imx;
+    using SocketList = std::vector<SocketInfo>;
 
-    std::vector<std::unique_ptr<NetContextAux> > _identMap;
-    std::vector<TimerInfo> _pqueue;
+    mutable std::mutex _mx;
+    MyEPoll _epoll = {};
+    SocketList _sockets = {};
+    SocketIdent _first_free_socket_ident = 0;
+    TimeoutSet _tmset;
+    std::condition_variable _cond;
+
     std::atomic<int> _cur_timer_thread = -1;
 
-    void process_event(const  WaitRes &e);
-    std::chrono::system_clock::time_point get_epoll_timeout();
+
+    void run_worker(std::stop_token tkn, int efd) ;
+    SocketInfo *alloc_socket_lk();
+    void free_socket_lk(SocketIdent id);
+    SocketInfo *socket_by_ident(SocketIdent id);
 
 
-    void apply_flags(NetContextAux *aux);
-    NetContextAux *lock_from_id(std::size_t id);
-    NetContextAux *alloc_aux(Socket sock);
-    void free_aux(NetContextAux *aux);
-    std::size_t _aux_first_free = 0;
+    void process_event_lk(std::unique_lock<std::mutex> &lk, const  WaitRes &e);
+    std::chrono::system_clock::time_point get_epoll_timeout_lk();
+
+    void apply_flags_lk(SocketInfo *sock);
 };
 
 

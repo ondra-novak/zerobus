@@ -22,7 +22,7 @@ BridgeTCPClient::~BridgeTCPClient() {
 }
 
 
-void BridgeTCPClient::on_timeout() {
+void BridgeTCPClient::on_timeout() noexcept {
     if (_timeout_reconnect) {
         _timeout_reconnect = false;
         lost_connection();
@@ -37,20 +37,20 @@ void BridgeTCPClient::lost_connection() {
     try {
         std::lock_guard _(_mx);
         this->_output_allowed = false;
-        _ctx->reconnect(this, _address);
+        _ctx->reconnect(_aux, _address);
         _input_data.clear();  //any incomplete message is lost
         _output_cursor = 0; //last output incomplete message will be send again
         read_from_connection(); //start reading
-        _ctx->callback_on_send_available(this); //generate signal to write
+        _ctx->callback_on_send_available(_aux, this); //generate signal to write
     } catch (...) {
         _timeout_reconnect = true;
-        _ctx->set_timeout(std::chrono::system_clock::now()+std::chrono::seconds(2), this);
+        _ctx->set_timeout(_aux, std::chrono::system_clock::now()+std::chrono::seconds(2), this);
     }
 
 }
 
 void BridgeTCPClient::on_channels_update() noexcept {
-    _ctx->set_timeout(std::chrono::system_clock::now(), this);
+    _ctx->set_timeout(_aux, std::chrono::system_clock::now(), this);
 }
 
 void BridgeTCPClient::on_auth_request(std::string_view proof_type, std::string_view salt) {
@@ -61,13 +61,13 @@ void BridgeTCPClient::on_auth_request(std::string_view proof_type, std::string_v
     }
 }
 
-void BridgeTCPClient::on_send_available() {
+void BridgeTCPClient::on_send_available() noexcept {
     if (_handshake) {
-        if (_ctx->send(magic, this) < magic.size()) {   //magic should fit to the buffer whole
+        if (_ctx->send(_aux, magic) < magic.size()) {   //magic should fit to the buffer whole
             lost_connection();
         } else {
             _handshake = false;
-            _ctx->callback_on_send_available(this);
+            _ctx->callback_on_send_available(_aux, this);
         }
     } else {
         BridgeTCPCommon::on_send_available();

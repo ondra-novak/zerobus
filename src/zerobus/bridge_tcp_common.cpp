@@ -3,7 +3,7 @@
 namespace zerobus {
 
 
-BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,NetContextAux *aux)
+BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,SocketIdent aux)
 :AbstractBinaryBridge(std::move(bus))
 ,_ctx(std::move(ctx))
 ,_aux(aux)
@@ -13,25 +13,25 @@ BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,NetCo
 
 void BridgeTCPCommon::init() {
     read_from_connection();
-    _ctx->callback_on_send_available(this);
+    _ctx->callback_on_send_available(_aux, this);
 
 }
 
 BridgeTCPCommon::~BridgeTCPCommon() {
-    _ctx->destroy(this);
+    _ctx->destroy(_aux);
 }
 
-void BridgeTCPCommon::on_send_available() {
+void BridgeTCPCommon::on_send_available() noexcept {
     std::unique_lock lk(_mx);
     if (!_output_data.empty())  {
-        auto s = _ctx->send(get_view_to_send(), this);
+        auto s = _ctx->send(_aux, get_view_to_send());
         if (s == 0) {
             lk.unlock();
             lost_connection();
             return;
         } else {
             if (after_send(s)) {
-                _ctx->callback_on_send_available(this);
+                _ctx->callback_on_send_available(_aux, this);
                 return;
             }
         }
@@ -118,7 +118,7 @@ std::string_view BridgeTCPCommon::parse_messages(std::string_view data) {
 
 }
 
-void BridgeTCPCommon::on_read_complete(std::string_view data) {
+void BridgeTCPCommon::on_read_complete(std::string_view data) noexcept {
     if (data.empty()) {
         //function is called with empty string when disconnect happened
         lost_connection();
@@ -149,12 +149,9 @@ void BridgeTCPCommon::on_read_complete(std::string_view data) {
 
 }
 
-NetContextAux* BridgeTCPCommon::get_context_aux() {
-    return _aux;
-}
 
 void BridgeTCPCommon::read_from_connection() {
-    _ctx->receive(_input_buffer, this);
+    _ctx->receive(_aux, _input_buffer, this);
 }
 
 void BridgeTCPCommon::on_auth_response(std::string_view , std::string_view , std::string_view ) {
@@ -176,15 +173,15 @@ void BridgeTCPCommon::on_welcome() {
     //empty - no needed
 }
 
-void BridgeTCPCommon::on_timeout() {
+void BridgeTCPCommon::on_timeout() noexcept {
 }
 
 void BridgeTCPCommon::flush_buffer() {
     if (_output_allowed) {
-        auto s = _ctx->send(get_view_to_send(), this);
+        auto s = _ctx->send(_aux, get_view_to_send());
         after_send(s);
         _output_allowed = false;
-        _ctx->callback_on_send_available(this);
+        _ctx->callback_on_send_available(_aux, this);
     }
 }
 

@@ -20,21 +20,20 @@ public:
 
 protected:
 
-    virtual void on_send_available() override;
-    virtual void on_read_complete(std::string_view data) override;
-    virtual NetContextAux* get_context_aux() override;
+    virtual void on_send_available() noexcept override;
+    virtual void on_read_complete(std::string_view data) noexcept override;
     virtual void on_auth_response(std::string_view ident,
             std::string_view proof, std::string_view salt) override;
     virtual void output_message(std::string_view message) override;
     virtual void on_auth_request(std::string_view proof_type,
             std::string_view salt) override;
     virtual void on_welcome() override;
-    virtual void on_timeout() override;
+    virtual void on_timeout() noexcept override;
 
     virtual void lost_connection() {}
 
     std::shared_ptr<INetContext> _ctx;
-    NetContextAux *_aux;
+    SocketIdent _aux;
 
     char _input_buffer[input_buffer_size];
 
@@ -56,7 +55,7 @@ protected:
     std::string_view parse_messages(std::string_view data);
     void flush_buffer();
 
-    BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx, NetContextAux *aux);
+    BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx, SocketIdent aux);
     void init();
 
 

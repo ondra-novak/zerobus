@@ -80,9 +80,8 @@ protected:
 
     virtual void on_channels_update() noexcept override;
     virtual bool on_message_dropped(IListener *lsn, const Message &msg) noexcept override;
-    virtual void on_accept(NetContextAux *aux, std::string peer_addr) override;
-    virtual NetContextAux* get_context_aux() override;
-    virtual void on_timeout() override;
+    virtual void on_accept(SocketIdent aux, std::string peer_addr) noexcept override;
+    virtual void on_timeout() noexcept override;
 
     class Peer : public BridgeTCPCommon {
     public:
@@ -90,12 +89,12 @@ protected:
             unknown, zbus, websocket
         };
 
-        Peer(BridgeTCPServer &owner, NetContextAux *aux, unsigned int id);
+        Peer(BridgeTCPServer &owner, SocketIdent aux, unsigned int id);
         Peer(const Peer &) = delete;
         Peer &operator=(const Peer &) = delete;
         virtual void on_auth_response(std::string_view ident, std::string_view proof, std::string_view salt) override;
         void initial_handshake();
-        virtual void on_read_complete(std::string_view data) override;
+        virtual void on_read_complete(std::string_view data) noexcept override;
         virtual void lost_connection() override;
 
         bool check_dead();
@@ -123,7 +122,7 @@ protected:
 
     Bus _bus;
     std::shared_ptr<INetContext> _ctx;
-    NetContextAux *_aux = {};
+    SocketIdent  _aux = 0;
     AuthConfig _auth_cfg;
     std::mutex _mx;
     std::vector<std::unique_ptr<Peer> > _peers;

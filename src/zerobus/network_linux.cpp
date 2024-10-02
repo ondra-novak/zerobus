@@ -1,5 +1,5 @@
 #include "network_linux.h"
-#include "utility.h"
+#include <utility>
 
 #include <arpa/inet.h>
 #include <stdexcept>
@@ -45,16 +45,40 @@ std::string sockaddr_to_string(const sockaddr* addr) {
 }
 
 
-std::chrono::system_clock::time_point NetContext::get_epoll_timeout() {
-    std::lock_guard _(_tmx);
-    if (!_pqueue.empty()) {
-        return  _pqueue.front().get_tp();
+std::chrono::system_clock::time_point NetContext::get_epoll_timeout_lk() {
+    if (!_tmset.empty()) {
+        return _tmset.begin()->first;
     }
     return std::chrono::system_clock::time_point::max();
-
 }
 
+NetContext::SocketInfo *NetContext::alloc_socket_lk() {
+    if (_first_free_socket_ident >= _sockets.size()) {
+        _sockets.resize(_first_free_socket_ident+1);
+        _sockets.back()._ident = _sockets.size();
+    }
+    SocketInfo *nfo = &_sockets[_first_free_socket_ident];
+    std::swap(nfo->_ident,_first_free_socket_ident);
+    return nfo;
+}
+
+void NetContext::free_socket_lk(SocketIdent id) {
+    SocketInfo *nfo = &_sockets[id];
+    std::destroy_at(nfo);
+    std::construct_at(nfo);
+    nfo->_ident = _first_free_socket_ident;
+    _first_free_socket_ident = id;
+}
+
+NetContext::SocketInfo *NetContext::socket_by_ident(SocketIdent id) {
+    if (id >= _sockets.size()) return nullptr;
+    auto r = &_sockets[id];
+    return r->_ident == id?r:nullptr;
+}
+
+
 void NetContext::run_worker(std::stop_token tkn, int efd)  {
+    std::unique_lock lk(_mx);
     std::stop_callback __(tkn, [&]{
         eventfd_write(efd, 1);
     });
@@ -66,7 +90,7 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
         int needfd = -1;
         bool timeout_thread = false;
         if (_cur_timer_thread.compare_exchange_strong(needfd, efd)) {
-            timeout = get_epoll_timeout();
+            timeout = get_epoll_timeout_lk();
             timeout_thread= true;
         }
         auto res = _epoll.wait(timeout);
@@ -74,20 +98,22 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
             _cur_timer_thread = -1;
         }
         if (!res) {
-            std::lock_guard _(_tmx);
             auto now = std::chrono::system_clock::now();
-            while (!_pqueue.empty() && _pqueue.front().get_tp() <= now) {
-                auto p = _pqueue.front().get_peer();
-                if (_pqueue.size() > 1)
-                    std::swap(_pqueue.front(), _pqueue.back());
-                _pqueue.pop_back();
-                p->on_timeout();
-                if (tkn.stop_requested()) break;
+            while (!_tmset.empty()) {
+                auto iter = _tmset.begin();
+                if (iter->first > now) break;
+                SocketIdent id = iter->second;
+                _tmset.erase(iter);
+                SocketInfo *nfo = socket_by_ident(id);
+                if (nfo && nfo->_timeout_cb) {
+                    auto cb = std::exchange(nfo->_timeout_cb, nullptr);
+                    nfo->invoke_cb(lk, _cond, [&]{cb->on_timeout();});
+                }
             }
         } else {
             auto &e = *res;
             if (e.ident >= 0) {
-                process_event(e);
+                process_event_lk(lk, e);
             } else {
                 eventfd_t dummy;
                 eventfd_read(efd, &dummy);
@@ -98,19 +124,21 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
 
 }
 
-void NetContext::receive(std::span<char> buffer, IPeer *peer) {
-    auto ctx = peer->get_context_aux();
-    std::lock_guard _(ctx->mx);
-    ctx->flags |= EPOLLIN;
-    ctx->buffer = buffer;
-    ctx->peer = peer;
-    apply_flags(ctx);
+void NetContext::receive(SocketIdent ident, std::span<char> buffer, IPeer *peer) {
+    std::lock_guard _(_mx);
+    auto ctx = socket_by_ident(ident);
+    if (!ctx) return;
+    ctx->_flags |= EPOLLIN;
+    ctx->_recv_buffer = buffer;
+    ctx->_recv_cb = peer;
+    apply_flags_lk(ctx);
 }
 
-std::size_t NetContext::send(std::string_view data, IPeer *peer) {
-    auto ctx = peer->get_context_aux();
-    std::lock_guard _(ctx->mx);
-    int s = ::send(ctx->sock, data.data(), data.size(), MSG_DONTWAIT);
+std::size_t NetContext::send(SocketIdent ident, std::string_view data) {
+    std::lock_guard _(_mx);
+    auto ctx = socket_by_ident(ident);
+    if (!ctx) return 0;
+    int s = ::send(ctx->_socket, data.data(), data.size(), MSG_DONTWAIT);
     if (s < 0) {
         int e = errno;
         if (e == EWOULDBLOCK || e == EPIPE || e == ECONNRESET) {
@@ -120,18 +148,18 @@ std::size_t NetContext::send(std::string_view data, IPeer *peer) {
         }
     }
     return s;
-
 }
 
-void NetContext::callback_on_send_available( IPeer *peer) {
-    auto ctx = peer->get_context_aux();
-    std::lock_guard _(ctx->mx);
-    ctx->flags |= EPOLLOUT;
-    ctx->peer = peer;
-    apply_flags(ctx);
+void NetContext::callback_on_send_available(SocketIdent ident, IPeer *peer) {
+    std::lock_guard _(_mx);
+    auto ctx = socket_by_ident(ident);
+    if (!ctx) return;
+    ctx->_flags |= EPOLLOUT;
+    ctx->_send_cb = peer;
+    apply_flags_lk(ctx);
 }
 
-NetContextAux* NetContext::create_server(std::string address_port) {
+SocketIdent NetContext::create_server(std::string address_port) {
     size_t port_pos = address_port.rfind(':');
     if (port_pos == std::string::npos) {
         throw std::invalid_argument("Invalid address format (missing port)");
@@ -199,33 +227,37 @@ NetContextAux* NetContext::create_server(std::string address_port) {
         throw std::system_error(errno, std::generic_category(), "Failed to listen on socket");
     }
 
-    _epoll.add(listen_fd, 0, -1);
-    return new NetContextAux(listen_fd);
+    std::lock_guard _(_mx);
+    SocketInfo *nfo = alloc_socket_lk();
+    nfo->_socket = listen_fd;
+    _epoll.add(listen_fd, 0, nfo->_ident);
+    return nfo->_ident;
 
 }
 
-void NetContext::accept(IServer *server) {
-    auto ctx = server->get_context_aux();
-    std::lock_guard _(ctx->mx);
-    ctx->flags |= EPOLLIN;
-    ctx->server = true;
-    ctx->peer = server;
-    apply_flags(ctx);
+void NetContext::accept(SocketIdent ident, IServer *server) {
+    std::lock_guard _(_mx);
+    auto ctx = socket_by_ident(ident);
+    if (!ctx) return;
+    ctx->_flags |= EPOLLIN;
+    ctx->_accept_cb = server;
+    apply_flags_lk(ctx);
 }
 
-void NetContext::destroy(IPeerServerCommon *p) {
-    auto ctx = p->get_context_aux();
-    {
-        std::lock_guard _(ctx->mx);
-        _epoll.del(ctx->sock);
-        clear_timeout(p);
-    }
-    delete ctx;
+void NetContext::destroy(SocketIdent ident) {
+    std::unique_lock lk(_mx);
+    auto ctx = socket_by_ident(ident);
+    if (!ctx) return;
+    _cond.wait(lk, [&]{return ctx->_cbprotect == 0;}); //wait for finishing all callbacks
+    lk.lock();
+    _epoll.del(ctx->_socket);
+    ::close(ctx->_socket);
+    _tmset.erase({ctx->_tmtp, ident});
+    free_socket_lk(ident);
 }
 
 
-
-NetContextAux *NetContext::peer_connect(std::string address_port)  {
+static int connect_peer(std::string address_port) {
     size_t port_pos = address_port.rfind(':');
     if (port_pos == std::string::npos) {
         throw std::invalid_argument("Invalid address format (missing port)");
@@ -271,28 +303,33 @@ NetContextAux *NetContext::peer_connect(std::string address_port)  {
     if (sockfd == -1) {
         throw std::system_error(errno, std::generic_category(), "Failed to connect");
     }
-
-    _epoll.add(sockfd, 0, -1);
-    return new NetContextAux(sockfd);
-
+    return sockfd;
 }
 
- void NetContext::reconnect(IPeer *peer, std::string address_port) {
-     auto ctx = peer->get_context_aux();
-     std::lock_guard _(ctx->mx);
-     auto new_aux = peer_connect(address_port);
-     std::swap(new_aux->sock, ctx->sock);
-     ctx->flags = 0;
-     ctx->cur_flags = 0;
+
+SocketIdent NetContext::peer_connect(std::string address_port)  {
+
+    int sockfd = connect_peer(address_port);
+    std::lock_guard _(_mx);
+    SocketInfo *nfo = alloc_socket_lk();
+    nfo->_socket = sockfd;
+    _epoll.add(sockfd, 0, nfo->_ident);
+    return nfo->_ident;
+}
+
+ void NetContext::reconnect(SocketIdent ident, std::string address_port) {
+     std::lock_guard _(_mx);
+     auto ctx = socket_by_ident(ident);
+     if (!ctx) return;
+     auto newfd = connect_peer(std::move(address_port));
+     _epoll.del(ctx->_socket);
+     ::close(ctx->_socket);
+     ctx->_socket = newfd;
+     _epoll.add(ctx->_socket, 0, ident);
+     ctx->_flags = 0;
+     ctx->_cur_flags = 0;
  }
 
-NetContextAux::NetContextAux(Socket s):sock(s) {
-
-}
-NetContextAux::~NetContextAux() {
-    std::lock_guard _(mx);
-    ::close(sock);
-}
 
 
 
@@ -316,129 +353,94 @@ void NetContext::run(std::stop_token tkn) {
 
 
 
-NetContext::TimerInfo::~TimerInfo() {
-    if (_peer) {
-        auto aux = _peer->get_context_aux();
-        aux->timeout_ptr = nullptr;
-    }
-}
 
-NetContext::TimerInfo::TimerInfo(std::chrono::system_clock::time_point tp, IPeerServerCommon *p)
-    :_peer(p), _tp(tp)
-{
-    auto aux = _peer->get_context_aux();
-    aux->timeout_ptr = this;
-}
-
-NetContext::TimerInfo::TimerInfo(TimerInfo &&other)
-    :_peer(other._peer),_tp(other._tp) {
-        auto aux = _peer->get_context_aux();
-        aux->timeout_ptr = this;
-        other._peer = nullptr;
-
-}
-
-NetContext::TimerInfo& NetContext::TimerInfo::operator =(TimerInfo &&other) {
-    if (this != &other) {
-        std::destroy_at(this);
-        std::construct_at(this, std::move(other));
-    }
-    return *this;
-}
-
-std::chrono::system_clock::time_point NetContext::TimerInfo::get_tp() const {
-    return _tp;
-}
-
-void NetContext::TimerInfo::refresh_pos() {
-    auto aux = _peer->get_context_aux();
-    aux->timeout_ptr = this;
-}
-
-IPeerServerCommon* NetContext::TimerInfo::get_peer() const {
-    return _peer;
-}
-
-void NetContext::set_timeout(std::chrono::system_clock::time_point tp, IPeerServerCommon *p) {
-    std::lock_guard _(_tmx);
-    bool ntf = _pqueue.empty() || _pqueue.front().get_tp() > tp;
-    auto aux = p->get_context_aux();
-    if (aux->timeout_ptr) {
-        std::size_t idx = reinterpret_cast<const TimerInfo *>(aux->timeout_ptr) - _pqueue.data();
-        if (idx <_pqueue.size()) {
-            _pqueue.push_back(TimerInfo(tp, p));
-            heapify_remove(_pqueue, idx, TimerInfo::compare);
-            _pqueue[idx].refresh_pos();
-            return;
-        }
-    }
-    auto idx = _pqueue.size();
-    _pqueue.push_back(TimerInfo(tp, p));
-    heapify_up(_pqueue, idx, &TimerInfo::compare);
+void NetContext::set_timeout(SocketIdent ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) {
+    std::lock_guard _(_mx);
+    auto ctx = socket_by_ident(ident);
+    if (!ctx) return;
+    auto top = get_epoll_timeout_lk();
+    _tmset.erase({ctx->_tmtp, ident});
+    ctx->_timeout_cb = p;
+    ctx->_tmtp = tp;
+    _tmset.insert({ctx->_tmtp, ident});
+    bool ntf = top > tp;
     if (ntf && _cur_timer_thread >= 0) {
         eventfd_write(_cur_timer_thread, 1);
     }
 }
 
-void NetContext::clear_timeout(IPeerServerCommon *p) {
-    std::lock_guard _(_tmx);
-    auto aux = p->get_context_aux();
-    if (aux->timeout_ptr) {
-        std::size_t idx = reinterpret_cast<const TimerInfo *>(aux->timeout_ptr) - _pqueue.data();
-        if (idx <_pqueue.size()) {
-            heapify_remove(_pqueue, idx, TimerInfo::compare);
-        }
-    }
+void NetContext::clear_timeout(SocketIdent ident) {
+    std::lock_guard _(_mx);
+    auto ctx = socket_by_ident(ident);
+    if (!ctx) return;
+    _tmset.erase({ctx->_tmtp, ident});
 
 }
 
-void NetContext::process_event(const WaitRes &e) {
-    NetContextAux *ctx = lock_from_id(e.ident);
-    std::unique_lock _(ctx->mx, std::adopt_lock);
+template<typename Fn>
+void NetContext::SocketInfo::invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn) {
+    ++_cbprotect;
+    lk.unlock();
+    fn();
+    lk.lock();
+    if (--_cbprotect == 0) {
+        cond.notify_all();
+    }
+}
+
+
+
+
+void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRes &e) {
+    auto ctx = socket_by_ident(e.ident);
+    if (!ctx) return;
+    ctx->_cur_flags = 0;
     if (e.events & EPOLLIN) {
-        ctx->flags &= ~EPOLLIN;
-        if (ctx->server) {
+        if (ctx->_accept_cb) {
+            auto srv = std::exchange(ctx->_accept_cb, nullptr);
             sockaddr_storage saddr_stor;
             socklen_t slen = sizeof(saddr_stor);
             sockaddr *saddr = reinterpret_cast<sockaddr *>(&saddr_stor);
-
-            auto srv = static_cast<IServer *>(ctx->peer);
-
-            auto n = accept4(ctx->sock, saddr, &slen, SOCK_CLOEXEC|SOCK_NONBLOCK);
+            auto n = accept4(ctx->_socket, saddr, &slen, SOCK_CLOEXEC|SOCK_NONBLOCK);
             if (n >= 0) {
-                _epoll.add(n,0, -1);
-                srv->on_accept(new NetContextAux(n), sockaddr_to_string(saddr));
+                SocketInfo *nfo = alloc_socket_lk();
+                nfo->_socket = n;
+                _epoll.add(n,0, nfo->_ident);;
+
+                ctx->invoke_cb(lk, _cond, [&]{if (srv) srv->on_accept(nfo->_ident, sockaddr_to_string(saddr));});
             }
-        } else {
-            auto p = static_cast<IPeer *>(ctx->peer);
-            int r = recv(ctx->sock, ctx->buffer.data(), ctx->buffer.size(), MSG_DONTWAIT);
-            if (r < 0) {
-                int e = errno;
-                if (e == EWOULDBLOCK) {
-                    ctx->flags |= EPOLLIN;
+        }
+        if (ctx->_recv_cb) {
+            int r;
+            do {
+                auto peer = std::exchange(ctx->_recv_cb, nullptr);
+                if (!peer) break;
+                r = recv(ctx->_socket, ctx->_recv_buffer.data(), ctx->_recv_buffer.size(), MSG_DONTWAIT);
+                if (r < 0) {
+                    int e = errno;
+                    if (e == EWOULDBLOCK) {
+                        ctx->_flags |= EPOLLIN;
+                    } else {
+                        ctx->invoke_cb(lk, _cond,  [&]{peer->on_read_complete({});});
+                    }
                 } else {
-                    p->on_read_complete({});
+                    ctx->invoke_cb(lk, _cond, [&]{peer->on_read_complete(std::string_view(ctx->_recv_buffer.data(), r));});
                 }
-            } else {
-                p->on_read_complete(std::string_view(ctx->buffer.data(), r));
-            }
+            } while (r>0);
         }
     }
     if (e.events & EPOLLOUT) {
-        ctx->flags &= ~EPOLLOUT;
-        auto p = static_cast<IPeer *>(ctx->peer);
-        p->on_send_available();
+        auto peer = std::exchange(ctx->_send_cb, nullptr);
+        if (peer) ctx->invoke_cb(lk, _cond, [&]{peer->on_send_available();});
     }
-    apply_flags(ctx);
+    apply_flags_lk(ctx);
 
 }
 
-void NetContext::apply_flags(NetContextAux *aux) {
-    if (aux->mx.level1()) {
-        if (aux->flags != aux->cur_flags) {
-            _epoll.mod(aux->sock, aux->flags, aux->ident);
-            aux->cur_flags = aux->flags;
-        }
+void NetContext::apply_flags_lk(SocketInfo *ctx) {
+    if (ctx->_flags != ctx->_cur_flags) {
+        _epoll.mod(ctx->_socket, ctx->_flags, ctx->_ident);
+        ctx->_cur_flags = ctx->_flags;
     }
 }
 
@@ -469,31 +471,6 @@ void NetThreadedContext::start() {
     }
 }
 
-NetContextAux *NetContext::lock_from_id(std::size_t id) {
-    std::lock_guard _(_imx);
-    auto aux =  _identMap.size() <= id?nullptr:_identMap[id].get();
-    if (aux) aux->mx.lock();
-    return aux;
-}
-
-NetContextAux *NetContext::alloc_aux(Socket sock) {
-    std::lock_guard _(_imx);
-    auto aux = std::make_unique<NetContextAux>(sock);
-    if (_first)
-
-
-}
-
-void NetContext::register_ident(int id, NetContextAux *peer) {
-    std::lock_guard _(_imx);
-    if (static_cast<std::size_t>(id) >=_identMap.size()) _identMap.resize(id+1, nullptr);
-    _identMap[id] = peer;
-}
-
-void NetContext::unregister_ident(int id) {
-    std::lock_guard _(_imx);
-    _identMap[id] = nullptr;
-}
 
 
 

@@ -52,7 +52,7 @@ public:
 protected:
     Cont _cont;
 
-    bool compare(const Item &a, const Item &b) {
+    static bool compare(const Item &a, const Item &b) {
         return a.first > b.first;
     }
 };

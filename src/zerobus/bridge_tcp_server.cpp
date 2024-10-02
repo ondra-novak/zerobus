@@ -13,8 +13,8 @@ BridgeTCPServer::BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std:
         auto br = IBridgeAPI::from_bus(_bus.get_handle());
         br->register_monitor(this);
         _next_ping = std::chrono::system_clock::now()+std::chrono::seconds(_ping_interval);
-        _ctx->set_timeout(_next_ping, this);
-        _ctx->accept(this);
+        _ctx->set_timeout(_aux, _next_ping, this);
+        _ctx->accept(_aux, this);
     }
 
 BridgeTCPServer::BridgeTCPServer(Bus bus, std::string address_port, AuthConfig auth_cfg)
@@ -29,29 +29,26 @@ BridgeTCPServer::~BridgeTCPServer() {
     lk.lock();
     auto br = IBridgeAPI::from_bus(_bus.get_handle());
     br->unregister_monitor(this);
-    _ctx->destroy(this);
+    _ctx->destroy(_aux);
 }
 
 
 void BridgeTCPServer::on_channels_update() noexcept {
-    _ctx->set_timeout(std::chrono::system_clock::time_point::min(), this);
+    _ctx->set_timeout(_aux, std::chrono::system_clock::time_point::min(), this);
 }
 
 bool BridgeTCPServer::on_message_dropped(IListener *, const Message &) noexcept {return false;}
 
-void BridgeTCPServer::on_accept(NetContextAux *aux, std::string /*peer_addr*/) {
+void BridgeTCPServer::on_accept(SocketIdent aux, std::string /*peer_addr*/) noexcept {
     //TODO report peer_addr
     std::lock_guard _(_mx);
     auto p = std::make_unique<Peer>(*this, aux, _id_cntr++);
     _peers.push_back(std::move(p));
-    _ctx->accept(this);
+    _ctx->accept(_aux, this);
 }
 
-NetContextAux* BridgeTCPServer::get_context_aux() {
-    return _aux;
-}
 
-void BridgeTCPServer::on_timeout() {
+void BridgeTCPServer::on_timeout() noexcept {
     auto now  = std::chrono::system_clock::now();
     std::vector<std::shared_ptr<Peer> > pcpy;
     {
@@ -70,10 +67,10 @@ void BridgeTCPServer::on_timeout() {
             }
         }
     }
-    _ctx->set_timeout(_next_ping, this);
+    _ctx->set_timeout(_aux, _next_ping, this);
 }
 
-BridgeTCPServer::Peer::Peer(BridgeTCPServer &owner, NetContextAux *aux, unsigned int id)
+BridgeTCPServer::Peer::Peer(BridgeTCPServer &owner, SocketIdent aux, unsigned int id)
     :BridgeTCPCommon(owner._bus, owner._ctx, aux)
     ,_format(Format::unknown)
     ,_id(id)
@@ -150,7 +147,7 @@ void BridgeTCPServer::lost_connection(Peer *p) {
     _peers.erase(ne, _peers.end());
 }
 
-void BridgeTCPServer::Peer::on_read_complete(std::string_view data) {
+void BridgeTCPServer::Peer::on_read_complete(std::string_view data) noexcept {
     _activity_check = false;
     switch (_format) {
         default:
