@@ -13,7 +13,8 @@ class IPeerServerCommon;
 class IPeer;
 class IServer;
 
-using SocketIdent = unsigned int;
+///Identification of connection (server socket)
+using ConnHandle = unsigned int;
 
 class INetContext {
 public:
@@ -23,45 +24,91 @@ public:
 
     ///connects peer to an address
     /**
-     * @param address_port address and port entered as "address:port"
-     * @return pointer to ContextAux. This pointer must be stored within peer and
-     * returned every-time the context calls a function IPeer::get_context_aux. The
-     * peer also must call destroy() during its destruction
+     * @param address_port address:port of target
+     * @return if connection is successful (still pending to connect but valid),
+     * return handle to the connection.
+     * @exception std::system_error when connection cannot be established
+     *
+     @note you should create IPeer for the result
      *
      */
-    virtual SocketIdent peer_connect(std::string address_port) = 0;
+    virtual ConnHandle peer_connect(std::string address_port) = 0;
 
     ///creates server
-    /** @param address_port address and port entered as "address:port"
-    * @return pointer to ContextAux. This pointer must be stored within the server and
-    * returned every-time the context calls a function IServer::get_context_aux. The
-    * peer also must call destroy() during its destruction
-    */
-    virtual SocketIdent create_server(std::string address_port) = 0;
+    /**
+     * @param address_port address:port where open port
+     * @return if connection is successful (still pending to connect but valid),
+     * return handle to the connection.
+     * @exception std::system_error when connection cannot be established
+     *
+     * @note you should create IServer for the result
+     */
+    virtual ConnHandle create_server(std::string address_port) = 0;
 
     ///closes connection and connects it again to address
     /**
-     * @param peer connected peer
-     * @param address_port address and port to reconnect
+     * replaces connection identified by the handle
      *
-     * if exception is thrown, the current connection stays untouched
-     * If reconnect is successful, pending receive is canceled, you need to start it again.
-     * Writing is not allowed you need to use callback_on_send_available
+     * @param connection current connection handle
+     * @param address_port new address:port
+     * @exception std::system_error when connection cannot be established. In this
+     * case old connection is not replaces
+     *
+     * @note replacing the connection causes canceling all pending callbacks (expect
+     * timeout).
      */
-    virtual void reconnect(SocketIdent connection, std::string address_port) = 0;
+    virtual void reconnect(ConnHandle connection, std::string address_port) = 0;
     ///start receiving data
-    virtual void receive(SocketIdent connection, std::span<char> buffer, IPeer *peer) = 0;
-    ///send data.
-    virtual std::size_t send(SocketIdent connection, std::string_view data) = 0;
-    ///ask context whether send is available
-    virtual void callback_on_send_available(SocketIdent connection, IPeer *peer) = 0;
+    /**
+     * @param connection connection handle
+     * @param buffer reference to a character buffer (preallocated)
+     * @param peer pointer to peer, which receives callback, when receive is successful
+     */
+    virtual void receive(ConnHandle connection, std::span<char> buffer, IPeer *peer) = 0;
+    ///Send a data
+    /**
+     * @param connection connection handle
+     * @param data data to send. Sending empty string causes sending EOF, which
+     * closes connection.
+     * @return count of bytes written. The function can return 0, which can mean
+     * that connection has been reset or output buffer is full. To detect connection
+     * reset, if zero is returned after clear_to_send(), it does mean, that
+     * connection has been reset. Otherwise, output buffer is probably full and you
+     * need to requst callback_on_send_available
+     */
+    virtual std::size_t send(ConnHandle connection, std::string_view data) = 0;
+    ///notifies context that peer is ready to send data
+    /**
+     * Result of this call is calling function clear_to_send(), when send is possible.
+     * Then the peer can use send() function to send data.
+     *
+     * There is no specified interval between clear_to_send() and invocation of send.
+     * You can use ready_to_send() , receive clear_to_send() to ensure, that
+     * next send() will able to send a data. You can call ready_to_send many time you
+     * need.
+     *
+     * @param connection connection handle
+     * @param peer the peer which receives callback
+     */
+    virtual void ready_to_send(ConnHandle connection, IPeer *peer) = 0;
 
 
     ///request to accept next connection
-    virtual void accept(SocketIdent connection, IServer *server) = 0;
+    /**
+     * @param connection connection handle
+     * @param server server which receives callback
+     */
+    virtual void accept(ConnHandle connection, IServer *server) = 0;
 
     ///request to destroy server/peer
-    virtual void destroy(SocketIdent connection) = 0;
+    /**
+     * You must call this function to close the connection.
+     * @param connection connection handle
+     *
+     * @note the function blocks, if there are active callbacks. You must finish
+     * all callbacks to finish this functions
+     */
+    virtual void destroy(ConnHandle connection) = 0;
 
     ///sets timeout at given time
     /**
@@ -70,10 +117,10 @@ public:
      *
      * If a timeout is set, it works as clear_timeout + set_timeout
      */
-    virtual void set_timeout(SocketIdent connection, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) = 0;
+    virtual void set_timeout(ConnHandle connection, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) = 0;
 
     ///Clear existing timeout
-    virtual void clear_timeout(SocketIdent connection) = 0;
+    virtual void clear_timeout(ConnHandle connection) = 0;
 };
 
 class IPeerServerCommon {
@@ -88,10 +135,18 @@ public:
     virtual ~IPeer() = default;
 
     ///called by context, if send is available
-    virtual void on_send_available() noexcept= 0;
+    /**
+     * When this function called, you can call send() which will be able to send
+     * a data to the connection. You should then use ready_to_send() if you
+     * need to write more data.
+     */
+    virtual void clear_to_send() noexcept= 0;
 
-    ///called by context, if read is complete (delivering read data)
-    virtual void on_read_complete(std::string_view data) noexcept= 0;
+    ///called by context, if receive is complete,
+    /**
+     * @param data received data. If the string is empty, then connection has been closed
+     */
+    virtual void receive_complete(std::string_view data) noexcept= 0;
 };
 
 class IServer: public IPeerServerCommon {
@@ -102,17 +157,17 @@ public:
     /**
      * You need to create peer and set the returned value as aux
      */
-    virtual void on_accept(SocketIdent connection, std::string peer_addr) noexcept= 0;
+    virtual void on_accept(ConnHandle connection, std::string peer_addr) noexcept= 0;
 };
 
 std::shared_ptr<INetContext> make_context(int iothreads);
 
 
 ///creates server which calls a user callback with data required to create a new peer
-template<std::invocable<SocketIdent, std::string> CB>
+template<std::invocable<ConnHandle, std::string> CB>
 class ServerCallback: public IServer {
 public:
-    ServerCallback(std::shared_ptr<INetContext> ctx, SocketIdent connection, CB &&cb)
+    ServerCallback(std::shared_ptr<INetContext> ctx, ConnHandle connection, CB &&cb)
         :_ctx(std::move(ctx)), _connection(connection), _cb(std::forward<CB>(cb)) {}
 
     ~ServerCallback() {
@@ -122,7 +177,7 @@ public:
     ServerCallback(const ServerCallback &) = delete;
     ServerCallback &operator=(const ServerCallback &) = delete;
 
-    virtual void on_accept(SocketIdent connection, std::string peer_addr) noexcept override {
+    virtual void on_accept(ConnHandle connection, std::string peer_addr) noexcept override {
         _cb(connection, std::move(peer_addr));
     }
     virtual void on_timeout() noexcept {}
@@ -130,7 +185,7 @@ public:
 
 protected:
     std::shared_ptr<INetContext> _ctx;
-    SocketIdent _connection;
+    ConnHandle _connection;
     CB _cb;
 };
 
@@ -141,7 +196,7 @@ protected:
  * @param cb
  * @return
  */
-template<std::invocable<SocketIdent, std::string> CB>
+template<std::invocable<ConnHandle, std::string> CB>
 auto make_server(std::shared_ptr<INetContext> ctx, std::string address_port, CB &&cb) {
     using AdjCB = std::decay_t<CB>;
     auto aux = ctx->create_server(std::move(address_port));

@@ -3,7 +3,7 @@
 namespace zerobus {
 
 
-BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,SocketIdent aux)
+BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,ConnHandle aux)
 :AbstractBinaryBridge(std::move(bus))
 ,_ctx(std::move(ctx))
 ,_aux(aux)
@@ -13,7 +13,7 @@ BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,Socke
 
 void BridgeTCPCommon::init() {
     read_from_connection();
-    _ctx->callback_on_send_available(_aux, this);
+    _ctx->ready_to_send(_aux, this);
 
 }
 
@@ -21,7 +21,7 @@ BridgeTCPCommon::~BridgeTCPCommon() {
     _ctx->destroy(_aux);
 }
 
-void BridgeTCPCommon::on_send_available() noexcept {
+void BridgeTCPCommon::clear_to_send() noexcept {
     std::unique_lock lk(_mx);
     if (!_output_data.empty())  {
         auto s = _ctx->send(_aux, get_view_to_send());
@@ -31,7 +31,7 @@ void BridgeTCPCommon::on_send_available() noexcept {
             return;
         } else {
             if (after_send(s)) {
-                _ctx->callback_on_send_available(_aux, this);
+                _ctx->ready_to_send(_aux, this);
                 return;
             }
         }
@@ -118,7 +118,7 @@ std::string_view BridgeTCPCommon::parse_messages(std::string_view data) {
 
 }
 
-void BridgeTCPCommon::on_read_complete(std::string_view data) noexcept {
+void BridgeTCPCommon::receive_complete(std::string_view data) noexcept {
     if (data.empty()) {
         //function is called with empty string when disconnect happened
         lost_connection();
@@ -181,7 +181,7 @@ void BridgeTCPCommon::flush_buffer() {
         auto s = _ctx->send(_aux, get_view_to_send());
         after_send(s);
         _output_allowed = false;
-        _ctx->callback_on_send_available(_aux, this);
+        _ctx->ready_to_send(_aux, this);
     }
 }
 

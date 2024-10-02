@@ -19,43 +19,43 @@ class NetContext: public INetContext, public std::enable_shared_from_this<NetCon
 public:
 
 
-    virtual SocketIdent peer_connect(std::string address) override;
-    virtual void reconnect(SocketIdent ident, std::string address_port) override;
+    virtual ConnHandle peer_connect(std::string address) override;
+    virtual void reconnect(ConnHandle ident, std::string address_port) override;
     ///start receiving data
-    virtual void receive(SocketIdent ident, std::span<char> buffer, IPeer *peer) override;
+    virtual void receive(ConnHandle ident, std::span<char> buffer, IPeer *peer) override;
     ///send data
-    virtual std::size_t send(SocketIdent ident, std::string_view data) override;
+    virtual std::size_t send(ConnHandle ident, std::string_view data) override;
 
-    virtual void callback_on_send_available(SocketIdent ident, IPeer *peer) override;
+    virtual void ready_to_send(ConnHandle ident, IPeer *peer) override;
 
     ///creates server
-    virtual SocketIdent create_server(std::string address_port) override;
+    virtual ConnHandle create_server(std::string address_port) override;
 
     ///request to accept next connection
-    virtual void accept(SocketIdent ident, IServer *server) override;
+    virtual void accept(ConnHandle ident, IServer *server) override;
 
     ///request to destroy server
-    virtual void destroy(SocketIdent ident) override;
+    virtual void destroy(ConnHandle ident) override;
 
     std::jthread run_thread();
 
     void run(std::stop_token tkn);
 
-    virtual void set_timeout(SocketIdent ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) override;
+    virtual void set_timeout(ConnHandle ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) override;
 
     ///Clear existing timeout
-    virtual void clear_timeout(SocketIdent ident) override;
+    virtual void clear_timeout(ConnHandle ident) override;
 
 
 protected:
 
-    using MyEPoll = EPoll<SocketIdent>;
+    using MyEPoll = EPoll<ConnHandle>;
     using WaitRes = MyEPoll::WaitRes;
-    using TimeoutSet = std::set<std::pair<std::chrono::system_clock::time_point, SocketIdent>  >;
+    using TimeoutSet = std::set<std::pair<std::chrono::system_clock::time_point, ConnHandle>  >;
 
 
     struct SocketInfo {
-        SocketIdent _ident = static_cast<SocketIdent>(-1);
+        ConnHandle _ident = static_cast<ConnHandle>(-1);
         int _socket = -1;
         std::span<char> _recv_buffer;
         int _flags = 0;
@@ -82,7 +82,7 @@ protected:
     mutable std::mutex _mx;
     MyEPoll _epoll = {};
     SocketList _sockets = {};
-    SocketIdent _first_free_socket_ident = 0;
+    ConnHandle _first_free_socket_ident = 0;
     TimeoutSet _tmset;
     std::condition_variable _cond;
 
@@ -91,8 +91,8 @@ protected:
 
     void run_worker(std::stop_token tkn, int efd) ;
     SocketInfo *alloc_socket_lk();
-    void free_socket_lk(SocketIdent id);
-    SocketInfo *socket_by_ident(SocketIdent id);
+    void free_socket_lk(ConnHandle id);
+    SocketInfo *socket_by_ident(ConnHandle id);
 
 
     void process_event_lk(std::unique_lock<std::mutex> &lk, const  WaitRes &e);

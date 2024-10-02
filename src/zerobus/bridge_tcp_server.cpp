@@ -39,7 +39,7 @@ void BridgeTCPServer::on_channels_update() noexcept {
 
 bool BridgeTCPServer::on_message_dropped(IListener *, const Message &) noexcept {return false;}
 
-void BridgeTCPServer::on_accept(SocketIdent aux, std::string /*peer_addr*/) noexcept {
+void BridgeTCPServer::on_accept(ConnHandle aux, std::string /*peer_addr*/) noexcept {
     //TODO report peer_addr
     std::lock_guard _(_mx);
     auto p = std::make_unique<Peer>(*this, aux, _id_cntr++);
@@ -70,7 +70,7 @@ void BridgeTCPServer::on_timeout() noexcept {
     _ctx->set_timeout(_aux, _next_ping, this);
 }
 
-BridgeTCPServer::Peer::Peer(BridgeTCPServer &owner, SocketIdent aux, unsigned int id)
+BridgeTCPServer::Peer::Peer(BridgeTCPServer &owner, ConnHandle aux, unsigned int id)
     :BridgeTCPCommon(owner._bus, owner._ctx, aux)
     ,_format(Format::unknown)
     ,_id(id)
@@ -147,7 +147,7 @@ void BridgeTCPServer::lost_connection(Peer *p) {
     _peers.erase(ne, _peers.end());
 }
 
-void BridgeTCPServer::Peer::on_read_complete(std::string_view data) noexcept {
+void BridgeTCPServer::Peer::receive_complete(std::string_view data) noexcept {
     _activity_check = false;
     switch (_format) {
         default:
@@ -161,7 +161,7 @@ void BridgeTCPServer::Peer::on_read_complete(std::string_view data) noexcept {
                     _input_data.clear();
                     data = data.substr(magic.size()-prev_size);
                     if (!data.empty()) {
-                        on_read_complete(data);
+                        receive_complete(data);
                     } else {
                         read_from_connection();
                     }
@@ -175,7 +175,7 @@ void BridgeTCPServer::Peer::on_read_complete(std::string_view data) noexcept {
                             _input_data.clear();
                             data = data.substr(magic.size()-prev_size);
                             if (!data.empty()) {
-                                on_read_complete(data);
+                                receive_complete(data);
                             } else {
                                 read_from_connection();
                             }
@@ -198,7 +198,7 @@ void BridgeTCPServer::Peer::on_read_complete(std::string_view data) noexcept {
             }
             return;
         case Format::zbus:
-            BridgeTCPCommon::on_read_complete(data);
+            BridgeTCPCommon::receive_complete(data);
             return;
     }
 }

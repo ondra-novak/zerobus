@@ -41,7 +41,7 @@ void BridgeTCPClient::lost_connection() {
         _input_data.clear();  //any incomplete message is lost
         _output_cursor = 0; //last output incomplete message will be send again
         read_from_connection(); //start reading
-        _ctx->callback_on_send_available(_aux, this); //generate signal to write
+        _ctx->ready_to_send(_aux, this); //generate signal to write
     } catch (...) {
         _timeout_reconnect = true;
         _ctx->set_timeout(_aux, std::chrono::system_clock::now()+std::chrono::seconds(2), this);
@@ -61,16 +61,16 @@ void BridgeTCPClient::on_auth_request(std::string_view proof_type, std::string_v
     }
 }
 
-void BridgeTCPClient::on_send_available() noexcept {
+void BridgeTCPClient::clear_to_send() noexcept {
     if (_handshake) {
         if (_ctx->send(_aux, magic) < magic.size()) {   //magic should fit to the buffer whole
             lost_connection();
         } else {
             _handshake = false;
-            _ctx->callback_on_send_available(_aux, this);
+            _ctx->ready_to_send(_aux, this);
         }
     } else {
-        BridgeTCPCommon::on_send_available();
+        BridgeTCPCommon::clear_to_send();
     }
 }
 

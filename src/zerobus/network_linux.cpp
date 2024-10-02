@@ -62,7 +62,7 @@ NetContext::SocketInfo *NetContext::alloc_socket_lk() {
     return nfo;
 }
 
-void NetContext::free_socket_lk(SocketIdent id) {
+void NetContext::free_socket_lk(ConnHandle id) {
     SocketInfo *nfo = &_sockets[id];
     std::destroy_at(nfo);
     std::construct_at(nfo);
@@ -70,7 +70,7 @@ void NetContext::free_socket_lk(SocketIdent id) {
     _first_free_socket_ident = id;
 }
 
-NetContext::SocketInfo *NetContext::socket_by_ident(SocketIdent id) {
+NetContext::SocketInfo *NetContext::socket_by_ident(ConnHandle id) {
     if (id >= _sockets.size()) return nullptr;
     auto r = &_sockets[id];
     return r->_ident == id?r:nullptr;
@@ -102,7 +102,7 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
             while (!_tmset.empty()) {
                 auto iter = _tmset.begin();
                 if (iter->first > now) break;
-                SocketIdent id = iter->second;
+                ConnHandle id = iter->second;
                 _tmset.erase(iter);
                 SocketInfo *nfo = socket_by_ident(id);
                 if (nfo && nfo->_timeout_cb) {
@@ -124,7 +124,7 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
 
 }
 
-void NetContext::receive(SocketIdent ident, std::span<char> buffer, IPeer *peer) {
+void NetContext::receive(ConnHandle ident, std::span<char> buffer, IPeer *peer) {
     std::lock_guard _(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
@@ -134,23 +134,28 @@ void NetContext::receive(SocketIdent ident, std::span<char> buffer, IPeer *peer)
     apply_flags_lk(ctx);
 }
 
-std::size_t NetContext::send(SocketIdent ident, std::string_view data) {
+std::size_t NetContext::send(ConnHandle ident, std::string_view data) {
     std::lock_guard _(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return 0;
-    int s = ::send(ctx->_socket, data.data(), data.size(), MSG_DONTWAIT);
-    if (s < 0) {
-        int e = errno;
-        if (e == EWOULDBLOCK || e == EPIPE || e == ECONNRESET) {
-            s = 0;
-        } else {
-            throw std::system_error(e, std::system_category(), "recv failed");
+    if (data.empty()) {
+        ::shutdown(ctx->_socket, SHUT_WR);
+        return 0;
+    } else {
+        int s = ::send(ctx->_socket, data.data(), data.size(), MSG_DONTWAIT);
+        if (s < 0) {
+            int e = errno;
+            if (e == EWOULDBLOCK || e == EPIPE || e == ECONNRESET) {
+                s = 0;
+            } else {
+                throw std::system_error(e, std::system_category(), "recv failed");
+            }
         }
+        return s;
     }
-    return s;
 }
 
-void NetContext::callback_on_send_available(SocketIdent ident, IPeer *peer) {
+void NetContext::ready_to_send(ConnHandle ident, IPeer *peer) {
     std::lock_guard _(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
@@ -159,7 +164,7 @@ void NetContext::callback_on_send_available(SocketIdent ident, IPeer *peer) {
     apply_flags_lk(ctx);
 }
 
-SocketIdent NetContext::create_server(std::string address_port) {
+ConnHandle NetContext::create_server(std::string address_port) {
     size_t port_pos = address_port.rfind(':');
     if (port_pos == std::string::npos) {
         throw std::invalid_argument("Invalid address format (missing port)");
@@ -235,7 +240,7 @@ SocketIdent NetContext::create_server(std::string address_port) {
 
 }
 
-void NetContext::accept(SocketIdent ident, IServer *server) {
+void NetContext::accept(ConnHandle ident, IServer *server) {
     std::lock_guard _(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
@@ -244,7 +249,7 @@ void NetContext::accept(SocketIdent ident, IServer *server) {
     apply_flags_lk(ctx);
 }
 
-void NetContext::destroy(SocketIdent ident) {
+void NetContext::destroy(ConnHandle ident) {
     std::unique_lock lk(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
@@ -307,7 +312,7 @@ static int connect_peer(std::string address_port) {
 }
 
 
-SocketIdent NetContext::peer_connect(std::string address_port)  {
+ConnHandle NetContext::peer_connect(std::string address_port)  {
 
     int sockfd = connect_peer(address_port);
     std::lock_guard _(_mx);
@@ -317,7 +322,7 @@ SocketIdent NetContext::peer_connect(std::string address_port)  {
     return nfo->_ident;
 }
 
- void NetContext::reconnect(SocketIdent ident, std::string address_port) {
+ void NetContext::reconnect(ConnHandle ident, std::string address_port) {
      std::lock_guard _(_mx);
      auto ctx = socket_by_ident(ident);
      if (!ctx) return;
@@ -354,7 +359,7 @@ void NetContext::run(std::stop_token tkn) {
 
 
 
-void NetContext::set_timeout(SocketIdent ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) {
+void NetContext::set_timeout(ConnHandle ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) {
     std::lock_guard _(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
@@ -369,7 +374,7 @@ void NetContext::set_timeout(SocketIdent ident, std::chrono::system_clock::time_
     }
 }
 
-void NetContext::clear_timeout(SocketIdent ident) {
+void NetContext::clear_timeout(ConnHandle ident) {
     std::lock_guard _(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
@@ -421,17 +426,17 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRe
                     if (e == EWOULDBLOCK) {
                         ctx->_flags |= EPOLLIN;
                     } else {
-                        ctx->invoke_cb(lk, _cond,  [&]{peer->on_read_complete({});});
+                        ctx->invoke_cb(lk, _cond,  [&]{peer->receive_complete({});});
                     }
                 } else {
-                    ctx->invoke_cb(lk, _cond, [&]{peer->on_read_complete(std::string_view(ctx->_recv_buffer.data(), r));});
+                    ctx->invoke_cb(lk, _cond, [&]{peer->receive_complete(std::string_view(ctx->_recv_buffer.data(), r));});
                 }
             } while (r>0);
         }
     }
     if (e.events & EPOLLOUT) {
         auto peer = std::exchange(ctx->_send_cb, nullptr);
-        if (peer) ctx->invoke_cb(lk, _cond, [&]{peer->on_send_available();});
+        if (peer) ctx->invoke_cb(lk, _cond, [&]{peer->clear_to_send();});
     }
     apply_flags_lk(ctx);
 
