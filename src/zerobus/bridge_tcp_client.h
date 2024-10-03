@@ -47,19 +47,24 @@ protected:
     virtual void on_channels_update() noexcept override;
     virtual bool on_message_dropped(IListener *, const Message &) noexcept override {return false;}
     virtual void clear_to_send() noexcept override;
-
+    virtual void receive_complete(std::string_view data) noexcept override;
     virtual void on_auth_request(std::string_view proof_type, std::string_view salt) override;
+    virtual void on_welcome() override;
 
     std::string _address;
     AuthCallback _acb;
-    bool _handshake = true;
+    std::string _expected_ws_accept;
+    std::string _header;
+
 
     bool _timeout_reconnect = false;
 
+    bool send_handshake();
 
 
     virtual void lost_connection() override;
 
+    bool check_ws_response(std::string_view hdr);
 };
 
 }

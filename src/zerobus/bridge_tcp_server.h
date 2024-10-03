@@ -4,6 +4,8 @@
 #include "websocket.h"
 
 #include "bridge_tcp_common.h"
+
+#include <queue>
 namespace zerobus {
 
 class BridgeTCPServer: public IMonitor, public IServer {
@@ -76,6 +78,21 @@ public:
      */
     void reject_auth(unsigned int id);
 
+
+    struct CustomPage {
+        int status_code;
+        std::string status_message;
+        std::string content_type;
+        std::string content;
+    };
+
+    ///sets callback which is called when non-websocket request is received
+    /**
+     * It can only server simple GET requests
+     * @param cb callback. The callback receive uri-path and it should return CustomPage structure
+     */
+    void set_custom_page_callback(std::function<CustomPage(std::string_view)> cb);
+
 protected:
 
     virtual void on_channels_update() noexcept override;
@@ -85,9 +102,6 @@ protected:
 
     class Peer : public BridgeTCPCommon {
     public:
-        enum class Format {
-            unknown, zbus, websocket
-        };
 
         Peer(BridgeTCPServer &owner, ConnHandle aux, unsigned int id);
         Peer(const Peer &) = delete;
@@ -99,19 +113,23 @@ protected:
 
         bool check_dead();
         unsigned int get_id() const {return _id;}
-
-        virtual void output_message(std::string_view message) override;
+        bool is_lost() const {return _lost;}
+        bool disabled() const {return BridgeTCPCommon::disabled() || _handshake;}
 
     protected:
-        Format _format = Format::unknown;
         bool _activity_check = false;
         bool _ping_sent = false;
+        bool _lost = false;
         unsigned int _id;
 
+        struct ParseResult {
+            std::string_view key;
+            std::string_view uri;
+            std::string_view method;
+        };
+
         bool websocket_handshake(std::string_view &data);
-        bool parse_websocket_stream(std::string_view data);
-        void send_websocket_message(std::string_view data);
-        void send_websocket_message(const ws::Message &msg);
+        ParseResult parse_websocket_header(std::string_view data);
         void start_peer();
 
     private:
@@ -124,15 +142,20 @@ protected:
     std::shared_ptr<INetContext> _ctx;
     ConnHandle  _aux = 0;
     AuthConfig _auth_cfg;
+    std::string _path;
     std::mutex _mx;
     std::vector<std::unique_ptr<Peer> > _peers;
     std::chrono::system_clock::time_point _next_ping = {};
     unsigned int _id_cntr = 1;
+    bool _send_mine_channels_flag = false;
+    bool _lost_peers_flag = false;
+    std::function<CustomPage(std::string_view)> _custom_page;
 
     unsigned int _ping_interval = ping_interval_sec_default;
 
     void on_auth_response(Peer *p, std::string_view ident, std::string_view proof, std::string_view salt);
-    void lost_connection(Peer *p);
+    void lost_connection();
+
 
     template<typename Fn>
     void call_with_peer(unsigned int id, Fn &&fn);

@@ -1,12 +1,18 @@
 #include "bridge_tcp_common.h"
 
+#include "sha1.h"
+
+#include "base64.h"
+#include <random>
 namespace zerobus {
 
 
-BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,ConnHandle aux)
+BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,ConnHandle aux, bool client)
 :AbstractBinaryBridge(std::move(bus))
 ,_ctx(std::move(ctx))
 ,_aux(aux)
+,_ws_builder(client)
+,_ws_parser(_input_data, false)
 
 {
 }
@@ -94,55 +100,34 @@ std::string_view BridgeTCPCommon::get_view_to_send() const {
     return std::string_view(_output_data.data()+_output_cursor, _output_data.size()-_output_cursor);
 }
 
-std::string_view BridgeTCPCommon::parse_messages(std::string_view data) {
-    //process all messages until buffer is empty
-    while (!data.empty()) {
-        //determine required bytes to read size (we actually need +1)
-        auto needsz = AbstractBinaryBridge::get_uint_size(data[0]) + 1;
-        //check, whether data has required size
-        if (needsz > data.size()) break;
-        //if do, we can safely read size of message
-        auto msgsize = AbstractBinaryBridge::read_uint(data);
-        //check, whether remaining size is sufficient for message
-        if (msgsize > data.size()) break;
-        //is it? retrieve message part
-        auto m = data.substr(0,msgsize);
-        //remove the message from the data
-        data = data.substr(msgsize);
-        //dispatch message
-        this->dispatch_message(m);
-        //data can contain unprocessed messages
-    }
-    //data can contain incomplete message
-    return data;
-
-}
 
 void BridgeTCPCommon::receive_complete(std::string_view data) noexcept {
     if (data.empty()) {
         //function is called with empty string when disconnect happened
         lost_connection();
     } else {
-        //if there is alread begin of incomplete message
-        if (!_input_data.empty()) {
-            //append data to the message
-            std::copy(data.begin(), data.end(), std::back_inserter(_input_data));
-            //and assume, that _input_data is buffer containing whole message
-            data = std::string_view(_input_data.data(), _input_data.size());
+        while (_ws_parser.push_data(data)) {
+            ws::Message msg = _ws_parser.get_message();
+            switch (msg.type) {
+                case ws::Type::binary:
+                    this->dispatch_message(msg.payload);
+                    break;
+                case ws::Type::ping:
+                    output_message(ws::Message{msg.payload, ws::Type::pong});
+                    break;
+                case ws::Type::pong:
+                    break;
+                case ws::Type::connClose:
+                    output_message(ws::Message{"", ws::Type::connClose, _ws_builder.closeNormal});
+                    _ws_parser.reset();
+                    lost_connection();
+                    return;
+                default:    //ignore unknown message
+                    break;
+            }
+            data = _ws_parser.get_unused_data();
+            _ws_parser.reset();
         }
-        //try to parse messages in data/buffer, returns incomplete message or empty data
-        data = parse_messages(data);
-        //check whether returned data is not the buffer itself
-        //in this case, no extra processing is needed, otherwise we need copy
-        //the incomplete message to the buffer
-        if (data.data() != _input_data.data()) {
-            //check and resize buffer if needed
-            if (data.size() > _input_data.size()) _input_data.resize(data.size());
-            //move, because data can be view of if _input_data, data to the buffer
-            std::move(data.begin(), data.end(), _input_data.begin());
-        }
-        //resize input buffer to final size of the incomplete message
-        _input_data.resize(data.size());
         //request read from network
         read_from_connection();
     }
@@ -158,11 +143,18 @@ void BridgeTCPCommon::on_auth_response(std::string_view , std::string_view , std
     //empty - authentification must be implemented by child class
 }
 
-void BridgeTCPCommon::output_message(std::string_view data) {
+void BridgeTCPCommon::output_message(const ws::Message &msg) {
     std::lock_guard _(_mx);
+    if (_handshake) return; //can't send message when handshake
     _output_msg_sp.push_back(_output_data.size());
-    AbstractBinaryBridge::write_string(std::back_inserter(_output_data), data);
+    _ws_builder(msg, [&](char c){
+        _output_data.push_back(c);
+    });
     flush_buffer();
+
+}
+void BridgeTCPCommon::output_message(std::string_view data) {
+    output_message({data, ws::Type::binary});
 }
 
 void BridgeTCPCommon::on_auth_request(std::string_view , std::string_view ) {
@@ -170,7 +162,7 @@ void BridgeTCPCommon::on_auth_request(std::string_view , std::string_view ) {
 }
 
 void BridgeTCPCommon::on_welcome() {
-    //empty - no needed
+    peer_reset();
 }
 
 void BridgeTCPCommon::on_timeout() noexcept {
@@ -184,5 +176,83 @@ void BridgeTCPCommon::flush_buffer() {
         _ctx->ready_to_send(_aux, this);
     }
 }
+
+std::string BridgeTCPCommon::calculate_ws_accept(std::string_view key) {
+    SHA1 sha1;
+    sha1.update(key);
+    sha1.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    auto digest = sha1.final();
+    std::string encoded;
+    base64.encode(digest.begin(), digest.end(), std::back_inserter(encoded));
+    return encoded;
+}
+
+std::string BridgeTCPCommon::generate_ws_key() {
+    unsigned char buff[16];
+    std::random_device rnd;
+    std::uniform_int_distribution<unsigned char> dist(0,255);
+    for (auto &c: buff) c = dist(rnd);
+    std::string encoded;
+    base64.encode(std::begin(buff), std::end(buff), std::back_inserter(encoded));
+    return encoded;
+
+
+}
+
+std::string_view BridgeTCPCommon::split(std::string_view &data, std::string_view sep) {
+    std::string_view r;
+    auto pos = data.find(sep);
+    if (pos == data.npos) {
+        r = data;
+        data = {};
+    } else {
+        r = data.substr(0,pos);
+        data = data.substr(pos+sep.size());
+    }
+    return r;
+}
+
+std::string_view BridgeTCPCommon::trim(std::string_view data) {
+    while (!data.empty() && isspace(data.front())) data = data.substr(1);
+    while (!data.empty() && isspace(data.back())) data = data.substr(0, data.size()-1);
+    return data;
+}
+
+char BridgeTCPCommon::fast_tolower(char c) {
+    if (c >= 'A' && c <= 'Z') return c - 'A' + 'a';
+    else return c;
+}
+
+bool BridgeTCPCommon::icmp(const std::string_view &a, const std::string_view &b) {
+    if (a.size() != b.size()) return false;
+    std::size_t cnt = a.size();
+    for (std::size_t i = 0; i < cnt; ++i) {
+        if (fast_tolower(a[i]) != fast_tolower(b[i])) return false;
+    }
+    return true;
+}
+
+std::string BridgeTCPCommon::get_address_from_url(std::string_view url) {
+    if (url.substr(0, 5) != "ws://") return std::string(url);
+    url = url.substr(5);
+    auto pos = url.find('/');
+    auto addr = url.substr(0, pos);
+    pos = addr.find(':');
+    if (pos == addr.npos) {
+        return std::string(addr).append(":80");
+    } else {
+        return std::string(addr);
+    }
+}
+
+std::string BridgeTCPCommon::get_path_from_url(std::string_view url) {
+    if (url.substr(0, 5) != "ws://") return "/";
+    url = url.substr(5);
+    auto pos = url.find('/');
+    if (pos == url.npos) return "/";
+    return std::string(url.substr(pos));
+
+}
+
 
 }

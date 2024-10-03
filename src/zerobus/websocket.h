@@ -59,18 +59,18 @@ public:
 	static const unsigned int opcodePing = 9;
 	static const unsigned int opcodePong = 10;
 
-	static const unsigned int closeNormal = 1000;
-	static const unsigned int closeGoingAway = 1001;
-	static const unsigned int closeProtocolError = 1002;
-	static const unsigned int closeUnsupportedData = 1003;
-	static const unsigned int closeNoStatus = 1005;
-	static const unsigned int closeAbnormal = 1006;
-	static const unsigned int closeInvalidPayload = 1007;
-	static const unsigned int closePolicyViolation = 1008;
-	static const unsigned int closeMessageTooBig = 1009;
-	static const unsigned int closeMandatoryExtension = 1010;
-	static const unsigned int closeInternalServerError = 1011;
-	static const unsigned int closeTLSHandshake = 1015;
+	static const std::uint16_t closeNormal = 1000;
+	static const std::uint16_t closeGoingAway = 1001;
+	static const std::uint16_t closeProtocolError = 1002;
+	static const std::uint16_t closeUnsupportedData = 1003;
+	static const std::uint16_t closeNoStatus = 1005;
+	static const std::uint16_t closeAbnormal = 1006;
+	static const std::uint16_t closeInvalidPayload = 1007;
+	static const std::uint16_t closePolicyViolation = 1008;
+	static const std::uint16_t closeMessageTooBig = 1009;
+	static const std::uint16_t closeMandatoryExtension = 1010;
+	static const std::uint16_t closeInternalServerError = 1011;
+	static const std::uint16_t closeTLSHandshake = 1015;
 
 };
 

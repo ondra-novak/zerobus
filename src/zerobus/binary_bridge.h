@@ -104,7 +104,7 @@ public:
     void send_auth_failed();
 
     ///returns true if bridge is disabled, because it waits for authentification
-    bool disabled() const {return !_disabled;}
+    bool disabled() const {return _disabled;}
 
 public:
 

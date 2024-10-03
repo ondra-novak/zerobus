@@ -93,7 +93,9 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
             timeout = get_epoll_timeout_lk();
             timeout_thread= true;
         }
+        lk.unlock();
         auto res = _epoll.wait(timeout);
+        lk.lock();
         if (timeout_thread) {
             _cur_timer_thread = -1;
         }
@@ -112,7 +114,7 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
             }
         } else {
             auto &e = *res;
-            if (e.ident >= 0) {
+            if (e.ident != static_cast<ConnHandle>(-1)) {
                 process_event_lk(lk, e);
             } else {
                 eventfd_t dummy;
@@ -254,7 +256,6 @@ void NetContext::destroy(ConnHandle ident) {
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
     _cond.wait(lk, [&]{return ctx->_cbprotect == 0;}); //wait for finishing all callbacks
-    lk.lock();
     _epoll.del(ctx->_socket);
     ::close(ctx->_socket);
     _tmset.erase({ctx->_tmtp, ident});
@@ -345,7 +346,6 @@ std::jthread NetContext::run_thread() {
 }
 
 void NetContext::run(std::stop_token tkn) {
-    auto me = shared_from_this();
     int efd = eventfd(0, EFD_CLOEXEC|EFD_NONBLOCK);
     try {
         run_worker(std::move(tkn), efd);
@@ -402,6 +402,7 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRe
     ctx->_cur_flags = 0;
     if (e.events & EPOLLIN) {
         if (ctx->_accept_cb) {
+            ctx->_flags &= ~EPOLLIN;
             auto srv = std::exchange(ctx->_accept_cb, nullptr);
             sockaddr_storage saddr_stor;
             socklen_t slen = sizeof(saddr_stor);
@@ -409,6 +410,7 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRe
             auto n = accept4(ctx->_socket, saddr, &slen, SOCK_CLOEXEC|SOCK_NONBLOCK);
             if (n >= 0) {
                 SocketInfo *nfo = alloc_socket_lk();
+                ctx = socket_by_ident(e.ident); //reallocation of socket list, we must find ctx again
                 nfo->_socket = n;
                 _epoll.add(n,0, nfo->_ident);;
 
@@ -416,25 +418,17 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRe
             }
         }
         if (ctx->_recv_cb) {
-            int r;
-            do {
-                auto peer = std::exchange(ctx->_recv_cb, nullptr);
-                if (!peer) break;
-                r = recv(ctx->_socket, ctx->_recv_buffer.data(), ctx->_recv_buffer.size(), MSG_DONTWAIT);
-                if (r < 0) {
-                    int e = errno;
-                    if (e == EWOULDBLOCK) {
-                        ctx->_flags |= EPOLLIN;
-                    } else {
-                        ctx->invoke_cb(lk, _cond,  [&]{peer->receive_complete({});});
-                    }
-                } else {
-                    ctx->invoke_cb(lk, _cond, [&]{peer->receive_complete(std::string_view(ctx->_recv_buffer.data(), r));});
-                }
-            } while (r>0);
+            int r = recv(ctx->_socket, ctx->_recv_buffer.data(), ctx->_recv_buffer.size(), MSG_DONTWAIT);
+            if (r < 0) {
+                 r = 0; //any error - close connection
+            }
+            auto peer = std::exchange(ctx->_recv_cb, nullptr);
+            ctx->_flags &= ~EPOLLIN;
+            ctx->invoke_cb(lk, _cond, [&]{peer->receive_complete(std::string_view(ctx->_recv_buffer.data(), r));});
         }
     }
     if (e.events & EPOLLOUT) {
+        ctx->_flags &= ~EPOLLOUT;
         auto peer = std::exchange(ctx->_send_cb, nullptr);
         if (peer) ctx->invoke_cb(lk, _cond, [&]{peer->clear_to_send();});
     }
@@ -444,7 +438,7 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRe
 
 void NetContext::apply_flags_lk(SocketInfo *ctx) {
     if (ctx->_flags != ctx->_cur_flags) {
-        _epoll.mod(ctx->_socket, ctx->_flags, ctx->_ident);
+        _epoll.mod(ctx->_socket, ctx->_flags|EPOLLONESHOT, ctx->_ident);
         ctx->_cur_flags = ctx->_flags;
     }
 }
