@@ -12,11 +12,15 @@ DirectBridge::Bridge::~Bridge() {
 }
 
 DirectBridge::DirectBridge(Bus b1, Bus b2)
-          :_b1(*this, std::move(b1)), _b2(*this, std::move(b2)) {}
+          :_b1(*this, std::move(b1)), _b2(*this, std::move(b2)) {
+    _b1.send_mine_channels();
+    _b2.send_mine_channels();
+}
 
 
-void DirectBridge::Bridge::send_channels(const ChannelList &channels) noexcept {
-    _owner.on_update_chanels(*this, channels);
+void DirectBridge::Bridge::send_channels(const ChannelList &channels, Operation op) noexcept {
+    auto r = persist_channel_list(channels, _pchns, _pchrs);    //persists this to avoid reference volatile buffers
+    _owner.on_update_chanels(*this, r, op);
 }
 
 void DirectBridge::Bridge::on_message(const Message &message,bool ) noexcept {
@@ -29,18 +33,20 @@ DirectBridge::Bridge& DirectBridge::select_other(const Bridge &other) {
     throw std::runtime_error("Invalid source bridge instance (unreachable code)");
 }
 
-void DirectBridge::on_update_chanels(const Bridge &source, const Bridge::ChannelList &channels) {
-    Bridge &target = select_other(source);
-    target.apply_their_channels(channels);
+void DirectBridge::on_update_chanels(const Bridge &source, const Bridge::ChannelList &channels, Bridge::Operation op) {
+    select_other(source).apply_their_channels(channels,op);
 }
 
 void DirectBridge::on_message(const Bridge &source, const Message &msg) {
-    Bridge &target = select_other(source);
-    target.dispatch_message(Message(msg));
+    select_other(source).dispatch_message(Message(msg));
 }
 
 void DirectBridge::Bridge::on_channels_update() noexcept {
     send_mine_channels();
+    while (_reset) {
+        _reset = false;
+        send_mine_channels();
+    }
 }
 
 void DirectBridge::Bridge::send_message(const Message &msg) noexcept {
@@ -49,6 +55,27 @@ void DirectBridge::Bridge::send_message(const Message &msg) noexcept {
 
 bool DirectBridge::Bridge::on_message_dropped(IListener *, const Message &) noexcept {
     return false;
+}
+
+
+void DirectBridge::Bridge::send_reset() noexcept {
+    _owner.send_reset(*this);
+}
+
+void DirectBridge::Bridge::send_clear_path(ChannelID sender, ChannelID receiver) noexcept {
+    _owner.send_clear_path(*this, sender, receiver);
+}
+
+void DirectBridge::send_reset(const Bridge &source) {
+    select_other(source).apply_their_reset();
+}
+
+void DirectBridge::send_clear_path(const Bridge &source, ChannelID sender, ChannelID receiver) {
+    select_other(source).apply_their_clear_path(sender, receiver);
+}
+
+void DirectBridge::Bridge::apply_their_reset() {
+    _reset = true;
 }
 
 }

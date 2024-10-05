@@ -27,6 +27,25 @@ public:
     static std::shared_ptr<IBridgeAPI> from_bus(const std::shared_ptr<IBus> &bus) {
         return std::static_pointer_cast<IBridgeAPI>(bus);
     }
+
+    ///Follow return path (if exists) and call the callback with listener which forward messages to the sender
+    /**
+     * @param sender sender
+     * @param cb callback function which contains IListener * of the forwarder
+     * @retval true success
+     * @retval false failure - not found
+     * @note the callback is called probably under a lock
+     */
+    virtual bool follow_return_path(ChannelID sender, FunctionRef<bool(IListener *)> &&cb) const = 0;
+    ///Clears path to the sender
+    /**
+     * @param lsn bridge that was responsible to deliver the message
+     * @param sender id of sender
+     * causes that messages to this sender can no longer be delivered to this listener
+     * @retval true cleared
+     * @retval false no such path
+     */
+    virtual bool clear_return_path(IListener *lsn, ChannelID sender) = 0;
 };
 
 ///exception is thrown when cycle is detected during subscribtion
@@ -46,6 +65,16 @@ struct ChannelFilter {
 ///Abstract bridge class. Extend this class to implement the bridge
 class AbstractBridge: public IListener {
 public:
+
+    enum class Operation {
+        ///replace subscribed channels with a new set
+        replace,
+        ///subscribe new channels
+        add,
+        ///unsubscribe channels
+        erase,
+    };
+
 
     using ChannelList = IBridgeAPI::ChannelList;
 
@@ -81,7 +110,13 @@ public:
      * it from multiple threads
      *
      */
-    void apply_their_channels(ChannelList lst);
+    void apply_their_channels(ChannelList lst, Operation op);
+
+    ///apply their reset command on our side
+    void apply_their_reset();
+
+    ///apply their clear path command
+    void apply_their_clear_path(ChannelID sender, ChannelID receiver);
 
     ///Forward message from other side to connected broker
     /**
@@ -92,14 +127,6 @@ public:
     void dispatch_message(Message &msg);
     void dispatch_message(Message &&msg);
 
-    ///Call this function if peer has been reset
-    /**
-     * If peer is reset, it is expected, that peer unsubscribed all channels, so we must resend current
-     * list. This function assumes, that no channels are subscribed on peer and calls send_mine_channels()
-     *
-     * @note @b mt-safety: this method is not mt-safe
-     */
-    void peer_reset();
 
     void register_monitor(IMonitor *mon) {
         _ptr->register_monitor(mon);
@@ -110,25 +137,59 @@ public:
 
     void set_filter(ChannelFilter flt);
 
+    ///retrieve return path to given id
+    /**
+     *
+     * @param chanId
+     * @return
+     */
+    template<std::invocable<AbstractBridge *> Fn>
+    bool follow_return_path(ChannelID sender, Fn &&fn) {
+        return _ptr->follow_return_path(sender, [&](IListener *lsn){
+            auto b = dynamic_cast<AbstractBridge *>(lsn);
+            if (b) {
+                fn(b);
+                return true;
+            }
+            return false;
+        });
+    }
+
+    Bus get_bus() const {return Bus(_ptr);}
 
 protected:
-    ///overide - send channels to other side
-    virtual void send_channels(const ChannelList &channels) noexcept = 0;
-    ///overide - send message to other side
+    ///override - send channels to other side
+    /**
+     * @param channels list channels
+     * @param op operation with channels
+     */
+    virtual void send_channels(const ChannelList &channels, Operation op) noexcept = 0;
+    ///overeide - send message to other side
     virtual void send_message(const Message &msg) noexcept = 0;
+    ///override - send reset command to other side
+    virtual void send_reset() noexcept = 0;
+    ///override - send clear path command
+    virtual void send_clear_path(ChannelID sender, ChannelID receiver) noexcept = 0;
 
+    virtual void process_mine_channels(ChannelList lst) noexcept;
 protected:
 
     std::shared_ptr<IBridgeAPI> _ptr;
 
     std::vector<char> _char_buffer = {};
     std::vector<ChannelID> _cur_channels = {};
+    std::vector<ChannelID> _tmp = {};   ///< temporary buffer for channel operations
     std::size_t _chan_hash = 0;
     ChannelFilter _filter;
     bool _cycle_detected = false;
 
+
     static std::size_t hash_of_channel_list(const ChannelList &list);
+    static ChannelList persist_channel_list(const ChannelList &source, std::vector<ChannelID> &channels, std::vector<char> &characters);
+
     virtual void on_message(const Message &message, bool pm) noexcept override;
+
+
 };
 
 class AbstractMonitor: public IMonitor {

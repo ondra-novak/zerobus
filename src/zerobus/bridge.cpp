@@ -45,81 +45,97 @@ AbstractBridge::AbstractBridge(Bus bus)
 
 
 
+void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
+    lst = _filter.filter(lst);
+
+    std::sort(lst.begin(), lst.end());
+
+
+    std::set_difference(lst.begin(), lst.end(),
+            _cur_channels.begin(), _cur_channels.end(), std::back_inserter(_tmp));
+    if (!_tmp.empty()) send_channels(_tmp, Operation::add);
+    _tmp.clear();
+
+    std::set_difference(_cur_channels.begin(), _cur_channels.end(),
+            lst.begin(), lst.end(), std::back_inserter(_tmp));
+    if (!_tmp.empty()) send_channels(_tmp, Operation::erase);
+    _tmp.clear();
+
+    persist_channel_list(lst, _cur_channels, _char_buffer);
+}
+
 void AbstractBridge::send_mine_channels() {
-    if (_cycle_detected) {
-        _chan_hash = 0;
-        send_channels({});
+    if (!_cycle_detected) {
+        _ptr->get_active_channels(this, [&](auto lst){process_mine_channels(lst);});
     } else {
-        _ptr->get_active_channels(this, [&](ChannelList lst){
-           lst = _filter.filter(lst);
-           auto h = hash_of_channel_list(lst);
-           if (h != _chan_hash) {
-               _chan_hash = h;
-               send_channels(lst);
-           }
-        });
+        process_mine_channels({});
     }
 }
 
-void AbstractBridge::apply_their_channels(ChannelList lst) {
-    std::string_view node_id = _ptr->get_cycle_detect_channel_name();
-    std::sort(lst.begin(), lst.end());
-    bool cd; {
-        auto iter = std::lower_bound(lst.begin(), lst.end(), node_id);
-        cd = (iter != lst.end() && *iter == node_id);
+void AbstractBridge::apply_their_channels(ChannelList lst, Operation op) {
+    auto cdid = _ptr->get_cycle_detect_channel_name();
+    if (!cdid.empty()) {
+        auto iter = std::find(lst.begin(), lst.end(), cdid);
+        if (iter != lst.end()) {
+            if (op == Operation::erase) {
+                if (_cycle_detected) {
+                    _cycle_detected = false;
+                    send_reset();
+                    return;
+                }
+            } else {
+                if (!_cycle_detected) {
+                    _cycle_detected = true;
+                    _ptr->unsubscribe_all(this);
+                    return;
+                }
+            }
+        }
     }
-    if (cd != _cycle_detected) {
-        _cycle_detected = cd;
-        send_mine_channels();
+    if (_cycle_detected) return;
+    switch (op) {
+        case Operation::replace: _ptr->unsubscribe_all(this);
+                                 [[fallthrough]];
+        case Operation::add: for (const auto &x: lst) _ptr->subscribe(this, x);
+                             break;
+        case Operation::erase: for (const auto &x: lst) _ptr->unsubscribe(this, x);
+                               break;
     }
-    if (cd) lst = {};
+}
 
-    std::set_difference(_cur_channels.begin(), _cur_channels.end(),
-                        lst.begin(), lst.end(), LambdaOutputIterator(
-                                [&](const ChannelID &id) {
-            _ptr->unsubscribe(this, id);
-        }));
-    std::set_difference(lst.begin(), lst.end(),
-                        _cur_channels.begin(), _cur_channels.end(),LambdaOutputIterator(
-                                [&](const ChannelID &id) {
-            if (_filter.check(id)) _ptr->subscribe(this, id);
-        }));
-    _char_buffer.resize(std::accumulate(lst.begin(), lst.end(), std::size_t(0),
-            [](std::size_t x, const ChannelID &id){return x + id.size();}));
-    _cur_channels.resize(lst.size());{
-        auto iter = _char_buffer.data();
-        std::transform(lst.begin(), lst.end(),_cur_channels.begin(),[&](const ChannelID &id){
-            std::string_view ret(iter, id.size());
-            iter = std::copy(id.begin(), id.end(), iter);
-            return ret;
-        });
-    }
-
+void AbstractBridge::apply_their_reset() {
+    _cur_channels.clear();
+    _char_buffer.clear();
+    send_mine_channels();
 }
 
 void AbstractBridge::dispatch_message(Message &&msg) {
-    if (_filter.check(msg.get_channel())) {
-        _ptr->dispatch_message(this, std::move(msg), true);
-    }
+    dispatch_message(msg);
 }
 
 void AbstractBridge::dispatch_message(Message &msg) {
     if (_filter.check(msg.get_channel())) {
-        _ptr->dispatch_message(this, std::move(msg), true);
+        if (!_ptr->dispatch_message(this, std::move(msg), true)) {
+            send_clear_path(msg.get_sender(), msg.get_channel());
+        }
     }
 }
 
 AbstractBridge::~AbstractBridge() {
+    _ptr->unsubscribe_all(this);
 }
 
 
-void AbstractBridge::peer_reset() {
-    _chan_hash = 0;
-    send_mine_channels();
-}
 
 void AbstractBridge::set_filter(ChannelFilter flt) {
     _filter = std::move(flt);
+}
+
+void AbstractBridge::apply_their_clear_path(ChannelID sender, ChannelID receiver) {
+    _ptr->clear_return_path(this, receiver);
+    follow_return_path(sender, [&](AbstractBridge *brd){
+        brd->send_clear_path(sender, receiver);
+    });
 }
 
 void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
@@ -147,6 +163,24 @@ ChannelFilter::ChannelList ChannelFilter::filter(ChannelList lst) const {
         return !check(id);
     });
     return ChannelList(lst.begin(), iter);
+}
+
+ChannelFilter::ChannelList AbstractBridge::persist_channel_list(const ChannelList &source, std::vector<ChannelID> &channels, std::vector<char> &characters) {
+    characters.clear();
+    channels.clear();
+    std::size_t needsz = std::accumulate(source.begin(), source.end(), std::size_t(0), [&](auto cnt, const auto &str){
+        return cnt + str.size();
+    });
+    characters.resize(needsz);
+    channels.resize(source.size());
+    auto iter = characters.data();
+    std::transform(source.begin(), source.end(), channels.begin(),[&](const ChannelID &id){
+        std::string_view ret(iter, id.size());
+        iter = std::copy(id.begin(), id.end(), iter);
+        return ret;
+    });
+    return channels;
+
 }
 
 }

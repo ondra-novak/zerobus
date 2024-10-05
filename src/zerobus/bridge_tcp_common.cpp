@@ -162,7 +162,7 @@ void BridgeTCPCommon::on_auth_request(std::string_view , std::string_view ) {
 }
 
 void BridgeTCPCommon::on_welcome() {
-    peer_reset();
+    //empty
 }
 
 void BridgeTCPCommon::on_timeout() noexcept {

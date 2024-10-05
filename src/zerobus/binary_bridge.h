@@ -10,27 +10,27 @@ public:
         ///a message
         message = 0,
         ///list of channels
-        channels = 1,
-        ///ping message
-        /** sent by any side if it wants to know whether other side is alive */
-        ping = 2,
-        ///pong message
-        /** sent by any side as response to ping message. The message itself is
-         * ignored, the implementation class knows, that some message arrived (it
-         * called dispatch_message)
-         */
-        pong = 3,
-        ///notifies, that new profile has been created on the server, and it is also send as result of succesful authentification
+        channels_replace = 1,
+        ///list of channels
+        channels_add = 2,
+        ///list of channels
+        channels_erase = 3,
+        ///send from other side that they unsubscribed all channels
+        channels_reset = 4,
+        ///clear return path
+        clear_path = 5,
+        ///notifies, successful login
         /**
-         *
+         * it also assumes channels_reset (in case of re-login)
          */
-        welcome = 4,
+        welcome = 6,
         ///sent by one side to request authentication
-        auth_req = 5,
+        auth_req = 7,
         ///sent by other side to response authentication
-        auth_response = 6,
+        auth_response = 8,
         ///authentication failed - client should close connection
-        auth_failed = 7
+        auth_failed = 9,
+
     };
 
     /* authentication schema
@@ -106,6 +106,8 @@ public:
     ///returns true if bridge is disabled, because it waits for authentification
     bool disabled() const {return _disabled;}
 
+
+
 public:
 
     ///maximum size of message which can fit to a static buffer
@@ -140,7 +142,7 @@ public:
       * into one
       */
      template<std::output_iterator<char> Iter, typename ... ChanList>
-     static Iter write_channel_list(Iter out, const ChanList &...list);
+     static Iter write_channel_list(Iter out, Operation op, const ChanList &...list);
 
      ///Read channel list
      /**
@@ -155,20 +157,38 @@ public:
      static std::size_t read_channel_list_count(std::string_view msgtext);
 
 
+     template<typename Fn>
+     void output_message_helper(std::size_t req_size, Fn &&fn) {
+         if (req_size <= static_output_buffer_size) {
+             char buffer[static_output_buffer_size];
+             auto iter = fn(static_cast<char *>(buffer));
+             output_message(std::string_view(buffer, std::distance(buffer,iter)));
+         } else {
+             std::vector<char> buffer;
+             buffer.resize(req_size);
+             auto iter = fn(buffer.begin());
+             output_message(std::string_view(buffer.data(), std::distance(buffer.begin(), iter)));
+         }
+     }
+
 protected:
 
      bool _disabled = false;
      char _salt[16];
 
+    virtual void send_reset() noexcept override;
+    virtual void send_clear_path(zerobus::ChannelID sender,
+            zerobus::ChannelID receiver) noexcept override;
     ///overide - send channels to other side
-    virtual void send_channels(const ChannelList &channels) noexcept override;
+    virtual void send_channels(const ChannelList &channels, Operation op) noexcept override;
     ///overide - send message to other side
     virtual void send_message(const Message &msg) noexcept override;
 
-    void parse_channels(std::string_view message);
+    void parse_channels(std::string_view message, Operation op);
     void parse_message(std::string_view message);
     void parse_auth_req(std::string_view message);
     void parse_auth_resp(std::string_view message);
+    void parse_clear_path(std::string_view message);
 };
 
 
@@ -244,6 +264,7 @@ inline Iter AbstractBinaryBridge::write_message(Iter out, const Message &message
     return out;
 }
 
+
 template<typename Factory>
 inline auto AbstractBinaryBridge::read_message(Factory &&factory, std::string_view msgtext)
 -> decltype(factory(std::string_view(), std::string_view(), std::string_view(), std::uint32_t(0))) {
@@ -255,8 +276,15 @@ inline auto AbstractBinaryBridge::read_message(Factory &&factory, std::string_vi
 }
 
 template<std::output_iterator<char> Iter, typename ... ChanList>
-inline Iter AbstractBinaryBridge::write_channel_list(Iter out, const ChanList & ... list) {
-    *out = static_cast<char>(MessageType::channels);
+inline Iter AbstractBinaryBridge::write_channel_list(Iter out, Operation op, const ChanList & ... list) {
+    MessageType t;
+    switch (op) {
+        case Operation::add: t  =MessageType::channels_add;break;
+        case Operation::erase: t  =MessageType::channels_erase;break;
+        case Operation::replace: t  =MessageType::channels_replace;break;
+        default: throw /* unreachable */;
+    }
+    *out = static_cast<char>(t);
     ++out;
     auto total_count  = (static_cast<std::size_t>(0) + ... + list.size());
     out = write_uint(out, total_count);

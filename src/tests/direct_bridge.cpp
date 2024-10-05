@@ -7,16 +7,62 @@
 #include <future>
 
 #include <algorithm>
+#include <sstream>
 using namespace zerobus;
 
+
+class VerboseBridge: public DirectBridge {
+public:
+
+    using DirectBridge::DirectBridge;
+
+
+protected:
+    template<typename ... Args>
+    void log(const Bridge &bs, Args && ... args) {
+        auto &bt = select_other(bs);
+        std::cout << (bs.get_bus().get_handle().get()) << "->" << (bt.get_bus().get_handle().get()) << ": ";
+        (std::cout << ... << args);
+        std::cout << std::endl;
+    }
+
+    virtual void send_reset(const DirectBridge::Bridge &source) override {
+        log(source, "RESET");
+        DirectBridge::send_reset(source);
+    }
+    virtual void on_message(const DirectBridge::Bridge &source,
+            const Message &msg) override {
+        log(source, "MESSAGE: sender: ", msg.get_sender(), " channel: ", msg.get_channel(),
+                " content: ", msg.get_content(), " conversation: ", msg.get_conversation());
+        DirectBridge::on_message(source, msg);
+    }
+    virtual void on_update_chanels(const DirectBridge::Bridge &source,
+            const AbstractBridge::ChannelList &channels,
+            AbstractBridge::Operation op) override {
+        std::ostringstream chlist;
+        char sep = ' ';
+        for (auto c: channels) {
+            chlist << sep << c;
+            sep = ',';
+        }
+        log(source, "CHANNELS: ", op == AbstractBridge::Operation::add?"ADD":
+                          op == AbstractBridge::Operation::erase?"ERASE":"REPLACE", chlist.view());
+        DirectBridge::on_update_chanels(source, channels, op);
+    }
+    virtual void send_clear_path(const DirectBridge::Bridge &source,
+            ChannelID sender, ChannelID receiver) override {
+        log(source, "CLEAR_PATH: ",sender," -> ",receiver);
+        DirectBridge::send_clear_path(source, sender, receiver);
+    }
+};
 
 void direct_bridge_simple() {
     auto master = Bus::create();
     auto slave1 = Bus::create();
     auto slave2 = Bus::create();
 
-    DirectBridge br1(slave1, master);
-    DirectBridge br2(slave2, master);
+    VerboseBridge br1(slave1, master);
+    VerboseBridge br2(slave2, master);
     std::string result;
 
     auto sn = ClientCallback(slave1, [&](AbstractClient &c, const Message &msg, bool){
@@ -53,9 +99,8 @@ void direct_bridge_cycle() {
     auto slave2 = Bus::create();
     std::string result;
 
-    DirectBridge br1(slave1, master);
-    DirectBridge br2(slave2, master);
-    DirectBridge br3(slave2, slave1);
+    VerboseBridge br1(slave1, master);
+    VerboseBridge br2(slave2, master);
     auto sn = ClientCallback(slave1, [&](AbstractClient &c, const Message &msg, bool){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
@@ -66,6 +111,9 @@ void direct_bridge_cycle() {
     });
 
     sn.subscribe("reverse");
+
+    VerboseBridge br3(slave2, slave1);
+
 
     cn.send_message("reverse", "ahoj svete");
     CHECK_EQUAL(result, "etevs joha");
@@ -79,3 +127,4 @@ int main() {
     direct_bridge_cycle();
 
 }
+

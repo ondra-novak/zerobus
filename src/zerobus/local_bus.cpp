@@ -465,11 +465,12 @@ void LocalBus::BackPathItem::remove() {
     if (next) next->prev = prev;
 
 }
-void LocalBus::BackPathItem::promote(BackPathItem *root) {
+void LocalBus::BackPathItem::promote(BackPathItem * &root) {
     if (root != this) {
         remove();
         prev = nullptr;
         next = root;
+        root->prev = this;
         root = this;
     }
 }
@@ -477,16 +478,20 @@ void LocalBus::BackPathItem::promote(BackPathItem *root) {
 void LocalBus::BackPathStorage::store_path(const ChannelID &chan, IListener *lsn) {
     auto iter = _entries.find(chan);
     if (iter == _entries.end()) {
+        if (lsn == nullptr) return;
         mvector<char> name(chan.begin(), chan.end(), mvector<char>::allocator_type(_entries.get_allocator()));
         std::string_view key(name.data(), name.size());
         auto iter = _entries.emplace(key, BackPathItem{
-            nullptr, _root, std::move(name), lsn}).first;
-        _root = &iter->second;
+            nullptr, nullptr, std::move(name), lsn}).first;
+        iter->second.promote(_root);
         while (_entries.size() > _limit) {
             auto *l = _last;
             l->remove();
             _entries.erase(std::string_view(l->id.begin(), l->id.end()));
         }
+    } else if (lsn == nullptr) {
+        iter->second.remove();
+        _entries.erase(iter);
     } else {
         iter->second.l = lsn;
         iter->second.promote(_root);
@@ -497,6 +502,23 @@ IListener* LocalBus::BackPathStorage::find_path(const ChannelID &chan) const {
     auto iter = _entries.find(chan);
     if (iter != _entries.end()) return iter->second.l;
     return nullptr;
+}
+
+bool LocalBus::follow_return_path(ChannelID sender, FunctionRef<bool(IListener *)> &&cb) const {
+    std::lock_guard _(_mutex);
+    auto lsn = _back_path.find_path(sender);
+    if (lsn) return cb(lsn);
+    return false;
+}
+
+bool LocalBus::clear_return_path(IListener *lsn, ChannelID sender)  {
+    std::lock_guard _(_mutex);
+    auto lsn2 = _back_path.find_path(sender);
+    if (lsn == lsn2) {
+        _back_path.store_path(sender, nullptr);
+        return true;
+    }
+    return false;
 }
 
 void LocalBus::BackPathStorage::remove_listener(IListener *l) {

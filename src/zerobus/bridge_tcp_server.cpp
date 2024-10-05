@@ -61,6 +61,7 @@ void BridgeTCPServer::on_accept(ConnHandle aux, std::string /*peer_addr*/) noexc
 
 void BridgeTCPServer::on_timeout() noexcept {
     auto now  = std::chrono::system_clock::now();
+    std::vector< std::unique_ptr<Peer> > _peer_to_delete;
     {
         std::lock_guard _(_mx);
         if (now >= _next_ping) {
@@ -80,11 +81,17 @@ void BridgeTCPServer::on_timeout() noexcept {
             }
         }
         if (_lost_peers_flag) {
-            _peers.erase(std::remove_if(_peers.begin(), _peers.end(), [&](const auto &peer){return peer->is_lost();}), _peers.end());
+            _peers.erase(std::remove_if(_peers.begin(), _peers.end(), [&](auto &peer){
+                if (peer->is_lost()) {
+                    _peer_to_delete.push_back(std::move(peer));
+                    return true;
+                }
+                return false;
+            }), _peers.end());
             _lost_peers_flag = false;
         }
+        _ctx->set_timeout(_aux, _next_ping, this);
     }
-    _ctx->set_timeout(_aux, _next_ping, this);
 }
 
 BridgeTCPServer::Peer::Peer(BridgeTCPServer &owner, ConnHandle aux, unsigned int id)

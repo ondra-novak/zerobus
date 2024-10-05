@@ -21,6 +21,7 @@ public:
      * @param b2 second broker
      */
     DirectBridge(Bus b1, Bus b2);
+    virtual ~DirectBridge() = default;
 
 protected:
 
@@ -31,12 +32,18 @@ protected:
 
         virtual void on_message(const Message &message, bool pm) noexcept override;
         virtual void send_message(const Message &msg) noexcept override;
-        virtual void send_channels(const ChannelList &channels) noexcept override;
+        virtual void send_channels(const ChannelList &channels, Operation op) noexcept override;
         virtual void on_channels_update() noexcept override;
         virtual bool on_message_dropped(IListener *lsn, const Message &msg) noexcept override;
+        virtual void send_reset() noexcept override;
+        virtual void send_clear_path(ChannelID sender, ChannelID receiver) noexcept override;
 
+        void apply_their_reset();
     protected:
         DirectBridge &_owner;
+        std::vector<ChannelID> _pchns;
+        std::vector<char> _pchrs;
+        bool _reset = false;
 
     };
 
@@ -46,8 +53,11 @@ protected:
 
     Bridge &select_other(const Bridge &other);
 
-    void on_update_chanels(const Bridge &source, const Bridge::ChannelList &channels);
-    void on_message(const Bridge &source, const Message &msg);
+    virtual void on_update_chanels(const Bridge &source, const Bridge::ChannelList &channels, Bridge::Operation op);
+    virtual void on_message(const Bridge &source, const Message &msg);
+    virtual void send_reset(const Bridge &source);
+    virtual void send_clear_path(const Bridge &source, ChannelID sender, ChannelID receiver) ;
+
 };
 
 

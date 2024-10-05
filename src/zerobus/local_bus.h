@@ -40,6 +40,9 @@ public:
     virtual void unsubcribe_private(IListener *listener) override;
     virtual std::string get_random_channel_name(std::string_view prefix) const override;
     virtual std::string_view get_cycle_detect_channel_name() const override;
+    virtual bool follow_return_path(ChannelID sender, FunctionRef<bool(IListener *)> &&cb) const override;
+    virtual bool clear_return_path(IListener *lsn, ChannelID sender)  override;
+
 
     ///Create local message broker;
     static Bus create();
@@ -111,7 +114,7 @@ protected:
         mvector<char> id = {};
         IListener *l = {};
 
-        void promote(BackPathItem *root);
+        void promote(BackPathItem * &root);
         void remove();
     };
 
