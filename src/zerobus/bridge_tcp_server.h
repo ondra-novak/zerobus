@@ -96,7 +96,6 @@ public:
 protected:
 
     virtual void on_channels_update() noexcept override;
-    virtual bool on_message_dropped(IListener *lsn, const Message &msg) noexcept override;
     virtual void on_accept(ConnHandle aux, std::string peer_addr) noexcept override;
     virtual void on_timeout() noexcept override;
 

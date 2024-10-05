@@ -34,7 +34,6 @@ protected:
         virtual void send_message(const Message &msg) noexcept override;
         virtual void send_channels(const ChannelList &channels, Operation op) noexcept override;
         virtual void on_channels_update() noexcept override;
-        virtual bool on_message_dropped(IListener *lsn, const Message &msg) noexcept override;
         virtual void send_reset() noexcept override;
         virtual void send_clear_path(ChannelID sender, ChannelID receiver) noexcept override;
 

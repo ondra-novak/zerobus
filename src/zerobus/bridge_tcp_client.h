@@ -45,7 +45,6 @@ protected:
 
     virtual void on_timeout() noexcept override;
     virtual void on_channels_update() noexcept override;
-    virtual bool on_message_dropped(IListener *, const Message &) noexcept override {return false;}
     virtual void clear_to_send() noexcept override;
     virtual void receive_complete(std::string_view data) noexcept override;
     virtual void on_auth_request(std::string_view proof_type, std::string_view salt) override;

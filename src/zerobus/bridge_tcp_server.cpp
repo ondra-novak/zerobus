@@ -48,7 +48,6 @@ void BridgeTCPServer::on_channels_update() noexcept {
     _ctx->set_timeout(_aux, std::chrono::system_clock::time_point::min(), this);
 }
 
-bool BridgeTCPServer::on_message_dropped(IListener *, const Message &) noexcept {return false;}
 
 void BridgeTCPServer::on_accept(ConnHandle aux, std::string /*peer_addr*/) noexcept {
     //TODO report peer_addr

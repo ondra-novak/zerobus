@@ -53,9 +53,6 @@ void DirectBridge::Bridge::send_message(const Message &msg) noexcept {
     _owner.on_message(*this, msg);
 }
 
-bool DirectBridge::Bridge::on_message_dropped(IListener *, const Message &) noexcept {
-    return false;
-}
 
 
 void DirectBridge::Bridge::send_reset() noexcept {

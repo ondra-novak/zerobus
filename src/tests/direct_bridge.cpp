@@ -117,14 +117,42 @@ void direct_bridge_cycle() {
 
     cn.send_message("reverse", "ahoj svete");
     CHECK_EQUAL(result, "etevs joha");
+}
 
+void clear_path_test() {
+    auto master = Bus::create();
+    auto slave1 = Bus::create();
+    auto slave2 = Bus::create();
+    std::string result;
+    std::string rp;
 
+    VerboseBridge br1(slave1, master);
+    VerboseBridge br2(slave2, master);
+    auto sn = ClientCallback(slave1, [&](AbstractClient &c, const Message &msg, bool){
+        std::string s ( msg.get_content());
+        rp = msg.get_sender();
+        std::reverse(s.begin(), s.end());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
+    });
+    auto cn= ClientCallback(slave2, [&](AbstractClient &, const Message &msg, bool){
+        result=std::string(msg.get_content());
+    });
+
+    sn.subscribe("reverse");
+    cn.send_message("reverse", "ahoj svete");
+    CHECK_EQUAL(result, "etevs joha");
+    cn.unsubscribe_all();
+    bool r1 = sn.send_message(rp, "aaa"); //still should return true (as we know detecting not delivering)
+    bool r2 = sn.send_message(rp, "bbb"); //should return false
+    CHECK(r1);
+    CHECK(!r2);
 
 }
 
 int main() {
     direct_bridge_simple();
     direct_bridge_cycle();
+    clear_path_test();
 
 }
 

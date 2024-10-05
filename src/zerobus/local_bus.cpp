@@ -279,12 +279,7 @@ bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
 
         auto citer = _channels.find(chanid);
         if (citer == _channels.end()) {
-            bool r = false;
-            for (const auto m: _monitors) {
-                bool s = m->on_message_dropped(listener, msg);
-                r = r || s;
-            }
-            return r;
+            return false;
         }
         ch = citer->second;
     }
