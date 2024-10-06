@@ -44,6 +44,10 @@ int main() {
     unsigned int port = 12121;
 
     auto bus = Bus::create();
+    ClientCallback ping(bus, [](AbstractClient &c, const Message &msg, bool ){
+        c.send_message(msg.get_sender(), msg.get_content(), msg.get_conversation());
+    });
+    ping.subscribe("ping");
     BridgeTCPServer server(bus, "localhost:"+std::to_string(port));
     server.set_custom_page_callback(load_page);
     std::cout << "Opened at port:" << port << std::endl;
