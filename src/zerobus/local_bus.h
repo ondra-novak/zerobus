@@ -42,7 +42,7 @@ public:
     virtual std::string_view get_cycle_detect_channel_name() const override;
     virtual bool follow_return_path(ChannelID sender, FunctionRef<bool(IListener *)> &&cb) const override;
     virtual bool clear_return_path(IListener *lsn, ChannelID sender)  override;
-
+    virtual void force_update_channels()  override;
 
     ///Create local message broker;
     static Bus create();

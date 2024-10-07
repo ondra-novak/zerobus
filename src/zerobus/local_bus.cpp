@@ -289,6 +289,11 @@ bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
     return true;
 }
 
+void LocalBus::force_update_channels() {
+    std::lock_guard _(*this);
+    _channels_change = true;
+}
+
 void LocalBus::run_priv_queue(IListener *target, Message &&msg, bool pm) {
     bool run = _private_queue.empty();
     _private_queue.push_back({target,  std::move(msg), pm});

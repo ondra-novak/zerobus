@@ -46,6 +46,13 @@ public:
      * @retval false no such path
      */
     virtual bool clear_return_path(IListener *lsn, ChannelID sender) = 0;
+
+    ///calls on_update_channels on all monitors
+    /**
+     * This call can be performed asynchronously, or out of current scope. It
+     * only guarantees that this call happen as soon as possible.
+     */
+    virtual void force_update_channels() = 0;
 };
 
 ///exception is thrown when cycle is detected during subscribtion
@@ -172,6 +179,9 @@ protected:
     virtual void send_clear_path(ChannelID sender, ChannelID receiver) noexcept = 0;
 
     virtual void process_mine_channels(ChannelList lst) noexcept;
+
+    ///diagnostic override called when cycle detection state changed;
+    virtual void cycle_detection(bool ) noexcept {};
 protected:
 
     std::shared_ptr<IBridgeAPI> _ptr;

@@ -8,20 +8,27 @@
 
 #include <algorithm>
 #include <sstream>
+#include <iomanip>
 using namespace zerobus;
 
 
 class VerboseBridge: public DirectBridge {
 public:
 
-    using DirectBridge::DirectBridge;
+    VerboseBridge(Bus b1, Bus b2): DirectBridge(std::move(b1),std::move(b2), false) {
+        connect();
+    }
 
 
 protected:
     template<typename ... Args>
     void log(const Bridge &bs, Args && ... args) {
         auto &bt = select_other(bs);
-        std::cout << (bs.get_bus().get_handle().get()) << "->" << (bt.get_bus().get_handle().get()) << ": ";
+        auto ptrs = bs.get_bus().get_handle().get();
+        auto ids = (reinterpret_cast<std::uintptr_t>(ptrs) / 8) & 0xFFF;
+        auto ptrt = bt.get_bus().get_handle().get();
+        auto idt = (reinterpret_cast<std::uintptr_t>(ptrt) / 8) & 0xFFF;
+        std::cout << std::setw(4) << ids << "->" << std::setw(4) << idt << ": ";
         (std::cout << ... << args);
         std::cout << std::endl;
     }
@@ -54,9 +61,14 @@ protected:
         log(source, "CLEAR_PATH: ",sender," -> ",receiver);
         DirectBridge::send_clear_path(source, sender, receiver);
     }
+    virtual void cycle_detection(const DirectBridge::Bridge &source, bool state) noexcept override{
+        if (state) log(source, "CYCLE DETECTED!");
+        else log(source, "CYCLE cleared");
+    }
 };
 
 void direct_bridge_simple() {
+    std::cout << __FUNCTION__ << std::endl;
     auto master = Bus::create();
     auto slave1 = Bus::create();
     auto slave2 = Bus::create();
@@ -94,6 +106,7 @@ void direct_bridge_simple() {
 }
 
 void direct_bridge_cycle() {
+    std::cout << __FUNCTION__ << std::endl;
     auto master = Bus::create();
     auto slave1 = Bus::create();
     auto slave2 = Bus::create();
@@ -120,6 +133,7 @@ void direct_bridge_cycle() {
 }
 
 void clear_path_test() {
+    std::cout << __FUNCTION__ << std::endl;
     auto master = Bus::create();
     auto slave1 = Bus::create();
     auto slave2 = Bus::create();

@@ -11,11 +11,13 @@ DirectBridge::Bridge::~Bridge() {
     unregister_monitor(this);
 }
 
-DirectBridge::DirectBridge(Bus b1, Bus b2)
+DirectBridge::DirectBridge(Bus b1, Bus b2, bool connect_now)
           :_b1(*this, std::move(b1)), _b2(*this, std::move(b2)) {
-    _b1.send_mine_channels();
-    _b2.send_mine_channels();
+   if (connect_now) {
+       connect();
+   }
 }
+
 
 
 void DirectBridge::Bridge::send_channels(const ChannelList &channels, Operation op) noexcept {
@@ -43,10 +45,6 @@ void DirectBridge::on_message(const Bridge &source, const Message &msg) {
 
 void DirectBridge::Bridge::on_channels_update() noexcept {
     send_mine_channels();
-    while (_reset) {
-        _reset = false;
-        send_mine_channels();
-    }
 }
 
 void DirectBridge::Bridge::send_message(const Message &msg) noexcept {
@@ -71,8 +69,20 @@ void DirectBridge::send_clear_path(const Bridge &source, ChannelID sender, Chann
     select_other(source).apply_their_clear_path(sender, receiver);
 }
 
-void DirectBridge::Bridge::apply_their_reset() {
-    _reset = true;
+
+void DirectBridge::connect() {
+    if (!_connected) {
+        _connected = true;
+        send_reset(_b1);
+        send_reset(_b2);
+        _b1.on_channels_update();
+        _b2.on_channels_update();
+    }
+
+}
+
+void DirectBridge::Bridge::cycle_detection(bool state) noexcept {
+    _owner.cycle_detection(*this, state);
 }
 
 }

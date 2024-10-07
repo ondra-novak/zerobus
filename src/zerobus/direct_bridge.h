@@ -20,8 +20,10 @@ public:
      * @param b1 first broker
      * @param b2 second broker
      */
-    DirectBridge(Bus b1, Bus b2);
+    DirectBridge(Bus b1, Bus b2, bool connect_now);
     virtual ~DirectBridge() = default;
+
+    void connect();
 
 protected:
 
@@ -36,19 +38,19 @@ protected:
         virtual void on_channels_update() noexcept override;
         virtual void send_reset() noexcept override;
         virtual void send_clear_path(ChannelID sender, ChannelID receiver) noexcept override;
+        virtual void cycle_detection(bool state) noexcept override;
 
-        void apply_their_reset();
     protected:
         DirectBridge &_owner;
         std::vector<ChannelID> _pchns;
         std::vector<char> _pchrs;
-        bool _reset = false;
 
     };
 
 
     Bridge _b1;
     Bridge _b2;
+    bool _connected = false;
 
     Bridge &select_other(const Bridge &other);
 
@@ -56,6 +58,7 @@ protected:
     virtual void on_message(const Bridge &source, const Message &msg);
     virtual void send_reset(const Bridge &source);
     virtual void send_clear_path(const Bridge &source, ChannelID sender, ChannelID receiver) ;
+    virtual void cycle_detection(const Bridge &, bool ) noexcept {}
 
 };
 

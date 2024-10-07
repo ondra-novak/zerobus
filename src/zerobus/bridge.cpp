@@ -48,19 +48,24 @@ AbstractBridge::AbstractBridge(Bus bus)
 void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
     lst = _filter.filter(lst);
 
-    std::sort(lst.begin(), lst.end());
+    if (_cur_channels.empty()) {
+        if (lst.empty()) return;
+        send_channels(lst, Operation::replace);
+    } else {
+
+        std::sort(lst.begin(), lst.end());
 
 
-    std::set_difference(lst.begin(), lst.end(),
-            _cur_channels.begin(), _cur_channels.end(), std::back_inserter(_tmp));
-    if (!_tmp.empty()) send_channels(_tmp, Operation::add);
-    _tmp.clear();
+        std::set_difference(lst.begin(), lst.end(),
+                _cur_channels.begin(), _cur_channels.end(), std::back_inserter(_tmp));
+        if (!_tmp.empty()) send_channels(_tmp, Operation::add);
+        _tmp.clear();
 
-    std::set_difference(_cur_channels.begin(), _cur_channels.end(),
-            lst.begin(), lst.end(), std::back_inserter(_tmp));
-    if (!_tmp.empty()) send_channels(_tmp, Operation::erase);
-    _tmp.clear();
-
+        std::set_difference(_cur_channels.begin(), _cur_channels.end(),
+                lst.begin(), lst.end(), std::back_inserter(_tmp));
+        if (!_tmp.empty()) send_channels(_tmp, Operation::erase);
+        _tmp.clear();
+    }
     persist_channel_list(lst, _cur_channels, _char_buffer);
 }
 
@@ -80,12 +85,15 @@ void AbstractBridge::apply_their_channels(ChannelList lst, Operation op) {
             if (op == Operation::erase) {
                 if (_cycle_detected) {
                     _cycle_detected = false;
+                    cycle_detection(_cycle_detected);
                     send_reset();
+                    _ptr->force_update_channels();
                     return;
                 }
             } else {
                 if (!_cycle_detected) {
                     _cycle_detected = true;
+                    cycle_detection(_cycle_detected);
                     _ptr->unsubscribe_all(this);
                     return;
                 }
@@ -104,9 +112,10 @@ void AbstractBridge::apply_their_channels(ChannelList lst, Operation op) {
 }
 
 void AbstractBridge::apply_their_reset() {
+    if (_cur_channels.empty()) return; //no active channels - do nothing
+    //enforce refresh
     _cur_channels.clear();
-    _char_buffer.clear();
-    send_mine_channels();
+    _ptr->force_update_channels();
 }
 
 void AbstractBridge::dispatch_message(Message &&msg) {
