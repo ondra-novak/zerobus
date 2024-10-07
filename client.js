@@ -1,10 +1,10 @@
 const zerobus = (function(){
-    
+
     function generateUID(prefix) {
       // Zkombinování aktuálního času s náhodným číslem a konverze na řetězec
       return prefix+Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
     }
-    
+
 
     const MessageType = {
         message: 0,               // a message
@@ -18,7 +18,7 @@ const zerobus = (function(){
         auth_response: 8,          // sent by other side to response authentication
         auth_failed: 9             // authentication failed - client should close connection
     };
-    
+
     class Message {
         #sender;
         #channel;
@@ -27,40 +27,40 @@ const zerobus = (function(){
         #str;
         #bin;
         #json;
-        
+
         constructor(sender, channel, content, conversation_id) {
             if (!conversation_id) conversation_id = 0;
-            if (!channel || typeof channel != "string"  
-                || (typeof content != "string" && typeof content != "object") 
+            if (!channel || typeof channel != "string"
+                || (typeof content != "string" && typeof content != "object")
                 || typeof conversation_id != "number") throw TypeError();
             this.#sender = sender;
             this.#channel = channel;
             this.#content = content;
-            this.#conversation_id = conversation_id;            
+            this.#conversation_id = conversation_id;
         }
-        
+
         get_sender() {
             return this.#sender;
         }
-        
+
         get_channel() {
             return this.#channel;
         }
-        
+
         get_content() {
-            return this.#content;    
+            return this.#content;
         }
-        
+
         get_conversation_id() {
             return this.#conversation_id;
         }
-        
+
         get_string() {  /* retrieve content as string */
             if (this.#str === undefined) {
                 if (typeof this.#content == "string") return this.#content;
                 if (this.#content instanceof Uint8Array) {
                     const dec = new TextDecoder();
-                    this.#str = dec.decode(this.#content); 
+                    this.#str = dec.decode(this.#content);
                 } else if (typeof this.#content == "object") {
                     this.#str = JSON.stringify(this.#content);
                 }
@@ -73,14 +73,14 @@ const zerobus = (function(){
                 const dec = new TextEncoder();
                 if (typeof this.#content == "object") {
                     this.#str = JSON.stringify(this.#content);
-                    this.#bin = dec.encode(this.#str);                      
+                    this.#bin = dec.encode(this.#str);
                 } else if (typeof this.#content == "string") {
-                    this.#bin = dec.encode(this.#content);                                          
+                    this.#bin = dec.encode(this.#content);
                 }
             }
-            return this.#bin;            
+            return this.#bin;
         }
-        
+
         get_object() { /* retrieve content as object (json) */
             if (this.#json == undefined){
                 if (typeof this.#content == "string") {
@@ -95,10 +95,54 @@ const zerobus = (function(){
             }
             return this.#json;
         }
-        
-        
+
+
     }
-    
+
+    class BinBuilder {
+        #buffer
+        #pos
+        constructor(initial_capacity = 32) {
+            this.#buffer = new Uint8Array(initial_capacity);
+            this.#pos = 0;
+        }
+
+        #check_size(need_store) {
+            if (this.#pos + need_store > this.#buffer.byteLength) {
+                let newcapa = Math.max(this.#pos + need_store, this.#pos * 2);
+                let newbuff = new Uint8Array(newcapa);
+                newbuff.set(this.#buffer);
+                this.#buffer = newbuff;
+            }
+        }
+
+        push(uint8) {
+            this.#check_size(1);
+            this.#buffer[this.#pos] = uint8;
+            ++this.#pos;
+        }
+
+        append(uint8_array) {
+            this.#check_size(uint8_array.byteLength);
+            this.#buffer.set(uint8_array, this.#pos);
+            this.#pos += uint8_array.byteLength;
+        }
+
+        get_data() {
+            return this.#buffer.slice(0, this.#pos);
+        }
+
+        get_data_and_clear() {
+            const r = this.get_data();
+            this.#pos = 0;
+            return r;
+        }
+
+        clear() {
+            this.#pos = 0;
+        }
+    }
+
     class BinIterator {
         buffer;
         offset;
@@ -116,43 +160,43 @@ const zerobus = (function(){
             return this.offset >= this.buffer.byteLength;
         }
     }
-        
+
     class LocalBus {
-        
+
         #channels = {};
         #backpath = {}
         #mailboxes = new Map();
         #monitors = new Set();
         #notify = false;
-        
+
         subscribe(channel, listener) {
             this.#check_listener(listener);
             if (!(channel in this.#channels)) {
                 this.#channels[channel] = new Set();
-                this.#notify_monitors();
             }
             this.#channels[channel].add(listener);
-                        
+            this.#notify_monitors();
+
         }
         unsubscribe(channel, listener) {
-            if (!(channel in this.#channels)) return;            
-            this.#channels[channel].delete(listener);            
+            if (!(channel in this.#channels)) return;
+            this.#channels[channel].delete(listener);
             if (this.#channels[channel].size == 0) {
                 delete this.#channels[channel];
                 this.#notify_monitors();
             }
         }
-        
+
 
         unsubscribe_private(listener) {
             if (this.#mailboxes.has(listener)) {
                 const name = this.#mailboxes.get(listener);
                 this.#mailboxes.delete(name);
                 this.#mailboxes.delete(listener);
-                this.#notify_monitors(); 
+                this.#notify_monitors();
             }
-        }        
-        
+        }
+
         unsubscribe_all(listener) {
             this.unsubscribe_private(listener);
             const chls = Object.keys(this.#channels);
@@ -163,31 +207,33 @@ const zerobus = (function(){
                 if (this.#backpath[x] == listener) delete this.#backpath[x];
             });
         }
-                
+
         send_message(listener, channel, content, conversation_id) {
             const mbxname = this.#get_mbx(listener);
-            return this.#post_message(new Message(mbxname, channel, content, conversation_id));
+            return this.#post_message(listener,new Message(mbxname, channel, content, conversation_id));
         }
-        
-        #post_message(msg) {
+
+        #post_message(lsn,msg) {
             const chan = msg.get_channel();
             if (this.#mailboxes.has(chan)) {
                 const lsn = this.#mailboxes.get(chan);
                 queueMicrotask(()=>{lsn.call(lsn,msg,true);});
                 return true;
+            }  else if (this.#channels[chan]) {
+                this.#channels[chan].keys().forEach(entry=>{
+                    if (entry != lsn) {
+                        queueMicrotask(()=>{entry.call(entry,msg,false);});
+                    }
+                });
+                return true;
             } else if (this.#backpath[chan]) {
                 const lsn = this.#backpath[chan];
                 queueMicrotask(()=>{lsn.call(lsn,msg,false);});
-                return true;                
-            } else if (this.#channels[chan]) {
-                this.#channels[chan].keys().forEach(entry=>{
-                    queueMicrotask(()=>{entry.call(entry,msg,false);});
-                });
                 return true;
-            }
+               }
             return false;
         }
-        
+
         #get_mbx(listener) {
             if (!listener) return "";
             this.#check_listener(listener);
@@ -200,18 +246,18 @@ const zerobus = (function(){
                 return mbxname;
             }
         }
-        
+
         #check_listener(lsn) {
             if (typeof lsn != "function"){
                 throw TypeError();
             }
         }
-        
-        
+
+
         get_random_channel_name(prefix) {
             return generateUID(prefix);
         }
-        
+
         is_channel(channel) {
             if (channel in this.#channels) {
                 return this.#channels.size() > 0;
@@ -221,18 +267,18 @@ const zerobus = (function(){
             const chls = Object.keys(this.#channels);
             return chls.filter(name=>{
                 return this.#channels.has(listener)
-            });            
+            });
         }
-        
+
         register_monitor(mon) {
             this.#check_listener(mon);
             this.#monitors.add(mon);
         }
-        
+
         unregister_monitor(mon){
-            this.#monitors.delete(mon);    
+            this.#monitors.delete(mon);
         }
-        
+
         #notify_monitors() {
             if (this.#notify) return;
             this.#notify = true;
@@ -241,29 +287,29 @@ const zerobus = (function(){
                 this.#monitors.forEach(m=>m.call(m)) ;
             });
         }
-        
+
         get_active_channels(listener) {
             let ch = Object.keys(this.#channels);
             return ch.filter(x=>{
                 const s =this.#channels[x];
-                return s.size>1 || !s.has(listener); 
-            })            
+                return s.size>1 || !s.has(listener);
+            })
         }
-        
+
         dispatch_message(listener, message, subscribe_return_path) {
             const sender = message.get_sender();
             if (subscribe_return_path && !this.#mailboxes.has(sender)) {
                 this.#backpath[sender] = listener;
             }
-            return this.#post_message(message);
+            return this.#post_message(listener,message);
         }
         follow_return_path(sender, callback) {
             if (this.#backpath[sender]) {
                 callback(this.#backpath[sender]);
-                return true;                
-            } 
+                return true;
+            }
             return false;
-        }        
+        }
         clear_return_path(listener, sender) {
             if (this.#backpath[sender] === listener) {
                 delete this.#backpath[sender];
@@ -273,21 +319,22 @@ const zerobus = (function(){
         }
     }
 
-        
+
     class PureVirtualError extends Error {
         constructor() {
             super("Pure virtual method call");
             this.name = "PureVirtualError";
         }
-    }    
-    
+    }
+
     class AbstractBridge {
-        
+
         _bus;
         _listener;
+        _mon;
         #cur_channels = new Set();
-        
-        
+
+
         constructor(bus) {
             this._bus = bus;
             this._listener = msg=>{
@@ -295,21 +342,28 @@ const zerobus = (function(){
             };
             this._listener.bridge = this;
         }
-        
+
         send_reset() {throw new PureVirtualError();}
         send_channels(channels, operation) {throw new PureVirtualError();}
         send_message(msg) {throw new PureVirtualError();}
         send_clear_path(sender, receiver) {throw new PureVirtualError();}
-        
+
         send_mine_channels() {
-            const chans = new Set(this._bus.get_active_channels(this._listener));
-            const added = Array.from(chans.difference(this.#cur_channels));
-            const removed = Array.from(this.#cur_channels.difference(chans));
-            if (added.length) this.send_channels(added,MessageType.channels_add);
-            if (removed.length) this.send_channels(removed,MessageType.channels_erase);
-            this.#cur_channels = chans; 
+            const chansarr = this._bus.get_active_channels(this._listener);
+            if (this.#cur_channels.size == 0) {
+                if (chansarr.length == 0) return;
+                this.send_channels(chansarr, MessageType.channels_replace);
+                this.#cur_channels = new Set(chansarr);
+            } else {
+                const chans = new Set(chansarr);
+                const added = Array.from(chans.difference(this.#cur_channels));
+                const removed = Array.from(this.#cur_channels.difference(chans));
+                if (added.length) this.send_channels(added,MessageType.channels_add);
+                if (removed.length) this.send_channels(removed,MessageType.channels_erase);
+                this.#cur_channels = chans;
+            }
         }
-        
+
         apply_their_channels(channels, operaton) {
             if (operaton == MessageType.channels_add) {
                 channels.forEach(ch=>this._bus.subscribe(ch, this._listener));
@@ -320,26 +374,29 @@ const zerobus = (function(){
                 channels.forEach(ch=>this._bus.subscribe (ch, this._listener));
             }
         }
-        
+
         apply_their_reset() {
             this.#cur_channels.clear();
-            queueMicrotask(()=>this.send_mine_channels());   
+            this.send_mine_channels();
         }
-        
+
         apply_their_clear_path(sender, receiver) {
-            this._bus.clear_return_path(listener, receiver);
+            this._bus.clear_return_path(this._listener, receiver);
             this._bus.follow_return_path(sender, lst=>{
                 if (lst.bridge) lst.bridge.send_clear_path(sender, receiver);
-            });            
+            });
         }
         register_monitor() {
-            this._bus.register_monitor(()=>{
-                this.send_mine_channels();
-            })
+            if (!this._mon) {
+                this._mon= ()=>{
+                        this.send_mine_channels();
+                }
+                this._bus.register_monitor(this._mon)
+            }
         }
-                
+
     }
-    
+
     function shift(numb, count) {
         if (count >= 32) {
             numb=Math.floor(numb/4294967296);
@@ -347,53 +404,38 @@ const zerobus = (function(){
         }
         return numb >> count;
     }
-    
-    function combine_uint8_buffers(/*...*/) {
-        let bc = 0;
-        for (const b of arguments) {
-            bc += b.byteLength;
+
+    function encode_uint(builder, unumb) {
+        if (!unumb) {
+            builder.push(0);
+            return;
         }
-        let buff =  new Uint8Array(bc);
-        bc = 0;        
-        for (const b of arguments) {
-            buff.set(b, bc);
-            bc += b.byteLength;
-        }       
-        return buff; 
-    }
-    
-    function encode_uint(unumb) {
-          if (!unumb) {
-                let buff = new Uint8Array(1);
-                buff.set(0,0);
-                return buff;
-            }
-          const bits = Math.floor(Math.log2(unumb))+1;
-          let bytes = Math.floor((bits+2)/8);
-          let buff = new Uint8Array(bytes+1);
-          let idx = 0;
-          buff[0] = (bytes << 5) | shift(unumb , (bytes * 8));          
-          while (bytes>0) {
+        const bits = Math.floor(Math.log2(unumb))+1;
+        let bytes = Math.floor((bits+2)/8);
+        let idx = 0;
+        builder.push((bytes << 5) | shift(unumb , (bytes * 8)));
+        while (bytes>0) {
             --bytes;
             ++idx;
-            buff[idx] = (shift(unumb , (bytes * 8)) & 0xFF);            
-          }
-          return buff;
+            builder.push(shift(unumb , (bytes * 8)) & 0xFF);
+        }
     }
-    
-    function encode_string(str, output_array) {
+
+    function encode_string(builder,str) {
         if (typeof str == "string") {
             const encoder = new TextEncoder();
             const view = encoder.encode(str);
-            return combine_uint8_buffers(encode_uint(view.byteLength), view);
+            encode_uint(builder, view.byteLength);
+            builder.append(view);
         } else if (str instanceof Uint8Array) {
-            return combine_uint8_buffers(encode_uint(str.byteLength), str);
+            encode_uint(builder, str.byteLength);
+            builder.append(str);
         } else {
             throw TypeError();
         }
     }
-    
-    
+
+
     function decode_uint(iter) {
         const fb = iter.buffer[iter.offset];
         let numb = fb  & 0x1F;
@@ -404,45 +446,45 @@ const zerobus = (function(){
             ++iter.offset;
             --bytes;
         }
-        return numb;        
+        return numb;
     }
-    
+
     function decode_binary_string(iter) {
         const sz = decode_uint(iter);
         const data = iter.buffer.slice(iter.offset, iter.offset+sz);
         iter.offset += sz;
         return data;
     }
-    
+
     class WebSocketBridge extends AbstractBridge{
-        
+
         #ws;
-        #url
-        
+        #url;
+        #binb = new BinBuilder;
+
         constructor(bus, url) {
             super(bus)
             this.#url = url;
-            this.#reconnect();     
-            this.register_monitor()   
+            this.#reconnect();
         }
-        
-        
+
+
         #reconnect() {
             this._bus.unsubscribe_all(this._listener);
             this.#ws = new WebSocket(this.#url);
-            this.#ws.binaryType = 'arraybuffer'; 
+            this.#ws.binaryType = 'arraybuffer';
             this.#ws.onerror = this.#reconnect_delayed.bind(this);
             this.#ws.onclose = this.#reconnect.bind(this);
-            this.#ws.onmessage = this.#on_message.bind(this);            
+            this.#ws.onmessage = this.#on_message.bind(this);
         }
-        
+
         #reconnect_delayed() {
             this._bus.unsubscibre_all(this._listener);
             this.#ws.onclose = null;
             console.warn("WebSocketBus: connection error, reconnecting ...");
-            setTimeout(()=>this.#reconnect(), 2000);            
+            setTimeout(()=>this.#reconnect(), 2000);
         }
-        
+
         #on_message(event) {
             if (!event.data || !(event.data instanceof ArrayBuffer)) return;
             const data = new Uint8Array(event.data);
@@ -454,13 +496,14 @@ const zerobus = (function(){
                 case MessageType.channels_add:
                 case MessageType.channels_replace:
                 case MessageType.channels_erase: this.#parse_channels(mtype,iter);break;
-                case MessageType.welcome:  
+                case MessageType.welcome: this.register_monitor()
+                                          /* no break */
                 case MessageType.channels_reset: this.apply_their_reset();break;
                 case MessageType.clear_path: this.#parse_clear_path(iter);break;
                 case MessageType.welcome: this.send_mine_channels();break;
-            }        
+            }
         }
-        
+
         #parse_channels(operation, iter) {
             const dec = new TextDecoder();
             const count = decode_uint(iter);
@@ -469,9 +512,9 @@ const zerobus = (function(){
                 const str = dec.decode(decode_binary_string(iter));
                 channels.push(str);
             }
-            this.apply_their_channels(channels, operation);            
+            this.apply_their_channels(channels, operation);
         }
-        
+
         #parse_message(iter){
             const dec = new TextDecoder();
             const cid = decode_uint(iter);
@@ -480,50 +523,48 @@ const zerobus = (function(){
             const content = decode_binary_string(iter);
             this._bus.dispatch_message(this._listener, new Message(sender,channel, content, cid), true);
         }
-        
+
         #parse_clear_path(iter) {
             const dec = new TextDecoder();
             const sender = dec.decode(decode_binary_string(iter));
             const receiver  = dec.decode(decode_binary_string(iter));
             this.apply_their_clear_path(sender, receiver);
         }
-        
+
         send_reset() {
-            this.#ws.send(new Uint8Array([MessageType.channels_reset]));
+            this.#binb.push(MessageType.channels_reset);
+            this.#ws.send(this.#binb.get_data_and_clear());
         }
 
         send_channels(channels, operation) {
-            let parts = [];
-            parts.push(new Uint8Array([operation]));
-            parts.push(encode_uint(channels.length));
-            channels.forEach(ch=>parts.push(encode_string(ch)));
-            this.#ws.send(combine_uint8_buffers.apply(null, parts));            
+            this.#binb.push(operation);
+            encode_uint(this.#binb,channels.length);
+            channels.forEach(ch=>encode_string(this.#binb,ch));
+            this.#ws.send(this.#binb.get_data_and_clear());
         }
         send_message(msg) {
-            let parts = [];
-            parts.push(new Uint8Array([MessageType.message]));
-            parts.push(encode_uint(msg.get_conversation_id()));
-            parts.push(encode_string(msg.get_sender()));
-            parts.push(encode_string(msg.get_channel()));
-            parts.push(encode_string(msg.get_binary()));
-            this.#ws.send(combine_uint8_buffers.apply(null, parts));
+            this.#binb.push(MessageType.message);
+            encode_uint(this.#binb,msg.get_conversation_id());
+            encode_string(this.#binb,msg.get_sender());
+            encode_string(this.#binb,msg.get_channel());
+            encode_string(this.#binb,msg.get_binary());
+            this.#ws.send(this.#binb.get_data_and_clear());
         }
         send_clear_path(sender, receiver) {
-            let parts = [];
-            parts.push(new Uint8Array([MessageType.clear_path]));
-            parts.push(encode_string(sender));
-            parts.push(encode_string(receiver));
-            this.#ws.send(combine_uint8_buffers.apply(null, parts));
+            this.#binb.push(MessageType.clear_path);
+            encode_string(this.#binb,sender);
+            encode_string(this.#binb,receiver);
+            this.#ws.send(this.#binb.get_data_and_clear());
         }
     }
-    
-    
+
+
     return {
-        Bus: LocalBus,        
+        Bus: LocalBus,
         Message: Message,
         MessageType:MessageType,
         AbstractBridge: AbstractBridge,
         WebSocketBridge:WebSocketBridge,
-    };    
+    };
 })();
 
