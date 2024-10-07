@@ -207,7 +207,8 @@ bool LocalBus::dispatch_message(IListener *listener, Message &&msg, bool subscri
         auto sender = msg.get_sender();
         if (!sender.empty()) {
             std::lock_guard _(*this);
-            if (_mailboxes_by_name.find(sender) == _mailboxes_by_name.end()) {
+            if (_mailboxes_by_name.find(sender) == _mailboxes_by_name.end()
+                   && _channels.find(sender) == _channels.end()) {
                 _back_path.store_path(sender, listener);
             }
         }
@@ -262,8 +263,8 @@ bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
     PChanMapItem ch;
     ChannelID chanid = msg.get_channel();
 
-    {
-        std::lock_guard _(*this);
+    do{
+        //mailboxes have priority (user cannot choose own mailbox name)
         auto miter = _mailboxes_by_name.find(chanid);
         if (miter != _mailboxes_by_name.end()) {
             auto l = miter->second;
@@ -271,18 +272,27 @@ bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
             return true;
         }
 
+        //channels have priority over return path
+        //because return path could contain channel name to steal communication
+        std::lock_guard _(*this);
+        auto citer = _channels.find(chanid);
+        if (citer != _channels.end()) {
+            ch = citer->second;
+            break;
+        }
+
+
+        //if no path found, route to return path
         IListener *bpath = _back_path.find_path(chanid);
         if (bpath) {
-            run_priv_queue(bpath, std::move(msg), false);
+            run_priv_queue(bpath, std::move(msg), true);
             return true;
         }
 
-        auto citer = _channels.find(chanid);
-        if (citer == _channels.end()) {
-            return false;
-        }
-        ch = citer->second;
-    }
+        //now we cannot route the message
+        return false;
+
+    } while (false);
 
     //process channel outside of lock (has own lock)
     TLState::_tls_state.run_queue({std::move(ch), std::move(msg), std::move(listener)});
@@ -327,7 +337,7 @@ void LocalBus::get_active_channels(IListener *listener,FunctionRef<void(ChannelL
     _tmp_channels.clear();
     if (_last_proxy && listener != _last_proxy) {
         if (_cycle_detector_id.empty()) {
-            _cycle_detector_id = get_random_channel_name("cdp_");
+            _cycle_detector_id = get_random_channel_name(cycle_detection_prefix);
         }
     } else {
         _last_proxy = listener;

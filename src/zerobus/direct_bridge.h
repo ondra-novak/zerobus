@@ -32,7 +32,6 @@ protected:
         Bridge(DirectBridge &owner, Bus &&b);
         virtual ~Bridge() override;
 
-        virtual void on_message(const Message &message, bool pm) noexcept override;
         virtual void send_message(const Message &msg) noexcept override;
         virtual void send_channels(const ChannelList &channels, Operation op) noexcept override;
         virtual void on_channels_update() noexcept override;

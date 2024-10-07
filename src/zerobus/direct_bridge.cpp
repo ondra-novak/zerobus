@@ -25,9 +25,6 @@ void DirectBridge::Bridge::send_channels(const ChannelList &channels, Operation 
     _owner.on_update_chanels(*this, r, op);
 }
 
-void DirectBridge::Bridge::on_message(const Message &message,bool ) noexcept {
-    _owner.on_message(*this, message);
-}
 
 DirectBridge::Bridge& DirectBridge::select_other(const Bridge &other) {
     if (&other == &_b1) return _b2;

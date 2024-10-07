@@ -46,12 +46,21 @@ AbstractBridge::AbstractBridge(Bus bus)
 
 
 void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
-    lst = _filter.filter(lst);
+
+    auto flt = _filter.load();
+    if (flt) {
+        auto e = std::remove_if(lst.begin(), lst.end(), [&](const ChannelID ch){
+           if (ch.substr(0,4) == "cdp_") return true;   //allow cdp_ channels
+           return !flt->incoming(ch); //we block anounincing channel to prevent incoming message
+        });
+        lst = ChannelList(lst.begin(), e);
+    }
 
     if (_cur_channels.empty()) {
         if (lst.empty()) return;
         send_channels(lst, Operation::replace);
     } else {
+
 
         std::sort(lst.begin(), lst.end());
 
@@ -104,8 +113,20 @@ void AbstractBridge::apply_their_channels(ChannelList lst, Operation op) {
     switch (op) {
         case Operation::replace: _ptr->unsubscribe_all(this);
                                  [[fallthrough]];
-        case Operation::add: for (const auto &x: lst) _ptr->subscribe(this, x);
-                             break;
+        case Operation::add: {
+            auto flt = _filter.load();
+            if (flt) {
+                for (const auto &x: lst) {
+                    //
+                    if (x.substr(0,IBridgeAPI::cycle_detection_prefix.size())
+                            == IBridgeAPI::cycle_detection_prefix || flt->outgoing(x))
+                        _ptr->subscribe(this, x);
+                }
+            } else {
+                for (const auto &x: lst) _ptr->subscribe(this, x);
+            }
+        }
+        break;
         case Operation::erase: for (const auto &x: lst) _ptr->unsubscribe(this, x);
                                break;
     }
@@ -123,21 +144,28 @@ void AbstractBridge::dispatch_message(Message &&msg) {
 }
 
 void AbstractBridge::dispatch_message(Message &msg) {
-    if (_filter.check(msg.get_channel())) {
-        if (!_ptr->dispatch_message(this, std::move(msg), true)) {
-            send_clear_path(msg.get_sender(), msg.get_channel());
-        }
+    auto flt = _filter.load();
+    if (flt) {
+        auto ch = msg.get_channel();
+        //if ch is not channel, then it is mailbox or response (cannot be filtered)
+        if (_ptr->is_channel(ch) && !flt->incoming(ch)) return; //block message
+    }
+    if (!_ptr->dispatch_message(this, std::move(msg), true)) {
+        send_clear_path(msg.get_sender(), msg.get_channel());
     }
 }
 
 AbstractBridge::~AbstractBridge() {
     _ptr->unsubscribe_all(this);
+    auto flt = _filter.load();
+    delete flt;
 }
 
 
 
-void AbstractBridge::set_filter(ChannelFilter flt) {
-    _filter = std::move(flt);
+void AbstractBridge::set_filter(std::unique_ptr<IChannelFilter> &&flt) {
+    auto r = _filter.exchange(flt.release());
+    flt.reset(r);
 }
 
 void AbstractBridge::apply_their_clear_path(ChannelID sender, ChannelID receiver) {
@@ -148,33 +176,17 @@ void AbstractBridge::apply_their_clear_path(ChannelID sender, ChannelID receiver
 }
 
 void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
-    if (!pm) send_message(message);
+    auto flt = _filter.load();
+    if (flt) {
+        //block message if it is not personal message (response) or not allowed channel
+        if (!pm && !flt->outgoing(message.get_channel())) return;
+    }
+    send_message(message);
 }
 
-inline bool check_channel(const std::vector<std::pair<std::string, bool> > &lst, ChannelID id) {
-    return std::find_if(lst.begin(), lst.end(), [&](const auto &p) -> bool{
-        if (p.second) {
-            if (p.first.empty()) return true;
-            else return id.substr(0, p.first.size()) == p.first;
-        } else {
-            return p.first == id;
-        }
-    }) != lst.end();
-}
 
-bool ChannelFilter::check(ChannelID id) const {
-    if (!_whitelist.empty() && !check_channel(_whitelist, id)) return false;
-    return !check_channel(_blacklist, id);
-}
 
-ChannelFilter::ChannelList ChannelFilter::filter(ChannelList lst) const {
-    auto iter = std::remove_if(lst.begin(), lst.end(), [&](const ChannelID &id){
-        return !check(id);
-    });
-    return ChannelList(lst.begin(), iter);
-}
-
-ChannelFilter::ChannelList AbstractBridge::persist_channel_list(const ChannelList &source, std::vector<ChannelID> &channels, std::vector<char> &characters) {
+AbstractBridge::ChannelList AbstractBridge::persist_channel_list(const ChannelList &source, std::vector<ChannelID> &channels, std::vector<char> &characters) {
     characters.clear();
     channels.clear();
     std::size_t needsz = std::accumulate(source.begin(), source.end(), std::size_t(0), [&](auto cnt, const auto &str){
@@ -191,5 +203,8 @@ ChannelFilter::ChannelList AbstractBridge::persist_channel_list(const ChannelLis
     return channels;
 
 }
+
+bool IChannelFilter::incoming(ChannelID ) const {return true;}
+bool IChannelFilter::outgoing(ChannelID) const {return true;}
 
 }

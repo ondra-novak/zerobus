@@ -2,12 +2,16 @@
 #include "bus.h"
 #include "monitor.h"
 #include "functionref.h"
+#include "filter.h"
 #include <span>
 #include <vector>
+#include <atomic>
 namespace zerobus {
 
 class IBridgeAPI : public IBus {
 public:
+
+    static constexpr std::string_view cycle_detection_prefix = "cdp_";
 
     using ChannelList = std::span<ChannelID>;
 
@@ -53,6 +57,7 @@ public:
      * only guarantees that this call happen as soon as possible.
      */
     virtual void force_update_channels() = 0;
+
 };
 
 ///exception is thrown when cycle is detected during subscribtion
@@ -61,17 +66,11 @@ public:
     virtual const char *what() const noexcept override {return "zerobus: Cycle detected";}
 };
 
-struct ChannelFilter {
-    using ChannelList = IBridgeAPI::ChannelList;
-    std::vector<std::pair<std::string, bool> > _whitelist;
-    std::vector<std::pair<std::string, bool> > _blacklist;
-    bool check(ChannelID id) const;
-    ChannelList filter(ChannelList lst) const;
-};
 
 ///Abstract bridge class. Extend this class to implement the bridge
 class AbstractBridge: public IListener {
 public:
+
 
     enum class Operation {
         ///replace subscribed channels with a new set
@@ -142,7 +141,7 @@ public:
         _ptr->unregister_monitor(mon);
     }
 
-    void set_filter(ChannelFilter flt);
+    void set_filter(std::unique_ptr<IChannelFilter> &&flt);
 
     ///retrieve return path to given id
     /**
@@ -190,7 +189,7 @@ protected:
     std::vector<ChannelID> _cur_channels = {};
     std::vector<ChannelID> _tmp = {};   ///< temporary buffer for channel operations
     std::size_t _chan_hash = 0;
-    ChannelFilter _filter;
+    std::atomic<IChannelFilter *> _filter = {};
     bool _cycle_detected = false;
 
 

@@ -18,6 +18,10 @@ public:
     VerboseBridge(Bus b1, Bus b2): DirectBridge(std::move(b1),std::move(b2), false) {
         connect();
     }
+    VerboseBridge(Bus b1, Bus b2, std::unique_ptr<IChannelFilter> flt): DirectBridge(std::move(b1),std::move(b2), false) {
+        _b1.set_filter(std::move(flt));
+        connect();
+    }
 
 
 protected:
@@ -160,6 +164,45 @@ void clear_path_test() {
     bool r2 = sn.send_message(rp, "bbb"); //should return false
     CHECK(r1);
     CHECK(!r2);
+}
+
+class TestFlt: public IChannelFilter {
+public:
+    virtual bool outgoing(ChannelID id) const {
+        return id == "reverse";
+    }
+};
+
+void filter_channels() {
+    std::cout << __FUNCTION__ << std::endl;
+    auto master = Bus::create();
+    auto slave1 = Bus::create();
+    auto slave2 = Bus::create();
+
+    VerboseBridge br1(slave1, master, std::make_unique<TestFlt>());
+    VerboseBridge br2(master, slave2, std::make_unique<TestFlt>());
+    std::string result;
+
+    auto sn = ClientCallback(slave2, [&](AbstractClient &c, const Message &msg, bool){
+        std::string s ( msg.get_content());
+        std::reverse(s.begin(), s.end());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
+    });
+    auto cn= ClientCallback(slave1, [&](AbstractClient &, const Message &msg, bool){
+        result=std::string(msg.get_content());
+    });
+
+    sn.subscribe("reverse");
+    sn.subscribe("not_pass");
+
+    CHECK(cn.is_channel("reverse"));
+    CHECK(!cn.is_channel("notpass"));
+
+    auto r = cn.send_message("not_pass", "ahoj svete");
+    CHECK(!r);
+    cn.send_message("reverse", "ahoj svete");
+    CHECK_EQUAL(result, "etevs joha");
+
 
 }
 
@@ -167,6 +210,7 @@ int main() {
     direct_bridge_simple();
     direct_bridge_cycle();
     clear_path_test();
+    filter_channels();
 
 }
 
