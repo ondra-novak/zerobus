@@ -38,8 +38,6 @@ public:
         std::function<void(BridgeTCPServer *,  AuthInfo)> verify_fn;
     };
 
-    static constexpr unsigned int ping_interval_sec_default = 60;
-
     ///Construct server
     /**
      * @param bus local end of the bus
@@ -93,6 +91,20 @@ public:
      */
     void set_custom_page_callback(std::function<CustomPage(std::string_view)> cb);
 
+    ///server doesn't send pings automatically - this function enforces ping on all peers
+    /**
+     * You should call this function repeatedly in steady interval, for example 1 minute.
+     * However it is not recommended to implement short ping. Removing stall connections
+     * can cause loosing of messages in case of temporary break of a connection (for example
+     * lost signal or disconnected cable). Connection is kept active even if there is
+     * no activity.
+     *
+     * @note browser's websocket still can send and receive pings.
+     */
+    void send_ping();
+
+    void set_hwm(std::size_t sz);
+
 protected:
 
     virtual void on_channels_update() noexcept override;
@@ -145,12 +157,12 @@ protected:
     std::mutex _mx;
     std::vector<std::unique_ptr<Peer> > _peers;
     std::chrono::system_clock::time_point _next_ping = {};
+    std::size_t _hwm = 1024*1024;
     unsigned int _id_cntr = 1;
     bool _send_mine_channels_flag = false;
     bool _lost_peers_flag = false;
     std::function<CustomPage(std::string_view)> _custom_page;
 
-    unsigned int _ping_interval = ping_interval_sec_default;
 
     void on_auth_response(Peer *p, std::string_view ident, std::string_view proof, std::string_view salt);
     void lost_connection();

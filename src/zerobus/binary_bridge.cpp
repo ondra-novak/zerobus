@@ -29,6 +29,14 @@ bool AbstractBinaryBridge::dispatch_message(std::string_view message) {
             if (_disabled) return false;
             parse_message(message);
             return true;
+        case MessageType::add_to_group:
+            parse_add_to_group(message);
+            return true;
+        case MessageType::close_group:
+            parse_close_group(message);
+            return true;
+        case MessageType::auth_failed:
+            return true;
         case MessageType::auth_req:
             parse_auth_req(message);
             return true;
@@ -50,35 +58,41 @@ bool AbstractBinaryBridge::dispatch_message(std::string_view message) {
     }
 }
 
-void AbstractBinaryBridge::parse_channels(std::string_view message, Operation op) {
-    std::size_t cnt = read_channel_list_count(message);
-    if (cnt <= static_channel_list_buffer) {
-        std::string_view buff[static_channel_list_buffer];
-        read_channel_list(message, buff);
-        apply_their_channels({buff, cnt}, op);
-    } else {
-        std::vector<std::string_view> buff;
-        buff.resize(cnt);
-        read_channel_list(message, buff.data());
-        apply_their_channels({buff.data(), cnt}, op);
+void AbstractBinaryBridge::parse_channels(std::string_view msgtext, Operation op) {
+    std::size_t cnt = read_uint(msgtext);
+    ChannelID *lst = reinterpret_cast<ChannelID *>(alloca(cnt * sizeof(ChannelID)));
+    for (std::size_t i = 0; i < cnt; ++i) {
+        std::construct_at(lst+i, read_string(msgtext));
+    }
+    apply_their_channels({lst, cnt}, op);
+    for (std::size_t i = 0; i < cnt; ++i) {
+            std::destroy_at(lst+i);
     }
 }
 
 void AbstractBinaryBridge::send_channels(const ChannelList &channels, Operation op) noexcept {
-    auto need_space = std::accumulate(channels.begin(), channels.end(),0U, [&](auto a, const auto &x){
-        return a + x.size();
+    MessageType t;
+    switch (op) {
+        case Operation::add: t  =MessageType::channels_add;break;
+        case Operation::erase: t  =MessageType::channels_erase;break;
+        case Operation::replace: t  =MessageType::channels_replace;break;
+        default: return;
+    }
+
+    auto need_space = std::accumulate(channels.begin(), channels.end(),
+            calc_required_space(t, channels.size()), [&](auto a, const auto &x){
+        return a + calc_required_space(x);
     });
-    need_space += 9+9*channels.size();
     output_message_helper(need_space, [&](auto iter){
-        return write_channel_list(iter, op, channels);
+        *iter++ = static_cast<char>(t);
+        iter = write_uint(iter, channels.size());
+        for (const ChannelID &ch :channels) iter = write_string(iter, ch);
+        return iter;
     });
 }
 
 void AbstractBinaryBridge::send_message(const Message &msg) noexcept {
-    auto need_space = msg.get_channel().size()+msg.get_content().size()+msg.get_sender().size()+5*9;
-    output_message_helper(need_space, [&](auto iter){
-        return write_message(iter, msg);
-    });
+    output_message_fixed_len(MessageType::message, msg.get_conversation(), msg.get_sender(), msg.get_channel(), msg.get_content());
 
 }
 
@@ -102,29 +116,24 @@ void AbstractBinaryBridge::request_auth(std::string_view digest_type) {
 
 void AbstractBinaryBridge::send_welcome() {
     _disabled = false;
-    char m = static_cast<char>(MessageType::welcome);
-    output_message({&m, 1});
+    output_message_fixed_len(MessageType::welcome);
 }
 
 void AbstractBinaryBridge::send_auth_response(std::string_view ident, std::string_view proof) {
-    output_message_helper(20+ident.size()+proof.size(), [&](auto iter){
-        *iter++ = static_cast<char>(MessageType::auth_response);
-        iter = write_string(iter, ident);
-        iter = write_string(iter, proof);
-        return iter;
-    });
+    output_message_fixed_len(MessageType::auth_response, ident, proof);
 }
 
-void AbstractBinaryBridge::parse_message(std::string_view message) {
-    auto msg = read_message([&](auto sender, auto channel, auto msg, auto cid){
-        return _ptr->create_message(sender, channel, msg, cid);
-    }, message);
+void AbstractBinaryBridge::parse_message(std::string_view msgtext) {
+    ConversationID cid = read_uint(msgtext);
+    std::string_view sender = read_string(msgtext);
+    std::string_view channel = read_string(msgtext);
+    std::string_view content = read_string(msgtext);
+    auto msg = _ptr->create_message(sender, channel, content, cid);
     AbstractBridge::dispatch_message(msg);
 }
 
 void AbstractBinaryBridge::send_auth_failed() {
-    char m = static_cast<char>(MessageType::auth_failed);
-    output_message({&m, 1});
+    output_message_fixed_len(MessageType::auth_failed);
 }
 
 void AbstractBinaryBridge::parse_auth_req(std::string_view message) {
@@ -142,16 +151,20 @@ void AbstractBinaryBridge::parse_auth_resp(std::string_view message) {
 }
 
 void AbstractBinaryBridge::send_reset() noexcept {
+    output_message_fixed_len(MessageType::channels_reset);
 
 }
 
-void AbstractBinaryBridge::send_clear_path(zerobus::ChannelID sender, zerobus::ChannelID receiver) noexcept {
-    output_message_helper(sender.size()+receiver.size()+20, [&](auto iter){
-        *iter++ = static_cast<char>(MessageType::clear_path);
-        iter = write_string(iter, sender);
-        iter = write_string(iter, receiver);
-        return iter;
-    });
+void AbstractBinaryBridge::on_close_group(ChannelID group_name) noexcept {
+    output_message_fixed_len(MessageType::close_group, group_name);
+}
+
+void AbstractBinaryBridge::on_clear_path(ChannelID sender, ChannelID receiver) noexcept {
+    output_message_fixed_len(MessageType::clear_path, sender, receiver);
+}
+
+void AbstractBinaryBridge::on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept {
+    output_message_fixed_len(MessageType::add_to_group, group_name, target_id);
 }
 
 void AbstractBinaryBridge::parse_clear_path(std::string_view message) {
@@ -159,6 +172,17 @@ void AbstractBinaryBridge::parse_clear_path(std::string_view message) {
     std::string_view receiver = read_string(message);
     apply_their_clear_path(sender, receiver);
 
+}
+
+void AbstractBinaryBridge::parse_add_to_group(std::string_view message) {
+    std::string_view group_name = read_string(message);
+    std::string_view target_id = read_string(message);
+    apply_their_add_to_group(group_name, target_id);
+}
+
+void AbstractBinaryBridge::parse_close_group(std::string_view message) {
+    std::string_view group_name = read_string(message);
+    apply_their_close_group(group_name);
 }
 
 }

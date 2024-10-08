@@ -26,11 +26,11 @@ public:
 
     LocalBus();
 
-    virtual void subscribe(IListener *listener, ChannelID channel) override;
+    virtual bool subscribe(IListener *listener, ChannelID channel) override;
     virtual void unsubscribe(IListener *listener, ChannelID channel) override;
     virtual void unsubscribe_all(IListener *listener) override;
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) override;
-    virtual bool dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) override;
+    virtual bool dispatch_message(IBridgeListener *listener, Message &&msg, bool subscribe_return_path) override;
     virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) override;
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList)> &&callback) const override;
     virtual void get_subscribed_channels(IListener *listener, FunctionRef<void(ChannelList)> &&callback) const override;
@@ -40,9 +40,10 @@ public:
     virtual void unsubcribe_private(IListener *listener) override;
     virtual std::string get_random_channel_name(std::string_view prefix) const override;
     virtual std::string_view get_cycle_detect_channel_name() const override;
-    virtual bool follow_return_path(ChannelID sender, FunctionRef<bool(IListener *)> &&cb) const override;
-    virtual bool clear_return_path(IListener *lsn, ChannelID sender)  override;
+    virtual bool clear_return_path(IBridgeListener *lsn, ChannelID sender, ChannelID receiver)  override;
     virtual void force_update_channels()  override;
+    virtual bool add_to_group(ChannelID group_name, ChannelID uid) override;
+    virtual void close_group(ChannelID group_name) override;
 
     ///Create local message broker;
     static Bus create();
@@ -77,11 +78,13 @@ protected:
          * @param name channel name. You can use get_id(), to receive ChannelID under which
          * the channel can be stored in a map
          */
-        ChanDef(std::string_view name, std::pmr::memory_resource *memres);
+        ChanDef(std::string_view name, bool private_group, std::pmr::memory_resource *memres);
         ///cannot be copied nor moved
         ChanDef(const ChanDef &) = delete;
         ///cannot be copied nor moved
         ChanDef &operator=(const ChanDef &) = delete;
+        ///dtor
+        ~ChanDef();
 
         ///lock channel internals
         void lock();        //lock the item
@@ -100,8 +103,11 @@ protected:
         void enum_listeners(Fn &&fn);
         ///retrieve id
         ChannelID get_id() const;
+
+        bool is_group() const {return _private_group;}
     protected:
         mstring _name;  //a channel name
+        bool _private_group;
         mvector<IListener *> _listeners; //list of listeners. Nullptr are skipped
         mutable std::recursive_mutex _mx;
         unsigned int _recursion = 0; //count of lock recursion
@@ -112,7 +118,7 @@ protected:
         BackPathItem *prev = {};
         BackPathItem *next = {};
         mvector<char> id = {};
-        IListener *l = {};
+        IBridgeListener *l = {};
 
         void promote(BackPathItem * &root);
         void remove();
@@ -140,9 +146,9 @@ protected:
     class BackPathStorage {
     public:
         BackPathStorage(std::pmr::memory_resource &res);
-        void store_path(const ChannelID &chan, IListener *lsn);
-        IListener *find_path(const ChannelID &chan) const;
-        void remove_listener(IListener *l);
+        void store_path(const ChannelID &chan, IBridgeListener *lsn);
+        IBridgeListener *find_path(const ChannelID &chan) const;
+        void remove_listener(IBridgeListener *l);
 
         std::size_t _limit = 128;     //maximum total of entries in _back_path container
 
@@ -204,7 +210,7 @@ protected:
     bool unsubscribe_all_channels_lk(IListener *listener);
 
 
-    std::pair<PChanMapItem,bool> get_channel_lk(ChannelID name);
+    PChanMapItem get_channel_lk(ChannelID name, bool group);
 
 
     bool forward_message_internal(IListener *listener,  Message &&msg) ;

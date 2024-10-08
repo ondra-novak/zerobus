@@ -21,8 +21,6 @@ BridgeTCPServer::BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std:
         _aux = _ctx->create_server(BridgeTCPCommon::get_address_from_url(address_port));
         auto br = IBridgeAPI::from_bus(_bus.get_handle());
         br->register_monitor(this);
-        _next_ping = std::chrono::system_clock::now()+std::chrono::seconds(_ping_interval);
-        _ctx->set_timeout(_aux, _next_ping, this);
         _ctx->accept(_aux, this);
     }
 
@@ -53,24 +51,16 @@ void BridgeTCPServer::on_accept(ConnHandle aux, std::string /*peer_addr*/) noexc
     //TODO report peer_addr
     std::lock_guard _(_mx);
     auto p = std::make_unique<Peer>(*this, aux, _id_cntr++);
+    p->set_hwm(_hwm);
     _peers.push_back(std::move(p));
     _ctx->accept(_aux, this);
 }
 
 
 void BridgeTCPServer::on_timeout() noexcept {
-    auto now  = std::chrono::system_clock::now();
     std::vector< std::unique_ptr<Peer> > _peer_to_delete;
     {
         std::lock_guard _(_mx);
-        if (now >= _next_ping) {
-            _next_ping = now + std::chrono::seconds(_ping_interval);
-            _peers.erase(std::remove_if(
-                    _peers.begin(), _peers.end(), [&](const auto &p) {
-                Peer &x = *p;
-                return x.check_dead();
-            }),_peers.end());
-        }
         if (_send_mine_channels_flag) {
             _send_mine_channels_flag = true;
             for (const auto &x: _peers) {
@@ -89,7 +79,6 @@ void BridgeTCPServer::on_timeout() noexcept {
             }), _peers.end());
             _lost_peers_flag = false;
         }
-        _ctx->set_timeout(_aux, _next_ping, this);
     }
 }
 
@@ -165,6 +154,24 @@ void BridgeTCPServer::reject_auth(unsigned int id) {
 void BridgeTCPServer::set_custom_page_callback(
         std::function<CustomPage(std::string_view)> cb) {
     _custom_page = std::move(cb);
+}
+
+void BridgeTCPServer::send_ping() {
+    std::lock_guard _(_mx);
+    _peers.erase(std::remove_if(
+            _peers.begin(), _peers.end(), [&](const auto &p) {
+        Peer &x = *p;
+        return x.check_dead();
+    }),_peers.end());
+
+}
+
+void BridgeTCPServer::set_hwm(std::size_t sz) {
+    std::lock_guard _(_mx);
+    _hwm = sz;
+    for (auto &x: _peers) {
+        x->set_hwm(sz);
+    }
 }
 
 void BridgeTCPServer::lost_connection() {

@@ -54,17 +54,11 @@ void DirectBridge::Bridge::send_reset() noexcept {
     _owner.send_reset(*this);
 }
 
-void DirectBridge::Bridge::send_clear_path(ChannelID sender, ChannelID receiver) noexcept {
-    _owner.send_clear_path(*this, sender, receiver);
-}
 
 void DirectBridge::send_reset(const Bridge &source) {
     select_other(source).apply_their_reset();
 }
 
-void DirectBridge::send_clear_path(const Bridge &source, ChannelID sender, ChannelID receiver) {
-    select_other(source).apply_their_clear_path(sender, receiver);
-}
 
 
 void DirectBridge::connect() {
@@ -80,6 +74,30 @@ void DirectBridge::connect() {
 
 void DirectBridge::Bridge::cycle_detection(bool state) noexcept {
     _owner.cycle_detection(*this, state);
+}
+
+void DirectBridge::Bridge::on_close_group(ChannelID group_name) noexcept {
+    _owner.on_close_group(*this, group_name);
+}
+
+void DirectBridge::Bridge::on_clear_path(ChannelID sender, ChannelID receiver) noexcept {
+    _owner.on_clear_path(*this, sender, receiver);
+}
+
+void DirectBridge::on_close_group(const Bridge &source, ChannelID group_name) {
+    select_other(source).apply_their_close_group(group_name);
+}
+
+void DirectBridge::on_clear_path(const Bridge &source, ChannelID sender, ChannelID receiver) {
+    select_other(source).apply_their_clear_path(sender, receiver);
+}
+
+void DirectBridge::on_add_to_group(const Bridge &source, ChannelID group_name, ChannelID target_id) {
+    select_other(source).apply_their_add_to_group(group_name, target_id);
+}
+
+void DirectBridge::Bridge::on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept {
+    _owner.on_add_to_group(*this, group_name, target_id);
 }
 
 }

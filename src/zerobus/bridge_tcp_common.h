@@ -23,6 +23,7 @@ public:
     static std::string calculate_ws_accept(std::string_view key);
     static std::string generate_ws_key();
 
+    void set_hwm(std::size_t hwm);
 
 protected:
 
@@ -42,6 +43,7 @@ protected:
     ConnHandle _aux;
     ws::Builder _ws_builder;
     ws::Parser _ws_parser;
+    std::size_t _hwm = 1024*1024;   //1MB
 
     char _input_buffer[input_buffer_size];
 

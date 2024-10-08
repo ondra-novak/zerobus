@@ -60,14 +60,23 @@ protected:
                           op == AbstractBridge::Operation::erase?"ERASE":"REPLACE", chlist.view());
         DirectBridge::on_update_chanels(source, channels, op);
     }
-    virtual void send_clear_path(const DirectBridge::Bridge &source,
+    virtual void on_clear_path(const DirectBridge::Bridge &source,
             ChannelID sender, ChannelID receiver) override {
         log(source, "CLEAR_PATH: ",sender," -> ",receiver);
-        DirectBridge::send_clear_path(source, sender, receiver);
+        DirectBridge::on_clear_path(source, sender, receiver);
     }
     virtual void cycle_detection(const DirectBridge::Bridge &source, bool state) noexcept override{
         if (state) log(source, "CYCLE DETECTED!");
         else log(source, "CYCLE cleared");
+    }
+    virtual void on_close_group(const DirectBridge::Bridge &source, ChannelID group_name) override {
+        log(source, "CLOSE_GROUP: ",group_name);
+        DirectBridge::on_close_group(source, group_name);
+    }
+    virtual void on_add_to_group(const DirectBridge::Bridge &source, ChannelID group_name, ChannelID target_id) override {
+        log(source, "ADD_TO_GROUP: ",target_id," -> ",group_name);
+        DirectBridge::on_add_to_group(source, group_name, target_id);
+
     }
 };
 

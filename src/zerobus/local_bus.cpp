@@ -80,32 +80,35 @@ LocalBus::LocalBus()
 
 }
 
-std::pair<LocalBus::PChanMapItem,bool> LocalBus::get_channel_lk(ChannelID channel) {
+LocalBus::PChanMapItem LocalBus::get_channel_lk(ChannelID channel, bool group) {
     auto iter = _channels.find(channel);
     if (iter == _channels.end()) {
-        auto chan = std::make_shared<ChanDef>(channel, &_mem_resource);
+        auto chan = std::make_shared<ChanDef>(channel,group, &_mem_resource);
         _channels.emplace(chan->get_id(), chan);
-        return {chan, true};
+        return chan;
     }
-    return {iter->second, false};
+    if (group && !iter->second->is_group()) return {};
+    return iter->second;
 }
 
-void LocalBus::subscribe(IListener *listener, ChannelID channel)
+bool LocalBus::subscribe(IListener *listener, ChannelID channel)
 {
-    if (channel.empty()) throw std::invalid_argument("Channel name can't be empty");
+    if (channel.empty()) return false;
     std::lock_guard _(*this);
     if (channel == _cycle_detector_id) {
         unsubscribe_all_channels_lk(listener);
         throw CycleDetectedException();
     }
-    auto chan = get_channel_lk(channel);
-    chan.first->add_listener(listener);
+    auto chan = get_channel_lk(channel, false);
+    if (chan->is_group()) return false;
+    chan->add_listener(listener);
     auto iter = _listeners.find(listener);
     if (iter == _listeners.end()) {
         iter = _listeners.emplace(listener, mvector<ChannelID>(mvector<ChannelID>::allocator_type(&_mem_resource))).first;
     }
-    iter->second.push_back(chan.first->get_id());
-    if (chan.second) _channels_change = true;
+    iter->second.push_back(chan->get_id());
+    _channels_change = true;
+    return true;
 }
 
 void LocalBus::unsubscribe(IListener *listener, ChannelID channel)
@@ -113,8 +116,8 @@ void LocalBus::unsubscribe(IListener *listener, ChannelID channel)
     std::lock_guard _(*this);
 
     if (remove_channel_from_listener_lk(channel,listener)) {
-        auto chan = get_channel_lk(channel);
-        if (chan.first->remove_listener(listener)) {
+        auto chan = get_channel_lk(channel, false);
+        if (chan->remove_listener(listener)) {
             _channels.erase(channel);
             _channels_change = true;
         }
@@ -125,7 +128,10 @@ void LocalBus::unsubscribe_all(IListener *listener)
 {
     std::lock_guard _(*this);
     erase_mailbox_lk(listener);
-    _back_path.remove_listener(listener);
+    IBridgeListener *blsn = dynamic_cast<IBridgeListener *>(listener);
+    if (blsn) {
+        _back_path.remove_listener(blsn);
+    }
     if (unsubscribe_all_channels_lk(listener)) {
         _channels_change = true;
     }
@@ -142,8 +148,8 @@ bool LocalBus::unsubscribe_all_channels_lk(IListener *listener) {
     if (iter != _listeners.end()) {
         auto &chans = iter->second;
         for (auto &ch: chans) {
-            auto chptr = get_channel_lk(ch);
-            if (chptr.first->remove_listener(listener)) {
+            auto chptr = get_channel_lk(ch, false);
+            if (chptr->remove_listener(listener)) {
                 _channels.erase(ch);
                 ech = true;
             }
@@ -202,7 +208,7 @@ bool LocalBus::send_message(IListener *listener, ChannelID channel, MessageConte
     }
 }
 
-bool LocalBus::dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) {
+bool LocalBus::dispatch_message(IBridgeListener *listener, Message &&msg, bool subscribe_return_path) {
     if (listener && subscribe_return_path) {
         auto sender = msg.get_sender();
         if (!sender.empty()) {
@@ -304,6 +310,28 @@ void LocalBus::force_update_channels() {
     _channels_change = true;
 }
 
+bool LocalBus::add_to_group(ChannelID group_name, ChannelID uid) {
+    std::lock_guard _(*this);
+
+    IBridgeListener *lsn = _back_path.find_path(uid);
+    if (lsn == nullptr) return false;
+
+    auto ch = get_channel_lk(group_name, true);
+    if (!ch) return false;
+
+    ch->add_listener(lsn);
+    lsn->on_add_to_group(group_name, uid);
+    return true;
+}
+
+void LocalBus::close_group(ChannelID group_name) {
+    auto citer = _channels.find(group_name);
+    if (citer != _channels.end()) {
+        _channels.erase(citer);
+        _channels_change = true;
+    }
+}
+
 void LocalBus::run_priv_queue(IListener *target, Message &&msg, bool pm) {
     bool run = _private_queue.empty();
     _private_queue.push_back({target,  std::move(msg), pm});
@@ -364,9 +392,17 @@ void LocalBus::get_subscribed_channels(IListener *listener,FunctionRef<void(Chan
     cb({_tmp_channels.begin(), _tmp_channels.end()});
 }
 
-LocalBus::ChanDef::ChanDef(std::string_view name, std::pmr::memory_resource *memres)
+LocalBus::ChanDef::ChanDef(std::string_view name, bool private_group, std::pmr::memory_resource *memres)
     :_name(name, std::pmr::polymorphic_allocator<char>(memres))
+    ,_private_group(private_group)
     ,_listeners(std::pmr::polymorphic_allocator<std::pair<IListener *, bool> >(memres)) {}
+
+LocalBus::ChanDef::~ChanDef() {
+    enum_listeners([&](IListener *lsn){
+        auto br = dynamic_cast<IBridgeListener *>(lsn);
+        if (br) br->on_close_group(_name);
+    });
+}
 
 void LocalBus::ChanDef::lock() {
     _mx.lock();
@@ -416,6 +452,7 @@ bool LocalBus::ChanDef::remove_listener(IListener *lsn) {
 
 bool LocalBus::ChanDef::can_export(IListener *lsn) const {
     std::lock_guard _(_mx);
+    if (is_group()) return false; //group is not exportable
     auto iter = std::find_if(_listeners.begin(), _listeners.end(), [&](const auto &l){
         return l && l != lsn;
     });
@@ -485,7 +522,7 @@ void LocalBus::BackPathItem::promote(BackPathItem * &root) {
     }
 }
 
-void LocalBus::BackPathStorage::store_path(const ChannelID &chan, IListener *lsn) {
+void LocalBus::BackPathStorage::store_path(const ChannelID &chan, IBridgeListener *lsn) {
     auto iter = _entries.find(chan);
     if (iter == _entries.end()) {
         if (lsn == nullptr) return;
@@ -508,30 +545,28 @@ void LocalBus::BackPathStorage::store_path(const ChannelID &chan, IListener *lsn
     }
 }
 
-IListener* LocalBus::BackPathStorage::find_path(const ChannelID &chan) const {
+IBridgeListener* LocalBus::BackPathStorage::find_path(const ChannelID &chan) const {
     auto iter = _entries.find(chan);
     if (iter != _entries.end()) return iter->second.l;
     return nullptr;
 }
 
-bool LocalBus::follow_return_path(ChannelID sender, FunctionRef<bool(IListener *)> &&cb) const {
-    std::lock_guard _(_mutex);
-    auto lsn = _back_path.find_path(sender);
-    if (lsn) return cb(lsn);
-    return false;
-}
 
-bool LocalBus::clear_return_path(IListener *lsn, ChannelID sender)  {
+bool LocalBus::clear_return_path(IBridgeListener *lsn, ChannelID sender, ChannelID receiver)  {
     std::lock_guard _(_mutex);
-    auto lsn2 = _back_path.find_path(sender);
+    auto lsn2 = _back_path.find_path(receiver);
     if (lsn == lsn2) {
-        _back_path.store_path(sender, nullptr);
+        _back_path.store_path(receiver, nullptr);
+        auto lsn3 = _back_path.find_path(sender);
+        if (lsn3) {
+            lsn3->on_clear_path(sender, receiver);
+        }
         return true;
     }
     return false;
 }
 
-void LocalBus::BackPathStorage::remove_listener(IListener *l) {
+void LocalBus::BackPathStorage::remove_listener(IBridgeListener *l) {
     auto *ptr = _root;
     while (ptr != reinterpret_cast<BackPathItem *>(&_last)) {
         auto x = ptr;

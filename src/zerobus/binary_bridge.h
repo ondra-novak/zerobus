@@ -19,17 +19,24 @@ public:
         channels_reset = 4,
         ///clear return path
         clear_path = 5,
+        ///add to group
+        add_to_group = 6,
+        ///close group
+        close_group = 7,
+
+
+
         ///notifies, successful login
         /**
          * it also assumes channels_reset (in case of re-login)
          */
-        welcome = 6,
+        welcome = 8,
         ///sent by one side to request authentication
-        auth_req = 7,
+        auth_req = 9,
         ///sent by other side to response authentication
-        auth_response = 8,
+        auth_response = 10,
         ///authentication failed - client should close connection
-        auth_failed = 9,
+        auth_failed = 11,
 
     };
 
@@ -127,35 +134,6 @@ public:
      static std::uint64_t read_uint(std::string_view &msgtext);
      ///Read string
      static std::string_view read_string(std::string_view &msgtext);
-     ///Write whole message
-     template<std::output_iterator<char> Iter>
-     static Iter write_message(Iter out, const Message &msg);
-     ///Read whole message
-     template<typename Factory>
-     static auto read_message(Factory &&factory, std::string_view msgtext)
-     -> decltype(factory(std::string_view(), std::string_view(), std::string_view(), std::uint32_t(0)));
-
-     ///Write channel list
-     /**
-      * @param buffer a character buffer
-      * @param list list to write. You can specify multiple lists to combine these lists
-      * into one
-      */
-     template<std::output_iterator<char> Iter, typename ... ChanList>
-     static Iter write_channel_list(Iter out, Operation op, const ChanList &...list);
-
-     ///Read channel list
-     /**
-      * @param msgtext text of the message
-      * @return list of channels - note, the content is taken from the message, do not
-      * discard the message until the list is processed somehow
-      */
-     template<std::output_iterator<ChannelID> Iter>
-     static Iter read_channel_list(std::string_view &msgtext, Iter iter);
-
-
-     static std::size_t read_channel_list_count(std::string_view msgtext);
-
 
      template<typename Fn>
      void output_message_helper(std::size_t req_size, Fn &&fn) {
@@ -171,24 +149,66 @@ public:
          }
      }
 
+     template<typename ... Args>
+     static std::size_t calc_required_space(const Args &... args) {
+         auto clc = [](const auto &x) {
+             if constexpr(std::is_enum_v<std::decay_t<decltype(x)> >) {
+                 return 1;
+             }else if constexpr(std::is_convertible_v<decltype(x), std::size_t>) {
+                 char buff[10];
+                 char *c = write_uint(buff, x);
+                 return c - buff;
+             } else {
+                 static_assert(std::is_convertible_v<decltype(x), std::string_view>);
+                 std::string_view v(x);
+                 return calc_required_space(v.size())+v.size();
+             }
+         };
+         return (0 + ... + clc(args));
+     }
+
+     template<typename ... Args>
+     void output_message_fixed_len(const Args &... args) {
+         std::size_t sz = calc_required_space(args...);
+         auto build = [](auto &iter, const auto &x) {
+             if constexpr(std::is_enum_v<std::decay_t<decltype(x)> >) {
+                 *iter = static_cast<char>(x);
+                 ++iter;
+             }else if constexpr(std::is_convertible_v<decltype(x), std::size_t>) {
+                 iter =  write_uint(iter,x);
+             } else {
+                 iter = write_string(iter, x);
+             }
+         };
+
+         output_message_helper(sz, [&](auto iter){
+             (...,build(iter, args));
+             return iter;
+         });
+     }
+
+
 protected:
 
      bool _disabled = false;
      char _salt[16];
 
     virtual void send_reset() noexcept override;
-    virtual void send_clear_path(zerobus::ChannelID sender,
-            zerobus::ChannelID receiver) noexcept override;
-    ///overide - send channels to other side
     virtual void send_channels(const ChannelList &channels, Operation op) noexcept override;
-    ///overide - send message to other side
     virtual void send_message(const Message &msg) noexcept override;
+    virtual void on_close_group(ChannelID group_name) noexcept override ;
+    virtual void on_clear_path(ChannelID sender, ChannelID receiver) noexcept override;
+    virtual void on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept override;
+
+
 
     void parse_channels(std::string_view message, Operation op);
     void parse_message(std::string_view message);
     void parse_auth_req(std::string_view message);
     void parse_auth_resp(std::string_view message);
     void parse_clear_path(std::string_view message);
+    void parse_add_to_group(std::string_view message);
+    void parse_close_group(std::string_view message);
 };
 
 
@@ -222,10 +242,6 @@ inline Iter AbstractBinaryBridge::write_string(Iter out, const std::string_view 
 }
 
 
-inline std::size_t AbstractBinaryBridge::get_uint_size(char c) {
-    return static_cast<unsigned char>(c) >> 5;
-}
-
 inline std::size_t AbstractBinaryBridge::read_uint(std::string_view &msgtext) {
     //read uint in compressed form
     std::size_t ret;
@@ -247,74 +263,6 @@ inline std::string_view AbstractBinaryBridge::read_string(std::string_view &msgt
     auto part = msgtext.substr(0,len);
     msgtext = msgtext.substr(part.size());
     return part;
-}
-
-template<std::output_iterator<char> Iter>
-inline Iter AbstractBinaryBridge::write_message(Iter out, const Message &message) {
-    *out = static_cast<char>(MessageType::message);
-    ++out;
-    auto channel = message.get_channel();
-    auto content = message.get_content();
-    auto convid = message.get_conversation();
-    auto sender = message.get_sender();
-    out = write_uint(out,convid);
-    out = write_string(out, sender);
-    out = write_string(out, channel);
-    out = write_string(out, content);
-    return out;
-}
-
-
-template<typename Factory>
-inline auto AbstractBinaryBridge::read_message(Factory &&factory, std::string_view msgtext)
--> decltype(factory(std::string_view(), std::string_view(), std::string_view(), std::uint32_t(0))) {
-    auto convid = read_uint(msgtext);
-    auto sender = read_string(msgtext);
-    auto channel = read_string(msgtext);
-    auto content = read_string(msgtext);
-    return  factory(sender, channel, content, convid);
-}
-
-template<std::output_iterator<char> Iter, typename ... ChanList>
-inline Iter AbstractBinaryBridge::write_channel_list(Iter out, Operation op, const ChanList & ... list) {
-    MessageType t;
-    switch (op) {
-        case Operation::add: t  =MessageType::channels_add;break;
-        case Operation::erase: t  =MessageType::channels_erase;break;
-        case Operation::replace: t  =MessageType::channels_replace;break;
-        default: throw /* unreachable */;
-    }
-    *out = static_cast<char>(t);
-    ++out;
-    auto total_count  = (static_cast<std::size_t>(0) + ... + list.size());
-    out = write_uint(out, total_count);
-    if constexpr(sizeof...(list)>0) {
-        auto write_list = [&](const auto &l) {
-            for (const auto &chan: l) {
-                out = write_string(out, chan);
-            }
-        };
-        (write_list(list),...);
-    }
-    return out;
-}
-
-
-
-inline std::size_t AbstractBinaryBridge::read_channel_list_count(std::string_view msgtext) {
-    return read_uint(msgtext);;
-}
-
-
-
-template<std::output_iterator<ChannelID> Iter>
-inline Iter AbstractBinaryBridge::read_channel_list(std::string_view &msgtext, Iter iter) {
-    auto count = read_uint(msgtext);
-    for (std::size_t i = 0; i < count; i++) {
-        *iter = read_string(msgtext);
-        ++iter;
-    }
-    return iter;
 }
 
 }

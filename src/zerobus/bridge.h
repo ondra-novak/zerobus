@@ -1,6 +1,7 @@
 #pragma once
 #include "bus.h"
 #include "monitor.h"
+#include "bridge_listener.h"
 #include "functionref.h"
 #include "filter.h"
 #include <span>
@@ -19,7 +20,7 @@ public:
     virtual void unregister_monitor(const IMonitor *mon) = 0;
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList) > &&cb) const = 0;
     virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
-    virtual bool dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) = 0;
+    virtual bool dispatch_message(IBridgeListener *listener, Message &&msg, bool subscribe_return_path) = 0;
     ///retieve channel name used to detect cycles
     /**
      * @return name of channel which should not be subscribed. It is intended to detect
@@ -32,24 +33,15 @@ public:
         return std::static_pointer_cast<IBridgeAPI>(bus);
     }
 
-    ///Follow return path (if exists) and call the callback with listener which forward messages to the sender
-    /**
-     * @param sender sender
-     * @param cb callback function which contains IListener * of the forwarder
-     * @retval true success
-     * @retval false failure - not found
-     * @note the callback is called probably under a lock
-     */
-    virtual bool follow_return_path(ChannelID sender, FunctionRef<bool(IListener *)> &&cb) const = 0;
     ///Clears path to the sender
     /**
      * @param lsn bridge that was responsible to deliver the message
-     * @param sender id of sender
-     * causes that messages to this sender can no longer be delivered to this listener
+     * @param sender id of sender of the last message
+     * @param receiver id of receiver if the last message
      * @retval true cleared
      * @retval false no such path
      */
-    virtual bool clear_return_path(IListener *lsn, ChannelID sender) = 0;
+    virtual bool clear_return_path(IBridgeListener *lsn, ChannelID sender, ChannelID receiver) = 0;
 
     ///calls on_update_channels on all monitors
     /**
@@ -68,7 +60,7 @@ public:
 
 
 ///Abstract bridge class. Extend this class to implement the bridge
-class AbstractBridge: public IListener {
+class AbstractBridge: public IBridgeListener {
 public:
 
 
@@ -124,6 +116,10 @@ public:
     ///apply their clear path command
     void apply_their_clear_path(ChannelID sender, ChannelID receiver);
 
+    void apply_their_close_group(ChannelID group_name) ;
+    void apply_their_add_to_group(ChannelID group_name, ChannelID target_id);
+
+
     ///Forward message from other side to connected broker
     /**
      * @param msg message to forward
@@ -143,23 +139,6 @@ public:
 
     void set_filter(std::unique_ptr<IChannelFilter> &&flt);
 
-    ///retrieve return path to given id
-    /**
-     *
-     * @param chanId
-     * @return
-     */
-    template<std::invocable<AbstractBridge *> Fn>
-    bool follow_return_path(ChannelID sender, Fn &&fn) {
-        return _ptr->follow_return_path(sender, [&](IListener *lsn){
-            auto b = dynamic_cast<AbstractBridge *>(lsn);
-            if (b) {
-                fn(b);
-                return true;
-            }
-            return false;
-        });
-    }
 
     Bus get_bus() const {return Bus(_ptr);}
 
@@ -174,8 +153,6 @@ protected:
     virtual void send_message(const Message &msg) noexcept = 0;
     ///override - send reset command to other side
     virtual void send_reset() noexcept = 0;
-    ///override - send clear path command
-    virtual void send_clear_path(ChannelID sender, ChannelID receiver) noexcept = 0;
 
     virtual void process_mine_channels(ChannelList lst) noexcept;
 
@@ -193,7 +170,6 @@ protected:
     bool _cycle_detected = false;
 
 
-    static std::size_t hash_of_channel_list(const ChannelList &list);
     static ChannelList persist_channel_list(const ChannelList &source, std::vector<ChannelID> &channels, std::vector<char> &characters);
 
     virtual void on_message(const Message &message, bool pm) noexcept override;

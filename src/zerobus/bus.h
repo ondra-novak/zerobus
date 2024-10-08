@@ -12,10 +12,12 @@ public:
 
     virtual ~IBus() = default;
 
-    virtual void subscribe(IListener *listener, ChannelID channel) = 0;
+    virtual bool subscribe(IListener *listener, ChannelID channel) = 0;
     virtual void unsubscribe(IListener *listener, ChannelID channel) = 0;
     virtual void unsubscribe_all(IListener *listener) = 0;
     virtual void unsubcribe_private(IListener *listener) = 0;
+    virtual bool add_to_group(ChannelID group_name, ChannelID uid) = 0;
+    virtual void close_group(ChannelID group_name) = 0;
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
     virtual std::string get_random_channel_name(std::string_view prefix) const = 0;
     virtual bool is_channel(ChannelID id) const = 0;
@@ -35,10 +37,13 @@ public:
     /**
      * @param listener listener of messages
      * @param channel channel
+     * @retval true subscribed
+     * @retval false failed to subscribe (invalid channel name or private group)
      */
-    void subscribe(IListener *listener, ChannelID channel) {
-        _ptr->subscribe(listener, channel);
+    bool subscribe(IListener *listener, ChannelID channel) {
+        return _ptr->subscribe(listener, channel);
     }
+
     ///unsubscribe channel
     /**
      * @param listener listene to unsubscribe
@@ -70,6 +75,34 @@ public:
     void unsubcribe_private(IListener *listener) {
         _ptr->unsubcribe_private(listener);
     }
+
+    ///Adds sender_id to private group
+    /**
+     * Private group is manually created channel. This channel cannot be subscribed, you
+     * can add subscribes using this command. This is intended to create multicast groups
+     * to which messages are sent. These groups are not distributed to neighboring nodes.
+     *
+     * @param group_name name of group
+     * @param sender_id id of client to include. This can be client connected to different node.
+     * There must be path to the client.
+     * @retval true successful sent (invitation message has been forwarded to the target node, group is created)
+     * @retval false failure. There can be already public channel with the same name, or
+     * the path not found.
+     *
+     */
+    bool add_to_group(ChannelID group_name, ChannelID sender_id) {
+        return _ptr->add_to_group(group_name, sender_id);
+    }
+
+    ///Close group
+    /**
+     * unsubscribe all listeners on given group.
+     * @param group_name name of group. You can also use this to close public channel
+     */
+    void close_group(ChannelID group_name) {
+        _ptr->close_group(group_name);
+    }
+
     ///send message
     /**
      * @param listener sender's listener. can be nullptr to send anonymous message

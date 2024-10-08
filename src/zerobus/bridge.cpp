@@ -5,16 +5,6 @@
 namespace zerobus {
 
 
-std::size_t AbstractBridge::hash_of_channel_list(const ChannelList &list) {
-    size_t hash_value = 0;
-    std::hash<std::string_view> hasher;
-
-    for (const auto& str_view : list) {
-        hash_value ^= hasher(str_view) + 0x9e3779b9 + (hash_value << 6) + (hash_value >> 2);
-    }
-
-    return hash_value;
-}
 
 namespace {
 ///Helper class which converts a lambda to an output iterator
@@ -151,7 +141,7 @@ void AbstractBridge::dispatch_message(Message &msg) {
         if (_ptr->is_channel(ch) && !flt->incoming(ch)) return; //block message
     }
     if (!_ptr->dispatch_message(this, std::move(msg), true)) {
-        send_clear_path(msg.get_sender(), msg.get_channel());
+        on_clear_path(msg.get_sender(), msg.get_channel());
     }
 }
 
@@ -169,10 +159,7 @@ void AbstractBridge::set_filter(std::unique_ptr<IChannelFilter> &&flt) {
 }
 
 void AbstractBridge::apply_their_clear_path(ChannelID sender, ChannelID receiver) {
-    _ptr->clear_return_path(this, receiver);
-    follow_return_path(sender, [&](AbstractBridge *brd){
-        brd->send_clear_path(sender, receiver);
-    });
+    _ptr->clear_return_path(this, sender, receiver);
 }
 
 void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
@@ -206,5 +193,15 @@ AbstractBridge::ChannelList AbstractBridge::persist_channel_list(const ChannelLi
 
 bool IChannelFilter::incoming(ChannelID ) const {return true;}
 bool IChannelFilter::outgoing(ChannelID) const {return true;}
+
+void AbstractBridge::apply_their_close_group(ChannelID group_name) {
+    _ptr->close_group(group_name);
+}
+
+void AbstractBridge::apply_their_add_to_group(ChannelID group_name, ChannelID target_id) {
+    if (!_ptr->add_to_group(group_name, target_id)) {
+        send_channels(ChannelList(&group_name,1), Operation::erase);
+    }
+}
 
 }

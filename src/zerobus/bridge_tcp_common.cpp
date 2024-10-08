@@ -146,6 +146,7 @@ void BridgeTCPCommon::on_auth_response(std::string_view , std::string_view , std
 void BridgeTCPCommon::output_message(const ws::Message &msg) {
     std::lock_guard _(_mx);
     if (_handshake) return; //can't send message when handshake
+    if (_output_data.size() > _hwm) return ;    //TODO: try to slow down when buffer reaches HWM
     _output_msg_sp.push_back(_output_data.size());
     _ws_builder(msg, [&](char c){
         _output_data.push_back(c);
@@ -254,5 +255,9 @@ std::string BridgeTCPCommon::get_path_from_url(std::string_view url) {
 
 }
 
+void BridgeTCPCommon::set_hwm(std::size_t hwm) {
+    std::lock_guard _(_mx);
+    _hwm = hwm;
+}
 
 }
