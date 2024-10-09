@@ -212,6 +212,35 @@ void filter_channels() {
     cn.send_message("reverse", "ahoj svete");
     CHECK_EQUAL(result, "etevs joha");
 
+}
+
+void groups() {
+    std::cout << __FUNCTION__ << std::endl;
+    auto master = Bus::create();
+    auto slave1 = Bus::create();
+    auto slave2 = Bus::create();
+
+    VerboseBridge br1(slave1, master, std::make_unique<TestFlt>());
+    VerboseBridge br2(master, slave2, std::make_unique<TestFlt>());
+    std::string result;
+
+
+    auto sn = ClientCallback(slave2, [&](AbstractClient &c, const Message &msg, bool){
+        c.add_to_group("test_group", msg.get_sender());
+        std::string s ( msg.get_content());
+        std::reverse(s.begin(), s.end());
+        c.send_message("test_group", s);
+    });
+    auto cn= ClientCallback(slave1, [&](AbstractClient &, const Message &msg, bool){
+        result=std::string(msg.get_content());
+    });
+
+    sn.subscribe("reverse");
+    cn.send_message("reverse", "ahoj svete");
+    CHECK_EQUAL(result, "etevs joha");
+    sn.close_group("test_group");
+    CHECK(!sn.send_message("test_group", "aaa"));
+    CHECK(!cn.send_message("test_group", "aaa"));
 
 }
 
@@ -220,6 +249,7 @@ int main() {
     direct_bridge_cycle();
     clear_path_test();
     filter_channels();
+    groups();
 
 }
 

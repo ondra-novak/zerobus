@@ -16,8 +16,8 @@ public:
     virtual void unsubscribe(IListener *listener, ChannelID channel) = 0;
     virtual void unsubscribe_all(IListener *listener) = 0;
     virtual void unsubcribe_private(IListener *listener) = 0;
-    virtual bool add_to_group(ChannelID group_name, ChannelID uid) = 0;
-    virtual void close_group(ChannelID group_name) = 0;
+    virtual bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) = 0;
+    virtual void close_group(IListener *owner, ChannelID group_name) = 0;
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
     virtual std::string get_random_channel_name(std::string_view prefix) const = 0;
     virtual bool is_channel(ChannelID id) const = 0;
@@ -82,25 +82,30 @@ public:
      * can add subscribes using this command. This is intended to create multicast groups
      * to which messages are sent. These groups are not distributed to neighboring nodes.
      *
+     * @param owner owner of the group. The group is automatically closed when owner calls unsubscribe_all.
+     * The owner of the group can only post to the group. This argument can be nullptr, which
+     * causes creating of public channel and adding the target client to it.
+     *
      * @param group_name name of group
-     * @param sender_id id of client to include. This can be client connected to different node.
-     * There must be path to the client.
+     * @param target_id Id of target client. There must exist path to this id
      * @retval true successful sent (invitation message has been forwarded to the target node, group is created)
-     * @retval false failure. There can be already public channel with the same name, or
-     * the path not found.
+     * @retval false failure. The group is probably exists and belongs to different owner. Or there
+     * is no routing information to the target
+     *
      *
      */
-    bool add_to_group(ChannelID group_name, ChannelID sender_id) {
-        return _ptr->add_to_group(group_name, sender_id);
+    bool add_to_group(IListener *owner, ChannelID group_name, ChannelID target_id) {
+        return _ptr->add_to_group(owner, group_name, target_id);
     }
 
     ///Close group
     /**
      * unsubscribe all listeners on given group.
+     * @param owner owner of the group. You can "force close" public channel by specifying nullptr here
      * @param group_name name of group. You can also use this to close public channel
      */
-    void close_group(ChannelID group_name) {
-        _ptr->close_group(group_name);
+    void close_group(IListener *owner, ChannelID group_name) {
+        _ptr->close_group(owner, group_name);
     }
 
     ///send message

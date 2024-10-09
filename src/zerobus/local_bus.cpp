@@ -80,14 +80,13 @@ LocalBus::LocalBus()
 
 }
 
-LocalBus::PChanMapItem LocalBus::get_channel_lk(ChannelID channel, bool group) {
+LocalBus::PChanMapItem LocalBus::get_channel_lk(ChannelID channel) {
     auto iter = _channels.find(channel);
     if (iter == _channels.end()) {
-        auto chan = std::make_shared<ChanDef>(channel,group, &_mem_resource);
+        auto chan = std::make_shared<ChanDef>(channel, &_mem_resource);
         _channels.emplace(chan->get_id(), chan);
         return chan;
     }
-    if (group && !iter->second->is_group()) return {};
     return iter->second;
 }
 
@@ -99,8 +98,8 @@ bool LocalBus::subscribe(IListener *listener, ChannelID channel)
         unsubscribe_all_channels_lk(listener);
         throw CycleDetectedException();
     }
-    auto chan = get_channel_lk(channel, false);
-    if (chan->is_group()) return false;
+    auto chan = get_channel_lk(channel);
+    if (chan->get_owner()) return false;
     chan->add_listener(listener);
     auto iter = _listeners.find(listener);
     if (iter == _listeners.end()) {
@@ -116,7 +115,7 @@ void LocalBus::unsubscribe(IListener *listener, ChannelID channel)
     std::lock_guard _(*this);
 
     if (remove_channel_from_listener_lk(channel,listener)) {
-        auto chan = get_channel_lk(channel, false);
+        auto chan = get_channel_lk(channel);
         if (chan->remove_listener(listener)) {
             _channels.erase(channel);
             _channels_change = true;
@@ -128,7 +127,7 @@ void LocalBus::unsubscribe_all(IListener *listener)
 {
     std::lock_guard _(*this);
     erase_mailbox_lk(listener);
-    IBridgeListener *blsn = dynamic_cast<IBridgeListener *>(listener);
+    IBridgeListener *blsn = listener->get_bridge();
     if (blsn) {
         _back_path.remove_listener(blsn);
     }
@@ -148,10 +147,10 @@ bool LocalBus::unsubscribe_all_channels_lk(IListener *listener) {
     if (iter != _listeners.end()) {
         auto &chans = iter->second;
         for (auto &ch: chans) {
-            auto chptr = get_channel_lk(ch, false);
-            if (chptr->remove_listener(listener)) {
+            ech = true;
+            auto chptr = get_channel_lk(ch);
+            if (chptr->remove_listener(listener) || chptr->get_owner() == listener) {
                 _channels.erase(ch);
-                ech = true;
             }
         }
         _listeners.erase(iter);
@@ -283,8 +282,11 @@ bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
         std::lock_guard _(*this);
         auto citer = _channels.find(chanid);
         if (citer != _channels.end()) {
-            ch = citer->second;
-            break;
+            auto own = citer->second->get_owner();
+            if (own == listener || own == nullptr) {
+                ch = citer->second;
+                break;
+            }
         }
 
 
@@ -310,25 +312,44 @@ void LocalBus::force_update_channels() {
     _channels_change = true;
 }
 
-bool LocalBus::add_to_group(ChannelID group_name, ChannelID uid) {
+bool LocalBus::add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) {
     std::lock_guard _(*this);
 
-    IBridgeListener *lsn = _back_path.find_path(uid);
-    if (lsn == nullptr) return false;
+    auto new_channel = [&](auto lsn){
+        auto ch = get_channel_lk(group_name);
+        auto own = ch->get_owner();
+        if (own != nullptr && own != owner) return false;
+        ch->set_owner(owner);
 
-    auto ch = get_channel_lk(group_name, true);
-    if (!ch) return false;
+        ch->add_listener(lsn);
+        return true;
+    };
 
-    ch->add_listener(lsn);
-    lsn->on_add_to_group(group_name, uid);
-    return true;
+    auto iter = _mailboxes_by_name.find(uid);
+    if (iter == _mailboxes_by_name.end()) {
+
+        IBridgeListener *lsn = _back_path.find_path(uid);
+        if (lsn == nullptr) return false;
+        if (!new_channel(lsn)) return false;
+        lsn->on_add_to_group(group_name, uid);
+        return true;
+    } else {
+
+        if (!new_channel(iter->second)) return false;
+        IBridgeListener *br = iter->second->get_bridge();
+        if (br) br->on_add_to_group(group_name, uid);
+        return true;
+
+    }
 }
 
-void LocalBus::close_group(ChannelID group_name) {
+void LocalBus::close_group(IListener *owner, ChannelID group_name) {
     auto citer = _channels.find(group_name);
     if (citer != _channels.end()) {
-        _channels.erase(citer);
-        _channels_change = true;
+        if (citer->second->get_owner() == owner) {
+            _channels.erase(citer);
+            _channels_change = true;
+        }
     }
 }
 
@@ -392,14 +413,13 @@ void LocalBus::get_subscribed_channels(IListener *listener,FunctionRef<void(Chan
     cb({_tmp_channels.begin(), _tmp_channels.end()});
 }
 
-LocalBus::ChanDef::ChanDef(std::string_view name, bool private_group, std::pmr::memory_resource *memres)
+LocalBus::ChanDef::ChanDef(std::string_view name, std::pmr::memory_resource *memres)
     :_name(name, std::pmr::polymorphic_allocator<char>(memres))
-    ,_private_group(private_group)
     ,_listeners(std::pmr::polymorphic_allocator<std::pair<IListener *, bool> >(memres)) {}
 
 LocalBus::ChanDef::~ChanDef() {
     enum_listeners([&](IListener *lsn){
-        auto br = dynamic_cast<IBridgeListener *>(lsn);
+        auto br = lsn->get_bridge();
         if (br) br->on_close_group(_name);
     });
 }
@@ -452,7 +472,7 @@ bool LocalBus::ChanDef::remove_listener(IListener *lsn) {
 
 bool LocalBus::ChanDef::can_export(IListener *lsn) const {
     std::lock_guard _(_mx);
-    if (is_group()) return false; //group is not exportable
+    if (_owner) return false; //group is not exportable
     auto iter = std::find_if(_listeners.begin(), _listeners.end(), [&](const auto &l){
         return l && l != lsn;
     });
@@ -563,6 +583,13 @@ bool LocalBus::clear_return_path(IBridgeListener *lsn, ChannelID sender, Channel
         }
         return true;
     }
+    auto iter = _mailboxes_by_name.find(sender);
+    if (iter != _mailboxes_by_name.end()) {
+        auto br = iter->second->get_bridge();
+        if (br) br->on_clear_path(sender, receiver);
+    }
+
+
     return false;
 }
 

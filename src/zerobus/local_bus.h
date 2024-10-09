@@ -42,8 +42,8 @@ public:
     virtual std::string_view get_cycle_detect_channel_name() const override;
     virtual bool clear_return_path(IBridgeListener *lsn, ChannelID sender, ChannelID receiver)  override;
     virtual void force_update_channels()  override;
-    virtual bool add_to_group(ChannelID group_name, ChannelID uid) override;
-    virtual void close_group(ChannelID group_name) override;
+    virtual bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) override;
+    virtual void close_group(IListener *owner, ChannelID group_name) override;
 
     ///Create local message broker;
     static Bus create();
@@ -78,7 +78,7 @@ protected:
          * @param name channel name. You can use get_id(), to receive ChannelID under which
          * the channel can be stored in a map
          */
-        ChanDef(std::string_view name, bool private_group, std::pmr::memory_resource *memres);
+        ChanDef(std::string_view name, std::pmr::memory_resource *memres);
         ///cannot be copied nor moved
         ChanDef(const ChanDef &) = delete;
         ///cannot be copied nor moved
@@ -104,10 +104,12 @@ protected:
         ///retrieve id
         ChannelID get_id() const;
 
-        bool is_group() const {return _private_group;}
+        IListener *get_owner() const {return _owner;}
+
+        void set_owner(IListener *owner) {_owner = owner;}
     protected:
         mstring _name;  //a channel name
-        bool _private_group;
+        IListener *_owner = {}; //owner of group;
         mvector<IListener *> _listeners; //list of listeners. Nullptr are skipped
         mutable std::recursive_mutex _mx;
         unsigned int _recursion = 0; //count of lock recursion
@@ -210,7 +212,7 @@ protected:
     bool unsubscribe_all_channels_lk(IListener *listener);
 
 
-    PChanMapItem get_channel_lk(ChannelID name, bool group);
+    PChanMapItem get_channel_lk(ChannelID name);
 
 
     bool forward_message_internal(IListener *listener,  Message &&msg) ;

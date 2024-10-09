@@ -195,11 +195,11 @@ bool IChannelFilter::incoming(ChannelID ) const {return true;}
 bool IChannelFilter::outgoing(ChannelID) const {return true;}
 
 void AbstractBridge::apply_their_close_group(ChannelID group_name) {
-    _ptr->close_group(group_name);
+    _ptr->close_group(this,group_name);
 }
 
 void AbstractBridge::apply_their_add_to_group(ChannelID group_name, ChannelID target_id) {
-    if (!_ptr->add_to_group(group_name, target_id)) {
+    if (!_ptr->add_to_group(this, group_name, target_id)) {
         send_channels(ChannelList(&group_name,1), Operation::erase);
     }
 }

@@ -4,10 +4,18 @@
 
 namespace zerobus {
 
+class IBridgeListener;
+
 ///Message listener
 class IListener {
 public:
+
+
     virtual ~IListener() = default;
+    ///Internal virtual function which can retrieve bridge from this object
+    /** Dynamic cast replacement for this special purpose */
+    virtual IBridgeListener *get_bridge() noexcept {return nullptr;}
+
     ///Message received
     /**
      * @param message contains message
@@ -20,6 +28,8 @@ public:
      * @note if pm is set, channel name of the message is undefined
      */
     virtual void on_message(const Message &message, bool pm) noexcept= 0;
+
+
 };
 
 

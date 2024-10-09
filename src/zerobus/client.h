@@ -3,15 +3,16 @@
 
 namespace zerobus {
 
-class AbstractClient: public IListener {
+template<typename _Base = IListener>
+class AbstractClientGeneric: public _Base {
 public:
 
-    AbstractClient(Bus bus):_bus(std::move(bus)) {}
-    ~AbstractClient() {_bus.unsubscribe_all(this);}
+    AbstractClientGeneric(Bus bus):_bus(std::move(bus)) {}
+    ~AbstractClientGeneric() {_bus.unsubscribe_all(this);}
 
 
-    AbstractClient(const AbstractClient &) = delete;
-    AbstractClient &operator=(const AbstractClient &) = delete;
+    AbstractClientGeneric(const AbstractClientGeneric &) = delete;
+    AbstractClientGeneric &operator=(const AbstractClientGeneric &) = delete;
 
     Bus get_bus() const {return _bus;}
 
@@ -79,10 +80,20 @@ public:
         _bus.get_subscribed_channels(this, std::forward<Callback>(cb));
     }
 
+    bool add_to_group(ChannelID group_name, ChannelID sender_id) {
+        return _bus.add_to_group(this, group_name, sender_id);
+    }
+
+    void close_group(ChannelID group_name) {
+        _bus.close_group(this, group_name);
+    }
+
 
 protected:
     Bus _bus;
 };
+
+using AbstractClient = AbstractClientGeneric<IListener>;
 
 template<std::invocable<AbstractClient &, const Message &, bool> Fn >
 class ClientCallback: public AbstractClient {
