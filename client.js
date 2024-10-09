@@ -13,10 +13,12 @@ const zerobus = (function(){
         channels_erase: 3,         // list of channels
         channels_reset: 4,         // send from other side that they unsubscribed all channels
         clear_path: 5,             // clear return path
-        welcome: 6,                // notifies, successful login (it also assumes channels_reset in case of re-login)
-        auth_req: 7,               // sent by one side to request authentication
-        auth_response: 8,          // sent by other side to response authentication
-        auth_failed: 9             // authentication failed - client should close connection
+        add_to_group: 6,
+        close_group: 7,
+        welcome: 8,                // notifies, successful login (it also assumes channels_reset in case of re-login)
+        auth_req: 9,               // sent by one side to request authentication
+        auth_response: 10,          // sent by other side to response authentication
+        auth_failed: 11             // authentication failed - client should close connection
     };
 
     class Message {
@@ -161,6 +163,7 @@ const zerobus = (function(){
         }
     }
 
+
     class LocalBus {
 
         #channels = {};
@@ -199,12 +202,26 @@ const zerobus = (function(){
 
         unsubscribe_all(listener) {
             this.unsubscribe_private(listener);
+            this.unsubscribe_all_channels(listener);
+            this.close_all_groups(listener);
+            Object.keys(this.#backpath).forEach(x=>{
+                if (this.#backpath[x] == listener) delete this.#backpath[x];
+            });
+        }
+
+        unsubscribe_all_channels(listener){
             const chls = Object.keys(this.#channels);
             chls.forEach(name=>{
                 this.unsubscribe(name, listener);
             });
-            Object.keys(this.#backpath).forEach(x=>{
-                if (this.#backpath[x] == listener) delete this.#backpath[x];
+        }
+
+        close_all_groups(listener){
+            const chls = Object.keys(this.#channels);
+            chls.forEach(name=>{
+                if (this.#channels[name]._owner == listener) {
+                    delete this.#channels[name];
+                }
             });
         }
 
@@ -220,12 +237,15 @@ const zerobus = (function(){
                 queueMicrotask(()=>{lsn.call(lsn,msg,true);});
                 return true;
             }  else if (this.#channels[chan]) {
-                this.#channels[chan].keys().forEach(entry=>{
-                    if (entry != lsn) {
-                        queueMicrotask(()=>{entry.call(entry,msg,false);});
-                    }
-                });
-                return true;
+                let ch = this.#channels[chan];
+                if (!ch._owner || ch._owner == lsn) {
+                    this.#channels[chan].keys().forEach(entry=>{
+                        if (entry != lsn) {
+                            queueMicrotask(()=>{entry.call(entry,msg,false);});
+                        }
+                    });
+                    return true;
+                }
             } else if (this.#backpath[chan]) {
                 const lsn = this.#backpath[chan];
                 queueMicrotask(()=>{lsn.call(lsn,msg,false);});
@@ -266,7 +286,7 @@ const zerobus = (function(){
         get_subscribed_channels(listener) {
             const chls = Object.keys(this.#channels);
             return chls.filter(name=>{
-                return this.#channels.has(listener)
+                return this.#channels[name].has(listener)
             });
         }
 
@@ -292,30 +312,59 @@ const zerobus = (function(){
             let ch = Object.keys(this.#channels);
             return ch.filter(x=>{
                 const s =this.#channels[x];
-                return s.size>1 || !s.has(listener);
+                return !s._owner && (s.size>1 || !s.has(listener));
             })
         }
 
         dispatch_message(listener, message, subscribe_return_path) {
             const sender = message.get_sender();
-            if (subscribe_return_path && !this.#mailboxes.has(sender)) {
+            if (subscribe_return_path && !this.#mailboxes.has(sender) && listener.bridge) {
                 this.#backpath[sender] = listener;
             }
             return this.#post_message(listener,message);
         }
-        follow_return_path(sender, callback) {
-            if (this.#backpath[sender]) {
-                callback(this.#backpath[sender]);
+        clear_return_path(bridge, sender, receiver) {
+            if (this.#backpath[receiver] === bridge) {
+                delete this.#backpath[receiver];
+                if (this.#backpath[sender]) {
+                    this.#backpath[sender].bridge.send_clear_path(sender, receiver);
+                }
+                return true;
+            }
+            if (this.#mailboxes.has(sender)) {
+                let lsn = this.#mailboxes.get(sender);
+                if (lsn.bridge) lsn.bridge.send_clear_path(sender, receiver);
                 return true;
             }
             return false;
+
         }
-        clear_return_path(listener, sender) {
-            if (this.#backpath[sender] === listener) {
-                delete this.#backpath[sender];
-                return true;
+        add_to_group(owner, group, target_id) {
+            let lsn;
+            if (this.#mailboxes.has(target_id)) {
+                lsn = this.#mailboxes.get(target_id);
+            } else if (this.#backpath[target_id]) {
+                lsn = this.#backpath[target_id];
             }
-            return false;
+            if (!lsn) return false;
+            let chan = this.#channels[group];
+            if (!chan) {
+                this.#channels[group] = chan = new Set();
+            }
+            if (chan._owner && chan._owner != owner) return false;
+            chan._owner = owner;
+            chan.add(lsn);
+            if (lsn.bridge) lsn.bridge.send_add_to_group(group, target_id);
+            return true;
+        }
+        close_group(owner, group) {
+            let chan = this.#channels[group];
+            if (chan._owner === owner) {
+                chan.keys().forEach(entry=>{
+                   if (entry.bridge) entry.bridge.send_close_group(group);
+                });
+                delete this.#channels[group];
+            }
         }
     }
 
@@ -347,6 +396,8 @@ const zerobus = (function(){
         send_channels(channels, operation) {throw new PureVirtualError();}
         send_message(msg) {throw new PureVirtualError();}
         send_clear_path(sender, receiver) {throw new PureVirtualError();}
+        send_add_to_group(group, target) {throw new PureVirtualError();}
+        send_close_group(group) {throw new PureVirtualError();}
 
         send_mine_channels() {
             const chansarr = this._bus.get_active_channels(this._listener);
@@ -370,7 +421,7 @@ const zerobus = (function(){
             } else if (operaton == MessageType.channels_erase) {
                 channels.forEach(ch=>this._bus.unsubscribe(ch, this._listener));
             } else if (operaton == MessageType.channels_replace) {
-                this._bus.unsubscribe_all(this._listener);
+                this._bus.unsubscribe_all_channels(this._listener);
                 channels.forEach(ch=>this._bus.subscribe (ch, this._listener));
             }
         }
@@ -381,10 +432,13 @@ const zerobus = (function(){
         }
 
         apply_their_clear_path(sender, receiver) {
-            this._bus.clear_return_path(this._listener, receiver);
-            this._bus.follow_return_path(sender, lst=>{
-                if (lst.bridge) lst.bridge.send_clear_path(sender, receiver);
-            });
+            this._bus.clear_return_path(this._listener,sender,receiver);
+        }
+        apply_their_add_to_group(group, target) {
+            this._bus.add_to_group(this._listener, group, target);
+        }
+        apply_their_close_group(group) {
+            this._bus.close_group(this._listener, group);
         }
         register_monitor() {
             if (!this._mon) {
@@ -479,7 +533,6 @@ const zerobus = (function(){
         }
 
         #reconnect_delayed() {
-            this._bus.unsubscibre_all(this._listener);
             this.#ws.onclose = null;
             console.warn("WebSocketBus: connection error, reconnecting ...");
             setTimeout(()=>this.#reconnect(), 2000);
@@ -496,6 +549,8 @@ const zerobus = (function(){
                 case MessageType.channels_add:
                 case MessageType.channels_replace:
                 case MessageType.channels_erase: this.#parse_channels(mtype,iter);break;
+                case MessageType.add_to_group:this.#parse_add_to_group(iter);break;
+                case MessageType.close_group:this.#parse_close_group(iter);break;
                 case MessageType.welcome: this.register_monitor()
                                           /* no break */
                 case MessageType.channels_reset: this.apply_their_reset();break;
@@ -531,6 +586,21 @@ const zerobus = (function(){
             this.apply_their_clear_path(sender, receiver);
         }
 
+        #parse_add_to_group(iter) {
+            const dec = new TextDecoder();
+            const group = dec.decode(decode_binary_string(iter));
+            const target  = dec.decode(decode_binary_string(iter));
+            this.apply_their_add_to_group(group,target);
+
+        }
+
+        #parse_close_group(iter) {
+            const dec = new TextDecoder();
+            const group = dec.decode(decode_binary_string(iter));
+            this.apply_their_close_group(group);
+
+        }
+
         send_reset() {
             this.#binb.push(MessageType.channels_reset);
             this.#ws.send(this.#binb.get_data_and_clear());
@@ -554,6 +624,17 @@ const zerobus = (function(){
             this.#binb.push(MessageType.clear_path);
             encode_string(this.#binb,sender);
             encode_string(this.#binb,receiver);
+            this.#ws.send(this.#binb.get_data_and_clear());
+        }
+        send_add_to_group(group, target) {
+            this.#binb.push(MessageType.add_to_group);
+            encode_string(this.#binb,group);
+            encode_string(this.#binb,target);
+            this.#ws.send(this.#binb.get_data_and_clear());
+        }
+        send_close_group(group) {
+            this.#binb.push(MessageType.close_group);
+            encode_string(this.#binb,group);
             this.#ws.send(this.#binb.get_data_and_clear());
         }
     }

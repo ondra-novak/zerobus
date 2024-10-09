@@ -44,6 +44,8 @@ public:
     virtual void force_update_channels()  override;
     virtual bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) override;
     virtual void close_group(IListener *owner, ChannelID group_name) override;
+    virtual void close_all_groups(IListener *owner) override;
+    virtual void unsubscribe_all_channels(IListener *listener) override;
 
     ///Create local message broker;
     static Bus create();
@@ -107,6 +109,8 @@ protected:
         IListener *get_owner() const {return _owner;}
 
         void set_owner(IListener *owner) {_owner = owner;}
+
+        bool has(IListener *lsn) const;
     protected:
         mstring _name;  //a channel name
         IListener *_owner = {}; //owner of group;
@@ -174,7 +178,6 @@ protected:
     mutable std::recursive_mutex _mutex;               //recursive mutex
     std::pmr::synchronized_pool_resource _mem_resource; //contains memory resource for messages
     ChannelMap _channels;                   //main map mapping channel name to channel instance
-    ListenerToChannelMap _listeners;        //helps to find subscribed channels
     ListenerToMailboxMap _mailboxes_by_ptr; //maps listener pointer to mailbox name
     MailboxToListenerMap _mailboxes_by_name; //maps mailbox name to listener ptr
     BackPathStorage _back_path;
@@ -185,21 +188,13 @@ protected:
     mutable const IListener *_last_proxy=nullptr;    //pointer to last proxy - to check, whether there are more proxies
     mutable bool _channels_change = false;
     mutable unsigned int _recursion = 0;
-    ///removes channel from existing listener.
-    /**
-     * @param channel channel to remove
-     * @param listener listener
-     * @retval true channel found and removed
-     * @retval false channel was not subscribed
-     *
-     * @note if the listener has no more channels, it is removed from map
-     */
-    bool remove_channel_from_listener_lk(std::string_view channel, IListener *listener);
     ///erase mailbox
     /**
      * @param listener listener which mailbox is erased
      */
     void erase_mailbox_lk(IListener *listener);
+
+    void erase_groups_lk(IListener *owner);
     ///create mailbox address
     /**
      * @param listener listener

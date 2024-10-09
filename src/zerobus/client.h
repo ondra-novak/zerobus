@@ -88,6 +88,9 @@ public:
         _bus.close_group(this, group_name);
     }
 
+    void close_all_group() {
+        _bus.close_all_groups(this);
+    }
 
 protected:
     Bus _bus;

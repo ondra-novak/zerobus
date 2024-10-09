@@ -31,11 +31,10 @@ BridgeTCPServer::BridgeTCPServer(Bus bus, std::string address_port, AuthConfig a
 BridgeTCPServer::~BridgeTCPServer() {
     std::unique_lock lk(_mx);
     auto p = std::move(_peers);
-    lk.unlock();
-    p.clear();
-    lk.lock();
     auto br = IBridgeAPI::from_bus(_bus.get_handle());
     br->unregister_monitor(this);
+    lk.unlock();
+    p.clear();
     _ctx->destroy(_aux);
 }
 

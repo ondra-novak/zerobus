@@ -20,6 +20,7 @@ public:
     virtual void register_monitor(IMonitor *mon) = 0;
     virtual void unregister_monitor(const IMonitor *mon) = 0;
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList) > &&cb) const = 0;
+    virtual void unsubscribe_all_channels(IListener *listener) = 0;
     virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
     virtual bool dispatch_message(IBridgeListener *listener, Message &&msg, bool subscribe_return_path) = 0;
     ///retieve channel name used to detect cycles

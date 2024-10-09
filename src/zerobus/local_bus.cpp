@@ -70,7 +70,6 @@ protected:
 
 LocalBus::LocalBus()
     :_channels(ChannelMap::allocator_type(&_mem_resource))
-    ,_listeners(ListenerToChannelMap::allocator_type(&_mem_resource))
     ,_mailboxes_by_ptr(ListenerToMailboxMap::allocator_type(&_mem_resource))
     ,_mailboxes_by_name(MailboxToListenerMap::allocator_type(&_mem_resource))
     ,_back_path(_mem_resource)
@@ -101,11 +100,6 @@ bool LocalBus::subscribe(IListener *listener, ChannelID channel)
     auto chan = get_channel_lk(channel);
     if (chan->get_owner()) return false;
     chan->add_listener(listener);
-    auto iter = _listeners.find(listener);
-    if (iter == _listeners.end()) {
-        iter = _listeners.emplace(listener, mvector<ChannelID>(mvector<ChannelID>::allocator_type(&_mem_resource))).first;
-    }
-    iter->second.push_back(chan->get_id());
     _channels_change = true;
     return true;
 }
@@ -114,12 +108,11 @@ void LocalBus::unsubscribe(IListener *listener, ChannelID channel)
 {
     std::lock_guard _(*this);
 
-    if (remove_channel_from_listener_lk(channel,listener)) {
-        auto chan = get_channel_lk(channel);
-        if (chan->remove_listener(listener)) {
-            _channels.erase(channel);
-            _channels_change = true;
-        }
+    auto iter = _channels.find(channel);
+    if (iter == _channels.end()) return;
+    auto &ch = *iter->second;
+    if (ch.remove_listener(listener)) {
+        _channels.erase(iter);
     }
 }
 
@@ -127,6 +120,7 @@ void LocalBus::unsubscribe_all(IListener *listener)
 {
     std::lock_guard _(*this);
     erase_mailbox_lk(listener);
+    erase_groups_lk(listener);
     IBridgeListener *blsn = listener->get_bridge();
     if (blsn) {
         _back_path.remove_listener(blsn);
@@ -141,21 +135,26 @@ void LocalBus::unsubcribe_private(IListener *listener) {
     erase_mailbox_lk(listener);
 }
 
+void LocalBus::unsubscribe_all_channels(IListener *listener) {
+    std::lock_guard _(*this);
+    if (unsubscribe_all_channels_lk(listener)) {
+        _channels_change = true;
+    }
+}
+
 bool LocalBus::unsubscribe_all_channels_lk(IListener *listener) {
     bool ech = false;
-    auto iter = _listeners.find(listener);
-    if (iter != _listeners.end()) {
-        auto &chans = iter->second;
-        for (auto &ch: chans) {
+    for (auto iter = _channels.begin(); iter != _channels.end();) {
+        auto &ch = *iter->second;
+        if (ch.remove_listener(listener)) {
+            iter = _channels.erase(iter);
             ech = true;
-            auto chptr = get_channel_lk(ch);
-            if (chptr->remove_listener(listener) || chptr->get_owner() == listener) {
-                _channels.erase(ch);
-            }
+        } else {
+            ++iter;
         }
-        _listeners.erase(iter);
     }
     return ech;
+
 }
 
 std::string LocalBus::get_random_channel_name(std::string_view prefix) const {
@@ -164,7 +163,21 @@ std::string LocalBus::get_random_channel_name(std::string_view prefix) const {
     return out;
 }
 
+void LocalBus::close_all_groups(IListener *owner) {
+    std::lock_guard _(*this);
+    erase_groups_lk(owner);
+}
 
+void LocalBus::erase_groups_lk(IListener *owner) {
+    for (auto iter = _channels.begin(); iter != _channels.end();) {
+        auto &ch = *iter->second;
+        if (ch.get_owner() == owner) {
+            iter = _channels.erase(iter);
+        } else {
+            ++iter;
+        }
+    }
+}
 void LocalBus::erase_mailbox_lk(IListener *listener) {
     //always under lock
     auto iter = _mailboxes_by_ptr.find(listener);
@@ -221,19 +234,6 @@ bool LocalBus::dispatch_message(IBridgeListener *listener, Message &&msg, bool s
     return forward_message_internal(listener, std::move(msg));
 }
 
-bool LocalBus::remove_channel_from_listener_lk(std::string_view channel, IListener *listener)
-{
-    auto iter = _listeners.find(listener);
-    if (iter == _listeners.end()) return false;
-    auto &lst = iter->second;
-    auto f = std::find(lst.begin(), lst.end(), channel);
-    if (f == lst.end()) return false;
-    lst.erase(f);
-    if (lst.empty()) {
-        _listeners.erase(iter);
-    }
-    return true;
-}
 
 struct LocalBus::TLSQueueItem { // @suppress("Miss copy constructor or assignment operator")
     PChanMapItem channel;
@@ -405,11 +405,10 @@ void LocalBus::get_active_channels(IListener *listener,FunctionRef<void(ChannelL
 
 void LocalBus::get_subscribed_channels(IListener *listener,FunctionRef<void(ChannelList)> &&cb) const {
     std::lock_guard _(*this);
-    auto iter = _listeners.find(listener);
-    if (iter == _listeners.end()) return;
     _tmp_channels.clear();
-    _tmp_channels.resize(iter->second.size());
-    std::copy(iter->second.begin(), iter->second.end(), _tmp_channels.begin());
+    for (const auto &[k,v]: _channels) {
+        if (v->has(listener)) _tmp_channels.push_back(k);
+    }
     cb({_tmp_channels.begin(), _tmp_channels.end()});
 }
 
@@ -457,6 +456,7 @@ bool LocalBus::ChanDef::empty() const {
 
 void LocalBus::ChanDef::add_listener(IListener *lsn) {
     std::lock_guard _(*this);
+    if (std::find(_listeners.begin(), _listeners.end(), lsn) != _listeners.end()) return;
     _listeners.push_back(lsn);
 }
 
@@ -468,6 +468,12 @@ bool LocalBus::ChanDef::remove_listener(IListener *lsn) {
     }
     return (_listeners.size() - _del_count) == 0;
 
+}
+
+bool LocalBus::ChanDef::has(IListener *lsn) const {
+    std::lock_guard _(_mx);
+    return std::find(_listeners.begin(), _listeners.end(), lsn) != _listeners.end();
+    return false;
 }
 
 bool LocalBus::ChanDef::can_export(IListener *lsn) const {

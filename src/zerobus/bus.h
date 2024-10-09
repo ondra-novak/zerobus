@@ -18,6 +18,7 @@ public:
     virtual void unsubcribe_private(IListener *listener) = 0;
     virtual bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) = 0;
     virtual void close_group(IListener *owner, ChannelID group_name) = 0;
+    virtual void close_all_groups(IListener *owner) = 0;
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
     virtual std::string get_random_channel_name(std::string_view prefix) const = 0;
     virtual bool is_channel(ChannelID id) const = 0;
@@ -107,6 +108,11 @@ public:
     void close_group(IListener *owner, ChannelID group_name) {
         _ptr->close_group(owner, group_name);
     }
+
+    virtual void close_all_groups(IListener *owner) {
+        _ptr->close_all_groups(owner);
+    }
+
 
     ///send message
     /**

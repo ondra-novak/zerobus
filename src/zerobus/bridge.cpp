@@ -93,7 +93,7 @@ void AbstractBridge::apply_their_channels(ChannelList lst, Operation op) {
                 if (!_cycle_detected) {
                     _cycle_detected = true;
                     cycle_detection(_cycle_detected);
-                    _ptr->unsubscribe_all(this);
+                    _ptr->unsubscribe_all_channels(this);
                     return;
                 }
             }
@@ -101,7 +101,7 @@ void AbstractBridge::apply_their_channels(ChannelList lst, Operation op) {
     }
     if (_cycle_detected) return;
     switch (op) {
-        case Operation::replace: _ptr->unsubscribe_all(this);
+        case Operation::replace: _ptr->unsubscribe_all_channels(this);
                                  [[fallthrough]];
         case Operation::add: {
             auto flt = _filter.load();
