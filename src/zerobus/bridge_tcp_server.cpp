@@ -7,8 +7,8 @@
 
 namespace zerobus {
 
-BridgeTCPServer::BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std::string address_port, AuthConfig auth_cfg)
-        :_bus(bus),_ctx(std::move(ctx)),_auth_cfg(std::move(auth_cfg))
+BridgeTCPServer::BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std::string address_port)
+        :_bus(bus),_ctx(std::move(ctx))
         , _path(BridgeTCPCommon::get_path_from_url(address_port))
         ,_custom_page([this](std::string_view uri)->CustomPage {
             if (uri == _path) {
@@ -24,8 +24,8 @@ BridgeTCPServer::BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std:
         _ctx->accept(_aux, this);
     }
 
-BridgeTCPServer::BridgeTCPServer(Bus bus, std::string address_port, AuthConfig auth_cfg)
-    :BridgeTCPServer(std::move(bus), make_context(1), std::move(address_port), std::move(auth_cfg)) {
+BridgeTCPServer::BridgeTCPServer(Bus bus, std::string address_port)
+    :BridgeTCPServer(std::move(bus), make_context(1), std::move(address_port)) {
 }
 
 BridgeTCPServer::~BridgeTCPServer() {
@@ -91,13 +91,9 @@ BridgeTCPServer::Peer::Peer(BridgeTCPServer &owner, ConnHandle aux, unsigned int
 }
 
 void BridgeTCPServer::Peer::initial_handshake() {
-    Peer::send_welcome();
     Peer::send_mine_channels();
 }
 
-void BridgeTCPServer::Peer::on_auth_response(std::string_view ident, std::string_view proof, std::string_view salt) {
-    _owner.on_auth_response(this, ident, proof, salt);
-}
 
 bool BridgeTCPServer::Peer::check_dead() {
     if (_activity_check) {
@@ -127,9 +123,6 @@ void BridgeTCPServer::call_with_peer(unsigned int id, Fn &&fn) {
     }
 }
 
-void BridgeTCPServer::on_auth_response(Peer *p, std::string_view ident, std::string_view proof, std::string_view salt) {
-    _auth_cfg.verify_fn(this, AuthInfo{p->get_id(),ident,proof,salt});
-}
 
 void BridgeTCPServer::accept_auth(unsigned int id) {
     call_with_peer(id, [&](Peer *p){
@@ -144,11 +137,6 @@ void BridgeTCPServer::accept_auth(unsigned int id, std::unique_ptr<Filter> flt) 
     });
 }
 
-void BridgeTCPServer::reject_auth(unsigned int id) {
-    call_with_peer(id, [&](Peer *p){
-        p->send_auth_failed();
-    });
-}
 
 void BridgeTCPServer::set_custom_page_callback(
         std::function<CustomPage(std::string_view)> cb) {
@@ -280,11 +268,7 @@ bool BridgeTCPServer::Peer::websocket_handshake(std::string_view &data) {
 
 void BridgeTCPServer::Peer::start_peer() {
     _handshake = false;
-    if (_owner._auth_cfg.verify_fn) {
-        Peer::request_auth(_owner._auth_cfg.digest_type);
-    } else {
-        initial_handshake();
-    }
+    initial_handshake();
 }
 
 }

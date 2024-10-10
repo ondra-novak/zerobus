@@ -103,16 +103,16 @@ inline Iter Serialization::write_string(Iter out, const std::string_view &str) {
     return out;
 }
 template<std::output_iterator<char> Iter, typename ... Args>
-static Iter compose_message(Iter out, const Args &... args) {
+inline Iter Serialization::compose_message(Iter out, const Args &... args) {
     auto wr = [&](const auto &x){
         using T = std::decay_t<decltype(x)>;
         if constexpr(std::is_enum_v<T>) {
             *out = static_cast<char>(x);
             ++out;
         } else if constexpr(std::is_integral_v<T> && std::is_unsigned_v<T>) {
-            out = write_uint(out);
+            out = write_uint(out, x);
         } else if constexpr(std::is_convertible_v<T, std::string_view>) {
-            out = write_string(out);
+            out = write_string(out, x);
         }
     };
     (...,wr(args));

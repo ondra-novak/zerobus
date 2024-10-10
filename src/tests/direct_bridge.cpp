@@ -173,7 +173,7 @@ void clear_path_test() {
 
 class TestFlt: public Filter {
 public:
-    virtual bool outgoing(ChannelID id) const {
+    virtual bool on_outgoing(ChannelID id) override{
         return id == "reverse";
     }
 };

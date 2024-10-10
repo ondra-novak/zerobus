@@ -149,4 +149,8 @@ std::string_view Deserialization::read_string(std::string_view &msgtext) {
     return part;
 }
 
+std::string_view Serialization::finish_write() const {
+    return {_buffer.data(), _buffer.size()};
+}
+
 }

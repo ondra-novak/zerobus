@@ -4,11 +4,14 @@
 
 #include "base64.h"
 #include <random>
+#include <variant>
 namespace zerobus {
 
 
+thread_local Serialization BridgeTCPCommon::_ser = {};
+
 BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,ConnHandle aux, bool client)
-:AbstractBinaryBridge(std::move(bus))
+:AbstractBridge(std::move(bus))
 ,_ctx(std::move(ctx))
 ,_aux(aux)
 ,_ws_builder(client)
@@ -100,6 +103,11 @@ std::string_view BridgeTCPCommon::get_view_to_send() const {
     return std::string_view(_output_data.data()+_output_cursor, _output_data.size()-_output_cursor);
 }
 
+void BridgeTCPCommon::deserialize_message(const std::string_view &msg) {
+    std::visit([&](auto &&m){
+        this->receive(std::move(m));
+    }, _deser(msg, _ptr.get()));
+}
 
 void BridgeTCPCommon::receive_complete(std::string_view data) noexcept {
     if (data.empty()) {
@@ -110,7 +118,7 @@ void BridgeTCPCommon::receive_complete(std::string_view data) noexcept {
             ws::Message msg = _ws_parser.get_message();
             switch (msg.type) {
                 case ws::Type::binary:
-                    this->dispatch_message(msg.payload);
+                    deserialize_message(msg.payload);
                     break;
                 case ws::Type::ping:
                     output_message(ws::Message{msg.payload, ws::Type::pong});
@@ -139,9 +147,6 @@ void BridgeTCPCommon::read_from_connection() {
     _ctx->receive(_aux, _input_buffer, this);
 }
 
-void BridgeTCPCommon::on_auth_response(std::string_view , std::string_view , std::string_view ) {
-    //empty - authentification must be implemented by child class
-}
 
 void BridgeTCPCommon::output_message(const ws::Message &msg) {
     std::lock_guard _(_mx);
@@ -158,13 +163,6 @@ void BridgeTCPCommon::output_message(std::string_view data) {
     output_message({data, ws::Type::binary});
 }
 
-void BridgeTCPCommon::on_auth_request(std::string_view , std::string_view ) {
-    //empty - authentification must be implemented by child class
-}
-
-void BridgeTCPCommon::on_welcome() {
-    //empty
-}
 
 void BridgeTCPCommon::on_timeout() noexcept {
 }
@@ -258,6 +256,30 @@ std::string BridgeTCPCommon::get_path_from_url(std::string_view url) {
 void BridgeTCPCommon::set_hwm(std::size_t hwm) {
     std::lock_guard _(_mx);
     _hwm = hwm;
+}
+
+void BridgeTCPCommon::send(ChannelReset&& m) noexcept {
+    output_message(_ser(m));
+}
+
+void BridgeTCPCommon::send(CloseGroup&& m) noexcept {
+    output_message(_ser(m));
+}
+
+void BridgeTCPCommon::send(Message &&m) noexcept {
+    output_message(_ser(m));
+}
+
+void BridgeTCPCommon::send(ChannelUpdate &&m) noexcept {
+    output_message(_ser(m));
+}
+
+void BridgeTCPCommon::send(ClearPath&&m) noexcept {
+    output_message(_ser(m));
+}
+
+void BridgeTCPCommon::send(AddToGroup&&m) noexcept {
+    output_message(_ser(m));
 }
 
 }

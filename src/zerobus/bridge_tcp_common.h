@@ -1,13 +1,13 @@
 #pragma once
 #include "network.h"
-#include "binary_bridge.h"
+#include "bridge.h"
 #include "timeout_control.h"
 #include "websocket.h"
-
+#include "serialization.h"
 #include <mutex>
 namespace zerobus {
 
-class BridgeTCPCommon: public AbstractBinaryBridge, public IPeer {
+class BridgeTCPCommon: public AbstractBridge, public IPeer {
 public:
 
     static constexpr int input_buffer_size = 8192;
@@ -29,12 +29,7 @@ protected:
 
     virtual void clear_to_send() noexcept override;
     virtual void receive_complete(std::string_view data) noexcept override;
-    virtual void on_auth_response(std::string_view ident,
-            std::string_view proof, std::string_view salt) override;
-    virtual void output_message(std::string_view message) override;
-    virtual void on_auth_request(std::string_view proof_type,
-            std::string_view salt) override;
-    virtual void on_welcome() override;
+    virtual void output_message(std::string_view message) ;
     virtual void on_timeout() noexcept override;
 
     virtual void lost_connection() {}
@@ -56,7 +51,12 @@ protected:
     bool _handshake = true;
     bool _output_allowed = false;
 
-
+    virtual void send(ChannelReset&&) noexcept override;
+    virtual void send(CloseGroup&&) noexcept override;
+    virtual void send(Message &&msg) noexcept override;
+    virtual void send(ChannelUpdate &&msg) noexcept override;
+    virtual void send(ClearPath&&) noexcept override;
+    virtual void send(AddToGroup&&) noexcept override;
     void read_from_connection();
 
     bool after_send(std::size_t sz);
@@ -89,7 +89,12 @@ protected:
 
     }
 
+    void deserialize_message(const std::string_view &msg);
+    Deserialization _deser;
+    static thread_local Serialization _ser;
 
+    using AbstractBridge::receive;
+    void receive(Deserialization::UserMsg &&) {}
 
 };
 

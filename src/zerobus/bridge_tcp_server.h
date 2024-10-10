@@ -5,38 +5,11 @@
 
 #include "bridge_tcp_common.h"
 
-#include <queue>
+#include <functional>
 namespace zerobus {
 
 class BridgeTCPServer: public IMonitor, public IServer {
 public:
-
-    struct AuthInfo {
-        ///ID of associated peer
-        /**
-         * You can use this ID with accept_auth or reject_auth
-         */
-        unsigned int peer_id;
-        ///identity
-        std::string_view ident;
-        ///proof of identity
-        std::string_view proof;
-        ///salt used to encrypt the proof
-        std::string_view salt;
-    };
-
-
-    ///configures authentication check procedure
-    struct AuthConfig {
-        ///specifies required digest type
-        std::string digest_type;
-        ///a function called when auth is requested
-        /**
-         * @param 1 pointer to server instance
-         * @param 2 AuthInfo
-         */
-        std::function<void(BridgeTCPServer *,  AuthInfo)> verify_fn;
-    };
 
     ///Construct server
     /**
@@ -45,7 +18,7 @@ public:
      * @param address_port address and port to bind. You can use * to bind on all interfaces (*:port)
      * @param auth_cfg optional - information about peer authentication.
      */
-    BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std::string address_port, AuthConfig auth_cfg = {});
+    BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std::string address_port);
     ///Construct server
     /**
      * @param bus local end of the bus
@@ -54,7 +27,7 @@ public:
      *
      * @note creates network context with single thread
      */
-    BridgeTCPServer(Bus bus, std::string address_port, AuthConfig auth_cfg = {});
+    BridgeTCPServer(Bus bus, std::string address_port);
     BridgeTCPServer(const BridgeTCPServer &) = delete;
     BridgeTCPServer &operator=(const BridgeTCPServer &) = delete;
     virtual ~BridgeTCPServer() override;
@@ -117,7 +90,6 @@ protected:
         Peer(BridgeTCPServer &owner, ConnHandle aux, unsigned int id);
         Peer(const Peer &) = delete;
         Peer &operator=(const Peer &) = delete;
-        virtual void on_auth_response(std::string_view ident, std::string_view proof, std::string_view salt) override;
         void initial_handshake();
         virtual void receive_complete(std::string_view data) noexcept override;
         virtual void lost_connection() override;
@@ -125,7 +97,7 @@ protected:
         bool check_dead();
         unsigned int get_id() const {return _id;}
         bool is_lost() const {return _lost;}
-        bool disabled() const {return BridgeTCPCommon::disabled() || _handshake;}
+        bool disabled() const {return  _handshake;}
 
     protected:
         bool _activity_check = false;
@@ -152,7 +124,6 @@ protected:
     Bus _bus;
     std::shared_ptr<INetContext> _ctx;
     ConnHandle  _aux = 0;
-    AuthConfig _auth_cfg;
     std::string _path;
     std::mutex _mx;
     std::vector<std::unique_ptr<Peer> > _peers;
