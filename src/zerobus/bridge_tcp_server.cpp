@@ -137,7 +137,7 @@ void BridgeTCPServer::accept_auth(unsigned int id) {
     });
 }
 
-void BridgeTCPServer::accept_auth(unsigned int id, std::unique_ptr<IChannelFilter> flt) {
+void BridgeTCPServer::accept_auth(unsigned int id, std::unique_ptr<Filter> flt) {
     call_with_peer(id, [&](Peer *p){
         p->set_filter(std::move(flt));
         p->initial_handshake();

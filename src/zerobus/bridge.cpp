@@ -20,7 +20,7 @@ void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
     if (flt) {
         auto e = std::remove_if(lst.begin(), lst.end(), [&](const ChannelID ch){
            if (ch.substr(0,4) == "cdp_") return true;   //allow cdp_ channels
-           return !flt->incoming(ch); //we block anounincing channel to prevent incoming message
+           return !flt->on_incoming(ch); //we block anounincing channel to prevent incoming message
         });
         lst = ChannelList(lst.begin(), e);
     }
@@ -88,7 +88,7 @@ void AbstractBridge::receive(ChannelUpdate &&chan_up) {
                 for (const auto &x: chan_up.lst) {
                     //
                     if (x.substr(0,IBridgeAPI::cycle_detection_prefix.size())
-                            == IBridgeAPI::cycle_detection_prefix || flt->outgoing(x))
+                            == IBridgeAPI::cycle_detection_prefix || flt->on_outgoing(x))
                         _ptr->subscribe(this, x);
                 }
             } else {
@@ -114,7 +114,7 @@ void AbstractBridge::receive(Message &&msg) {
     if (flt) {
         auto ch = msg.get_channel();
         //if ch is not channel, then it is mailbox or response (cannot be filtered)
-        if (_ptr->is_channel(ch) && !flt->incoming(ch)) return; //block message
+        if (_ptr->is_channel(ch) && !flt->on_incoming(ch)) return; //block message
     }
     if (!_ptr->dispatch_message(this, std::move(msg), true)) {
         on_clear_path(msg.get_sender(), msg.get_channel());
@@ -124,7 +124,7 @@ void AbstractBridge::receive(Message &&msg) {
 
 
 
-void AbstractBridge::set_filter(std::unique_ptr<IChannelFilter> &&flt) {
+void AbstractBridge::set_filter(std::unique_ptr<Filter> &&flt) {
     auto r = _filter.exchange(flt.release());
     flt.reset(r);
 }
@@ -138,7 +138,7 @@ void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
     auto flt = _filter.load();
     if (flt) {
         //block message if it is not personal message (response) or not allowed channel
-        if (!pm && !flt->outgoing(message.get_channel())) return;
+        if (!pm && !flt->on_outgoing(message.get_channel())) return;
     }
     send(Message(message));
 }
@@ -163,20 +163,34 @@ AbstractBridge::ChannelList AbstractBridge::persist_channel_list(const ChannelLi
 
 }
 
-bool IChannelFilter::incoming(ChannelID ) const {return true;}
-bool IChannelFilter::outgoing(ChannelID) const {return true;}
+bool Filter::on_incoming(ChannelID )  {return true;}
+bool Filter::on_outgoing(ChannelID) {return true;}
+bool Filter::on_incoming_add_to_group(ChannelID, ChannelID) {return true;}
+bool Filter::on_outgoing_add_to_group(ChannelID, ChannelID)  {return true;}
+bool Filter::on_incoming_close_group(ChannelID)  {return true;}
+bool Filter::on_outgoing_close_group(ChannelID) {return true;}
 
 void AbstractBridge::receive(CloseGroup &&msg) {
+    auto flt = _filter.load();
+    if (flt && !flt->on_incoming_close_group(msg.group)) return;
     _ptr->close_group(this,msg.group);
 }
 
 void AbstractBridge::receive(AddToGroup &&msg) {
+    auto flt = _filter.load();
+    if (flt && !flt->on_incoming_add_to_group(msg.group, msg.target)) {
+        send(ChannelUpdate{ChannelList(&msg.group,1), Operation::erase});
+        return;
+    }
     if (!_ptr->add_to_group(this, msg.group, msg.target)) {
         send(ChannelUpdate{ChannelList(&msg.group,1), Operation::erase});
+        return;
     }
 }
 
 void AbstractBridge::on_close_group(ChannelID group_name) noexcept {
+    auto flt = _filter.load();
+    if (flt && !flt->on_outgoing_close_group(group_name)) return;
     send(CloseGroup{group_name});
 }
 
@@ -185,6 +199,8 @@ void AbstractBridge::on_clear_path(ChannelID sender, ChannelID receiver) noexcep
 }
 
 void AbstractBridge::on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept {
+    auto flt = _filter.load();
+    if (flt && !flt->on_outgoing_add_to_group(group_name, target_id)) return;
     send(AddToGroup{group_name, target_id});
 }
 

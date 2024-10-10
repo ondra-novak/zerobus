@@ -69,7 +69,7 @@ public:
      * @param id id of peer. This id is available at the structure AuthInfo
      * @param flt channel filter
      */
-    void accept_auth(unsigned int id, std::unique_ptr<IChannelFilter> flt);
+    void accept_auth(unsigned int id, std::unique_ptr<Filter> flt);
     ///Reject authentication for waiting peer
     /**
      * @param id id of peer. This id is available at the structure AuthInfo

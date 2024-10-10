@@ -161,7 +161,7 @@ public:
         _ptr->unregister_monitor(mon);
     }
 
-    void set_filter(std::unique_ptr<IChannelFilter> &&flt);
+    void set_filter(std::unique_ptr<Filter> &&flt);
 
 
     Bus get_bus() const {return Bus(_ptr);}
@@ -197,7 +197,7 @@ protected:
     std::vector<char> _char_buffer = {};
     std::vector<ChannelID> _cur_channels = {};
     std::vector<ChannelID> _tmp = {};   ///< temporary buffer for channel operations
-    std::atomic<IChannelFilter *> _filter = {};
+    std::atomic<Filter *> _filter = {};
     bool _cycle_detected = false;
 
 

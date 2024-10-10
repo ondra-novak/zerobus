@@ -18,7 +18,7 @@ public:
     VerboseBridge(Bus b1, Bus b2): DirectBridge(std::move(b1),std::move(b2), false) {
         connect();
     }
-    VerboseBridge(Bus b1, Bus b2, std::unique_ptr<IChannelFilter> flt): DirectBridge(std::move(b1),std::move(b2), false) {
+    VerboseBridge(Bus b1, Bus b2, std::unique_ptr<Filter> flt): DirectBridge(std::move(b1),std::move(b2), false) {
         _b1.set_filter(std::move(flt));
         connect();
     }
@@ -171,7 +171,7 @@ void clear_path_test() {
     CHECK(!r2);
 }
 
-class TestFlt: public IChannelFilter {
+class TestFlt: public Filter {
 public:
     virtual bool outgoing(ChannelID id) const {
         return id == "reverse";

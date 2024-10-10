@@ -13,7 +13,7 @@ namespace zerobus {
  * peer to peer messages
  *
  */
-class IChannelFilter {
+class Filter {
 public:
     ///Allow messages incoming (from external side) messages routed to given channel
     /**
@@ -24,7 +24,7 @@ public:
      * This function also causes that blocked channels are not subscribed
      * on their node
      */
-    virtual bool incoming(ChannelID id) const;
+    virtual bool on_incoming(ChannelID id) ;
     ///Allow messages outhoing (to external side) messages routed to given channel
     /**
      * @param id id of channel of outgoing channel - their channel
@@ -35,8 +35,47 @@ public:
      * This function also causes that blocked channels are not subscribed
      * on our node
      */
-    virtual bool outgoing(ChannelID id) const;
-    virtual ~IChannelFilter() = default;
+    virtual bool on_outgoing(ChannelID id) ;
+
+    ///Called when group is created outside of node
+    /**
+     * needed to put group_name to a white list
+     *
+     * @param group_name name of the group
+     * @param target_id id of target
+     * @retval true allow message
+     * @retval false block message
+     */
+    virtual bool on_incoming_add_to_group(ChannelID group_name, ChannelID target_id);
+
+    ///Called when group is created inside of the node
+    /**
+     * needed to put group_name to a white list
+     *
+     * @param group_name name of the group
+     * @param target_id id of target
+     * @retval true allow message
+     * @retval false block message
+     */
+    virtual bool on_outgoing_add_to_group(ChannelID group_name, ChannelID target_id);
+
+    ///Called when external group is closed
+    /**
+     * @param group_name name of group
+     * @retval true allow message
+     * @retval false block message
+     */
+    virtual bool on_incoming_close_group(ChannelID group_name);
+
+    ///Called when internal group is closed
+    /**
+     * @param group_name name of group
+     * @retval true allow message
+     * @retval false block message
+     */
+    virtual bool on_outgoing_close_group(ChannelID group_name);
+
+    virtual ~Filter() = default;
 };
 
 
