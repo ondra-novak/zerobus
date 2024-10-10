@@ -30,7 +30,7 @@ public:
     virtual void unsubscribe(IListener *listener, ChannelID channel) override;
     virtual void unsubscribe_all(IListener *listener) override;
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) override;
-    virtual bool dispatch_message(IBridgeListener *listener, Message &&msg, bool subscribe_return_path) override;
+    virtual bool dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) override;
     virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) override;
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList)> &&callback) const override;
     virtual void get_subscribed_channels(IListener *listener, FunctionRef<void(ChannelList)> &&callback) const override;
@@ -40,7 +40,7 @@ public:
     virtual void unsubcribe_private(IListener *listener) override;
     virtual std::string get_random_channel_name(std::string_view prefix) const override;
     virtual std::string_view get_cycle_detect_channel_name() const override;
-    virtual bool clear_return_path(IBridgeListener *lsn, ChannelID sender, ChannelID receiver)  override;
+    virtual bool clear_return_path(IListener *lsn, ChannelID sender, ChannelID receiver)  override;
     virtual void force_update_channels()  override;
     virtual bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) override;
     virtual void close_group(IListener *owner, ChannelID group_name) override;
@@ -124,7 +124,7 @@ protected:
         BackPathItem *prev = {};
         BackPathItem *next = {};
         mvector<char> id = {};
-        IBridgeListener *l = {};
+        IListener *l = {};
 
         void promote(BackPathItem * &root);
         void remove();
@@ -152,9 +152,9 @@ protected:
     class BackPathStorage {
     public:
         BackPathStorage(std::pmr::memory_resource &res);
-        void store_path(const ChannelID &chan, IBridgeListener *lsn);
-        IBridgeListener *find_path(const ChannelID &chan) const;
-        void remove_listener(IBridgeListener *l);
+        void store_path(const ChannelID &chan, IListener *lsn);
+        IListener *find_path(const ChannelID &chan) const;
+        void remove_listener(IListener *l);
 
         std::size_t _limit = 128;     //maximum total of entries in _back_path container
 

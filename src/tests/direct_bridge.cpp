@@ -37,45 +37,41 @@ protected:
         std::cout << std::endl;
     }
 
-    virtual void send_reset(const DirectBridge::Bridge &source) override {
+    virtual void on_send(const Bridge &source, Bridge::ChannelReset &&r) override {
         log(source, "RESET");
-        DirectBridge::send_reset(source);
+        DirectBridge::on_send(source, std::move(r));
     }
-    virtual void on_message(const DirectBridge::Bridge &source,
-            const Message &msg) override {
+    virtual void on_send(const DirectBridge::Bridge &source, Message &&msg) override {
         log(source, "MESSAGE: sender: ", msg.get_sender(), " channel: ", msg.get_channel(),
                 " content: ", msg.get_content(), " conversation: ", msg.get_conversation());
-        DirectBridge::on_message(source, msg);
+        DirectBridge::on_send(source, std::move(msg));
     }
-    virtual void on_update_chanels(const DirectBridge::Bridge &source,
-            const AbstractBridge::ChannelList &channels,
-            AbstractBridge::Operation op) override {
+    virtual void on_send(const DirectBridge::Bridge &source, Bridge::ChannelUpdate &&r) override {
         std::ostringstream chlist;
         char sep = ' ';
-        for (auto c: channels) {
+        for (auto c: r.lst) {
             chlist << sep << c;
             sep = ',';
         }
-        log(source, "CHANNELS: ", op == AbstractBridge::Operation::add?"ADD":
-                          op == AbstractBridge::Operation::erase?"ERASE":"REPLACE", chlist.view());
-        DirectBridge::on_update_chanels(source, channels, op);
+        log(source, "CHANNELS: ", r.op == AbstractBridge::Operation::add?"ADD":
+                          r.op == AbstractBridge::Operation::erase?"ERASE":"REPLACE", chlist.view());
+        DirectBridge::on_send(source, std::move(r));
     }
-    virtual void on_clear_path(const DirectBridge::Bridge &source,
-            ChannelID sender, ChannelID receiver) override {
-        log(source, "CLEAR_PATH: ",sender," -> ",receiver);
-        DirectBridge::on_clear_path(source, sender, receiver);
+    virtual void on_send(const Bridge &source, Bridge::ClearPath &&r) override {
+        log(source, "CLEAR_PATH: ",r.sender," -> ",r.receiver);
+        DirectBridge::on_send(source, std::move(r));
     }
     virtual void cycle_detection(const DirectBridge::Bridge &source, bool state) noexcept override{
         if (state) log(source, "CYCLE DETECTED!");
         else log(source, "CYCLE cleared");
     }
-    virtual void on_close_group(const DirectBridge::Bridge &source, ChannelID group_name) override {
-        log(source, "CLOSE_GROUP: ",group_name);
-        DirectBridge::on_close_group(source, group_name);
+    virtual void on_send(const Bridge &source, Bridge::CloseGroup &&g) override {
+        log(source, "CLOSE_GROUP: ",g.group);
+        DirectBridge::on_send(source, std::move(g));
     }
-    virtual void on_add_to_group(const DirectBridge::Bridge &source, ChannelID group_name, ChannelID target_id) override {
-        log(source, "ADD_TO_GROUP: ",target_id," -> ",group_name);
-        DirectBridge::on_add_to_group(source, group_name, target_id);
+    virtual void on_send(const Bridge &source, Bridge::AddToGroup &&g) override {
+        log(source, "ADD_TO_GROUP: ",g.target," -> ",g.group);
+        DirectBridge::on_send(source, std::move(g));
 
     }
 };

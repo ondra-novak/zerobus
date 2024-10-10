@@ -193,12 +193,13 @@ protected:
      bool _disabled = false;
      char _salt[16];
 
-    virtual void send_reset() noexcept override;
-    virtual void send_channels(const ChannelList &channels, Operation op) noexcept override;
-    virtual void send_message(const Message &msg) noexcept override;
-    virtual void on_close_group(ChannelID group_name) noexcept override ;
-    virtual void on_clear_path(ChannelID sender, ChannelID receiver) noexcept override;
-    virtual void on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept override;
+    virtual void send(ChannelReset &&) noexcept override;
+    virtual void send(ChannelUpdate &&msg) noexcept override;
+    virtual void send(Message &&msg) noexcept override;
+    virtual void send(CloseGroup &&msg) noexcept override;
+    virtual void send(ClearPath &&msg) noexcept override;
+    virtual void send(AddToGroup &&msg) noexcept override;
+
 
 
 

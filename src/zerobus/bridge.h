@@ -3,7 +3,6 @@
 #include "monitor.h"
 #include "functionref.h"
 #include "filter.h"
-#include "listener_bridge.h"
 
 #include <span>
 #include <vector>
@@ -22,7 +21,7 @@ public:
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList) > &&cb) const = 0;
     virtual void unsubscribe_all_channels(IListener *listener) = 0;
     virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
-    virtual bool dispatch_message(IBridgeListener *listener, Message &&msg, bool subscribe_return_path) = 0;
+    virtual bool dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) = 0;
     ///retieve channel name used to detect cycles
     /**
      * @return name of channel which should not be subscribed. It is intended to detect
@@ -43,7 +42,7 @@ public:
      * @retval true cleared
      * @retval false no such path
      */
-    virtual bool clear_return_path(IBridgeListener *lsn, ChannelID sender, ChannelID receiver) = 0;
+    virtual bool clear_return_path(IListener *lsn, ChannelID sender, ChannelID receiver) = 0;
 
     ///calls on_update_channels on all monitors
     /**
@@ -60,23 +59,53 @@ public:
     virtual const char *what() const noexcept override {return "zerobus: Cycle detected";}
 };
 
+namespace Msg {
+
+enum class Operation {
+    ///replace subscribed channels with a new set
+    replace = 0,
+    ///subscribe new channels
+    add = 1,
+    ///unsubscribe channels
+    erase = 2,
+};
+
+
+using ChannelList = IBridgeAPI::ChannelList;
+struct ChannelUpdate {
+    ChannelList lst;
+    Operation op;
+};
+
+struct ChannelReset {};
+struct ClearPath {
+    ChannelID sender;
+    ChannelID receiver;
+};
+struct CloseGroup {
+    ChannelID group;
+};
+
+struct AddToGroup {
+    ChannelID group;
+    ChannelID target;
+};
+
+
+}
 
 ///Abstract bridge class. Extend this class to implement the bridge
-class AbstractBridge: public IBridgeListener {
+class AbstractBridge: public IListener {
 public:
 
 
-    enum class Operation {
-        ///replace subscribed channels with a new set
-        replace,
-        ///subscribe new channels
-        add,
-        ///unsubscribe channels
-        erase,
-    };
-
-
-    using ChannelList = IBridgeAPI::ChannelList;
+    using Operation = Msg::Operation;
+    using ChannelList = Msg::ChannelList;
+    using ChannelUpdate = Msg::ChannelUpdate;
+    using ChannelReset =  Msg::ChannelReset;
+    using ClearPath = Msg::ClearPath;
+    using CloseGroup = Msg::CloseGroup;
+    using AddToGroup = Msg::AddToGroup;
 
     AbstractBridge(Bus bus);
 
@@ -110,26 +139,19 @@ public:
      * it from multiple threads
      *
      */
-    void apply_their_channels(ChannelList lst, Operation op);
+    void receive(ChannelUpdate &&chan_up);
 
-    ///apply their reset command on our side
-    void apply_their_reset();
+    void receive(ChannelReset);
+
 
     ///apply their clear path command
-    void apply_their_clear_path(ChannelID sender, ChannelID receiver);
+    void receive(ClearPath &&cp);
 
-    void apply_their_close_group(ChannelID group_name) ;
-    void apply_their_add_to_group(ChannelID group_name, ChannelID target_id);
+    void receive(CloseGroup &&msg) ;
+    void receive(AddToGroup &&msg);
 
+    void receive(Message &&msg);
 
-    ///Forward message from other side to connected broker
-    /**
-     * @param msg message to forward
-     *
-     * @note @b mt-safety: this method is mt-safe
-     */
-    void dispatch_message(Message &msg);
-    void dispatch_message(Message &&msg);
 
 
     void register_monitor(IMonitor *mon) {
@@ -144,17 +166,25 @@ public:
 
     Bus get_bus() const {return Bus(_ptr);}
 
+    virtual void on_close_group(zerobus::ChannelID group_name) noexcept
+            override;
+    virtual void on_clear_path(zerobus::ChannelID sender,
+            zerobus::ChannelID receiver) noexcept override;
+    virtual void on_add_to_group(zerobus::ChannelID group_name,
+            zerobus::ChannelID target_id) noexcept override;
+
 protected:
     ///override - send channels to other side
     /**
      * @param channels list channels
      * @param op operation with channels
      */
-    virtual void send_channels(const ChannelList &channels, Operation op) noexcept = 0;
-    ///overeide - send message to other side
-    virtual void send_message(const Message &msg) noexcept = 0;
-    ///override - send reset command to other side
-    virtual void send_reset() noexcept = 0;
+    virtual void send(ChannelUpdate &&msg) noexcept = 0;
+    virtual void send(Message &&msg) noexcept = 0;
+    virtual void send(ChannelReset &&) noexcept = 0;
+    virtual void send(CloseGroup &&) noexcept = 0;
+    virtual void send(AddToGroup &&) noexcept = 0;
+    virtual void send(ClearPath &&) noexcept = 0;
 
     virtual void process_mine_channels(ChannelList lst) noexcept;
 
@@ -167,14 +197,17 @@ protected:
     std::vector<char> _char_buffer = {};
     std::vector<ChannelID> _cur_channels = {};
     std::vector<ChannelID> _tmp = {};   ///< temporary buffer for channel operations
-    std::size_t _chan_hash = 0;
     std::atomic<IChannelFilter *> _filter = {};
     bool _cycle_detected = false;
+
+
+
 
 
     static ChannelList persist_channel_list(const ChannelList &source, std::vector<ChannelID> &channels, std::vector<char> &characters);
 
     virtual void on_message(const Message &message, bool pm) noexcept override;
+
 
 
 };

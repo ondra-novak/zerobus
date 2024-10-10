@@ -1,32 +1,11 @@
 #include "bridge.h"
 #include <algorithm>
+#include <mutex>
 #include <numeric>
 
 namespace zerobus {
 
 
-
-namespace {
-///Helper class which converts a lambda to an output iterator
-template <typename Func>
-class LambdaOutputIterator {
-public:
-    LambdaOutputIterator(Func func) : _fn(func) {}
-
-    template<typename T>
-    LambdaOutputIterator& operator=(T &&value) {
-        _fn(std::forward<T>(value));
-        return *this;
-    }
-    LambdaOutputIterator& operator*() { return *this; }
-    LambdaOutputIterator& operator++() { return *this; }
-    LambdaOutputIterator& operator++(int) { return *this; }
-
-private:
-    Func _fn;
-};
-
-}
 
 
 AbstractBridge::AbstractBridge(Bus bus)
@@ -48,7 +27,7 @@ void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
 
     if (_cur_channels.empty()) {
         if (lst.empty()) return;
-        send_channels(lst, Operation::replace);
+        send(ChannelUpdate{lst, Operation::replace});
     } else {
 
 
@@ -57,12 +36,12 @@ void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
 
         std::set_difference(lst.begin(), lst.end(),
                 _cur_channels.begin(), _cur_channels.end(), std::back_inserter(_tmp));
-        if (!_tmp.empty()) send_channels(_tmp, Operation::add);
+        if (!_tmp.empty()) send(ChannelUpdate{_tmp, Operation::add});
         _tmp.clear();
 
         std::set_difference(_cur_channels.begin(), _cur_channels.end(),
                 lst.begin(), lst.end(), std::back_inserter(_tmp));
-        if (!_tmp.empty()) send_channels(_tmp, Operation::erase);
+        if (!_tmp.empty()) send(ChannelUpdate{_tmp, Operation::erase});
         _tmp.clear();
     }
     persist_channel_list(lst, _cur_channels, _char_buffer);
@@ -76,16 +55,16 @@ void AbstractBridge::send_mine_channels() {
     }
 }
 
-void AbstractBridge::apply_their_channels(ChannelList lst, Operation op) {
+void AbstractBridge::receive(ChannelUpdate &&chan_up) {
     auto cdid = _ptr->get_cycle_detect_channel_name();
     if (!cdid.empty()) {
-        auto iter = std::find(lst.begin(), lst.end(), cdid);
-        if (iter != lst.end()) {
-            if (op == Operation::erase) {
+        auto iter = std::find(chan_up.lst.begin(), chan_up.lst.end(), cdid);
+        if (iter != chan_up.lst.end()) {
+            if (chan_up.op == Operation::erase) {
                 if (_cycle_detected) {
                     _cycle_detected = false;
                     cycle_detection(_cycle_detected);
-                    send_reset();
+                    send(ChannelReset{});
                     _ptr->force_update_channels();
                     return;
                 }
@@ -100,40 +79,37 @@ void AbstractBridge::apply_their_channels(ChannelList lst, Operation op) {
         }
     }
     if (_cycle_detected) return;
-    switch (op) {
+    switch (chan_up.op) {
         case Operation::replace: _ptr->unsubscribe_all_channels(this);
                                  [[fallthrough]];
         case Operation::add: {
             auto flt = _filter.load();
             if (flt) {
-                for (const auto &x: lst) {
+                for (const auto &x: chan_up.lst) {
                     //
                     if (x.substr(0,IBridgeAPI::cycle_detection_prefix.size())
                             == IBridgeAPI::cycle_detection_prefix || flt->outgoing(x))
                         _ptr->subscribe(this, x);
                 }
             } else {
-                for (const auto &x: lst) _ptr->subscribe(this, x);
+                for (const auto &x: chan_up.lst) _ptr->subscribe(this, x);
             }
         }
         break;
-        case Operation::erase: for (const auto &x: lst) _ptr->unsubscribe(this, x);
+        case Operation::erase: for (const auto &x: chan_up.lst) _ptr->unsubscribe(this, x);
                                break;
     }
 }
 
-void AbstractBridge::apply_their_reset() {
+void AbstractBridge::receive(ChannelReset) {
     if (_cur_channels.empty()) return; //no active channels - do nothing
     //enforce refresh
     _cur_channels.clear();
     _ptr->force_update_channels();
 }
 
-void AbstractBridge::dispatch_message(Message &&msg) {
-    dispatch_message(msg);
-}
 
-void AbstractBridge::dispatch_message(Message &msg) {
+void AbstractBridge::receive(Message &&msg) {
     auto flt = _filter.load();
     if (flt) {
         auto ch = msg.get_channel();
@@ -145,11 +121,6 @@ void AbstractBridge::dispatch_message(Message &msg) {
     }
 }
 
-AbstractBridge::~AbstractBridge() {
-    _ptr->unsubscribe_all(this);
-    auto flt = _filter.load();
-    delete flt;
-}
 
 
 
@@ -158,9 +129,10 @@ void AbstractBridge::set_filter(std::unique_ptr<IChannelFilter> &&flt) {
     flt.reset(r);
 }
 
-void AbstractBridge::apply_their_clear_path(ChannelID sender, ChannelID receiver) {
-    _ptr->clear_return_path(this, sender, receiver);
+void AbstractBridge::receive(ClearPath &&cp) {
+    _ptr->clear_return_path(this, cp.sender, cp.receiver);
 }
+
 
 void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
     auto flt = _filter.load();
@@ -168,7 +140,7 @@ void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
         //block message if it is not personal message (response) or not allowed channel
         if (!pm && !flt->outgoing(message.get_channel())) return;
     }
-    send_message(message);
+    send(Message(message));
 }
 
 
@@ -194,14 +166,33 @@ AbstractBridge::ChannelList AbstractBridge::persist_channel_list(const ChannelLi
 bool IChannelFilter::incoming(ChannelID ) const {return true;}
 bool IChannelFilter::outgoing(ChannelID) const {return true;}
 
-void AbstractBridge::apply_their_close_group(ChannelID group_name) {
-    _ptr->close_group(this,group_name);
+void AbstractBridge::receive(CloseGroup &&msg) {
+    _ptr->close_group(this,msg.group);
 }
 
-void AbstractBridge::apply_their_add_to_group(ChannelID group_name, ChannelID target_id) {
-    if (!_ptr->add_to_group(this, group_name, target_id)) {
-        send_channels(ChannelList(&group_name,1), Operation::erase);
+void AbstractBridge::receive(AddToGroup &&msg) {
+    if (!_ptr->add_to_group(this, msg.group, msg.target)) {
+        send(ChannelUpdate{ChannelList(&msg.group,1), Operation::erase});
     }
+}
+
+void AbstractBridge::on_close_group(ChannelID group_name) noexcept {
+    send(CloseGroup{group_name});
+}
+
+void AbstractBridge::on_clear_path(ChannelID sender, ChannelID receiver) noexcept {
+    send(ClearPath{sender, receiver});
+}
+
+void AbstractBridge::on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept {
+    send(AddToGroup{group_name, target_id});
+}
+
+
+AbstractBridge::~AbstractBridge() {
+    _ptr->unsubscribe_all(this);
+    auto flt = _filter.load();
+    delete flt;
 }
 
 }
