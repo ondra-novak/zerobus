@@ -387,12 +387,17 @@ void LocalBus::get_active_channels(IListener *listener,FunctionRef<void(ChannelL
     } else {
         _last_proxy = listener;
     }
+    bool cycle_added = _cycle_detector_id.empty();
     for (const auto &[k,v]: _channels) {
         if (v->can_export(listener)) {
+            if (!cycle_added && k > _cycle_detector_id) {
+                cycle_added = true;
+                _tmp_channels.push_back(_cycle_detector_id);
+            }
             _tmp_channels.push_back(k);
         }
     }
-    if (!_cycle_detector_id.empty()) {
+    if (!cycle_added) {
         _tmp_channels.push_back(_cycle_detector_id);
     }
 

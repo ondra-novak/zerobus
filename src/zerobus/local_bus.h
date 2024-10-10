@@ -6,6 +6,7 @@
 #include <mutex>
 #include <vector>
 #include <unordered_map>
+#include <map>
 #include <memory_resource>
 #include <deque>
 
@@ -135,9 +136,8 @@ protected:
     using ListenerToChannelMap = std::unordered_map<IListener *, mvector<ChannelID>,
             std::hash<IListener *>, std::equal_to<IListener *>,
             std::pmr::polymorphic_allocator<std::pair<IListener * const, mvector<ChannelID> > > >;
-    using ChannelMap = std::unordered_map<ChannelID, PChanMapItem,
-            std::hash<ChannelID>, std::equal_to<ChannelID>,
-            std::pmr::polymorphic_allocator<std::pair<const ChannelID,  PChanMapItem > > >;
+    using ChannelMap = std::map<ChannelID, PChanMapItem,
+            std::less<>,std::pmr::polymorphic_allocator<std::pair<const ChannelID,  PChanMapItem > > >;
     using ListenerToMailboxMap = std::unordered_map<IListener *, mstring,
             std::hash<IListener *>, std::equal_to<IListener *>,
             std::pmr::polymorphic_allocator<std::pair<IListener * const, mstring> > >;

@@ -1,8 +1,6 @@
 #include "bridge_tcp_server.h"
 
 #include "bridge.h"
-#include "sha1.h"
-#include "base64.h"
 #include <charconv>
 
 namespace zerobus {

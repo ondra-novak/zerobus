@@ -31,7 +31,8 @@ void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
     } else {
 
 
-        std::sort(lst.begin(), lst.end());
+//        std::sort(lst.begin(), lst.end());
+//      no sort needed, it is already sorted
 
 
         std::set_difference(lst.begin(), lst.end(),

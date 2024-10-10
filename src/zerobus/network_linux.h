@@ -1,7 +1,7 @@
 #pragma once
 #include "network.h"
-#include "epollpp.h"
-
+#include "network_linux_epollpp.h"
+#include "cluster_alloc.h"
 #include <condition_variable>
 #include <memory>
 #include <thread>
@@ -50,7 +50,8 @@ protected:
 
     using MyEPoll = EPoll<ConnHandle>;
     using WaitRes = MyEPoll::WaitRes;
-    using TimeoutSet = std::set<std::pair<std::chrono::system_clock::time_point, ConnHandle>  >;
+    using TimeoutInfo = std::pair<std::chrono::system_clock::time_point, ConnHandle>;
+    using TimeoutSet = std::set<TimeoutInfo,  std::less<TimeoutInfo>, ClusterAlloc<TimeoutInfo> >;
 
 
     struct SocketInfo {

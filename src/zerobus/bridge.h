@@ -18,6 +18,13 @@ public:
 
     virtual void register_monitor(IMonitor *mon) = 0;
     virtual void unregister_monitor(const IMonitor *mon) = 0;
+    ///Retrieve active channels relative to listener
+    /**
+     * @param listener the function skips channels subscribed by this listener. Use nullptr to show all channels
+     * @param cb callback function
+     *
+     * @note Returned list should be in lexicographic order (std::less)
+     */
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList) > &&cb) const = 0;
     virtual void unsubscribe_all_channels(IListener *listener) = 0;
     virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
