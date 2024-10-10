@@ -4,7 +4,7 @@ namespace zerobus {
 
 
 BridgeTCPClient::BridgeTCPClient(Bus bus, std::shared_ptr<INetContext> ctx, std::string address)
-:BridgeTCPCommon(std::move(bus), ctx, ctx->peer_connect(get_address_from_url(address)), true)
+:BridgeTCPCommon(std::move(bus), ctx, ctx->peer_connect(get_address_from_url(address)), false)
 ,_address(std::move(address))
 {
     register_monitor(this);
@@ -65,8 +65,8 @@ void BridgeTCPClient::clear_to_send() noexcept {
 
 
 bool BridgeTCPClient::send_handshake() {
-    std::string key = generate_ws_key();
-    _expected_ws_accept = calculate_ws_accept(key);
+    std::string key = ws::generate_ws_key();
+    _expected_ws_accept = ws::calculate_ws_accept(key);
 
     std::ostringstream hdr;
     hdr << "GET " << get_path_from_url(_address) << " HTTP/1.1\r\n"

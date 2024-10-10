@@ -153,9 +153,7 @@ void BridgeTCPCommon::output_message(const ws::Message &msg) {
     if (_handshake) return; //can't send message when handshake
     if (_output_data.size() > _hwm) return ;    //TODO: try to slow down when buffer reaches HWM
     _output_msg_sp.push_back(_output_data.size());
-    _ws_builder(msg, [&](char c){
-        _output_data.push_back(c);
-    });
+    _ws_builder.build(msg, _output_data);
     flush_buffer();
 
 }
@@ -176,27 +174,6 @@ void BridgeTCPCommon::flush_buffer() {
     }
 }
 
-std::string BridgeTCPCommon::calculate_ws_accept(std::string_view key) {
-    SHA1 sha1;
-    sha1.update(key);
-    sha1.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
-    auto digest = sha1.final();
-    std::string encoded;
-    base64.encode(digest.begin(), digest.end(), std::back_inserter(encoded));
-    return encoded;
-}
-
-std::string BridgeTCPCommon::generate_ws_key() {
-    unsigned char buff[16];
-    std::random_device rnd;
-    std::uniform_int_distribution<unsigned char> dist(0,255);
-    for (auto &c: buff) c = dist(rnd);
-    std::string encoded;
-    base64.encode(std::begin(buff), std::end(buff), std::back_inserter(encoded));
-    return encoded;
-
-
-}
 
 std::string_view BridgeTCPCommon::split(std::string_view &data, std::string_view sep) {
     std::string_view r;

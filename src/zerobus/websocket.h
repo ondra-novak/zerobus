@@ -212,108 +212,33 @@ public:
      * @param client set true if the builder generates client frames. Otherwise
      * set false (for server)
      */
-    Builder(bool client)
-        :_client(client) {
-        if (_client) {
-            std::random_device dev;
-            _rnd.seed(dev());
-        }
-    }
+    Builder(bool client);
 
-    ///Build frame
-    /**
-     * @param message message to build.
-     * @retval true success
-     * @retval false invalid message
-     *
-     * @note To send fragmented message, you need correctly use _fin flag on
-     * the message. Fragmented message must have _fin = false for all
-     * fragments expect the last. The last fragment must have _fin = true; Type
-     * of the message is retrieved from the first fragment and it is ignored on
-     * other fragments.
-     */
+
+    bool build(const Message &msg, std::vector<char> &output);
+    bool build(const Message &msg, std::string &output);
+
+protected:
     template<std::invocable<char> Fn>
-    bool operator()(const Message &message, Fn &&output) {
-        std::string tmp;
-        std::string_view payload = message.payload;
-
-        if (message.type == Type::connClose) {
-            tmp.push_back(static_cast<char>(message.code>>8));
-            tmp.push_back(static_cast<char>(message.code & 0xFF));
-            if (!message.payload.empty()) {
-                std::copy(message.payload.begin(), message.payload.end(), std::back_inserter(tmp));
-            }
-            payload = {tmp.c_str(), tmp.length()+1};
-        }
-
-        // opcode and FIN bit
-        char opcode = opcodeContFrame;
-        bool fin = message.fin;
-        if (!_fragmented) {
-            switch (message.type) {
-                default:
-                case Type::unknown: return false;
-                case Type::text: opcode = opcodeTextFrame;break;
-                case Type::binary: opcode = opcodeBinaryFrame;break;
-                case Type::ping: opcode = opcodePing;break;
-                case Type::pong: opcode = opcodePong;break;
-                case Type::connClose: opcode = opcodeConnClose;break;
-            }
-        }
-        _fragmented = !fin;
-        output((fin << 7) | opcode);
-        // payload length
-        std::uint64_t len = payload.size();
-
-        char mm = _client?0x80:0;
-        if (len < 126) {
-            output(mm| static_cast<char>(len));
-        } else if (len < 65536) {
-            output(mm | 126);
-            output(static_cast<char>((len >> 8) & 0xFF));
-            output(static_cast<char>(len & 0xFF));
-        } else {
-            output(mm | 127);
-            output(static_cast<char>((len >> 56) & 0xFF));
-            output(static_cast<char>((len >> 48) & 0xFF));
-            output(static_cast<char>((len >> 40) & 0xFF));
-            output(static_cast<char>((len >> 32) & 0xFF));
-            output(static_cast<char>((len >> 24) & 0xFF));
-            output(static_cast<char>((len >> 16) & 0xFF));
-            output(static_cast<char>((len >> 8) & 0xFF));
-            output(static_cast<char>(len & 0xFF));
-        }
-        char masking_key[4];
-
-        if (_client) {
-            std::uniform_int_distribution<> dist(0, 255);
-
-            for (int i = 0; i < 4; ++i) {
-                masking_key[i] = dist(_rnd);
-                output(masking_key[i]);
-            }
-        } else {
-            for (int i = 0; i < 4; ++i) {
-                masking_key[i] = 0;
-            }
-        }
-
-        int idx =0;
-        for (char c: payload) {
-            c ^= masking_key[idx];
-            idx = (idx + 1) & 0x3;
-            output(c);
-        }
-        return true;
-
-    }
-
+    bool build_t(const Message &message, Fn &&output);
 
 protected:
     bool _client = false;
     bool _fragmented = false;
     std::default_random_engine _rnd;
 };
+
+///calculate WebSocket Accept header value from key
+/**
+ * @param key content of Key header
+ * @return content of Accept header
+ */
+std::string calculate_ws_accept(std::string_view key);
+
+///Generates random Key header value
+std::string generate_ws_key();
+
+
 }
 
 }

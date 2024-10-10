@@ -83,7 +83,7 @@ void two_hop_bridge() {
 }
 
 void ws_key() {
-    auto r = BridgeTCPCommon::calculate_ws_accept("dGhlIHNhbXBsZSBub25jZQ==");
+    auto r = ws::calculate_ws_accept("dGhlIHNhbXBsZSBub25jZQ==");
     CHECK_EQUAL(r, "s3pPLMBiTxaQ9kYGzzhZRbK+xOo=");
 
 }

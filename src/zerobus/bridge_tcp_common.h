@@ -20,8 +20,6 @@ public:
 
     static std::string get_address_from_url(std::string_view url);
     static std::string get_path_from_url(std::string_view url);
-    static std::string calculate_ws_accept(std::string_view key);
-    static std::string generate_ws_key();
 
     void set_hwm(std::size_t hwm);
 

@@ -256,7 +256,7 @@ bool BridgeTCPServer::Peer::websocket_handshake(std::string_view &data) {
                 "Server: zerobus\r\n"
                 "Connection: Upgrade\r\n"
                 "Sec-WebSocket-Accept: ";
-        resp << calculate_ws_accept(rs.key) << "\r\n\r\n";
+        resp << ws::calculate_ws_accept(rs.key) << "\r\n\r\n";
 
     }
     _output_msg_sp.push_back(_output_data.size());
