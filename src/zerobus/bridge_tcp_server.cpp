@@ -91,6 +91,7 @@ BridgeTCPServer::Peer::Peer(BridgeTCPServer &owner, ConnHandle aux, unsigned int
 }
 
 void BridgeTCPServer::Peer::initial_handshake() {
+    Peer::send(Msg::ChannelReset{});
     Peer::send_mine_channels();
 }
 

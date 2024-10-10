@@ -99,6 +99,8 @@ Message Parser::get_message() const {
             _fin
         };
     } else {
+        _cur_message.push_back('\0');
+        _cur_message.pop_back();
         return Message {
             {_cur_message.data(), _cur_message.size()},
             _final_type,

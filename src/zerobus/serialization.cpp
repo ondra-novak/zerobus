@@ -64,6 +64,9 @@ Deserialization::Result Deserialization::operator ()(std::string_view msgtext, I
             auto group = read_string(msgtext);
             return Msg::CloseGroup{group};
         }
+        case MessageType::channels_reset: {
+            return Msg::ChannelReset{};
+        }
 
     }
 }
