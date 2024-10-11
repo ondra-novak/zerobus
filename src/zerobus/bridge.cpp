@@ -56,7 +56,7 @@ void AbstractBridge::send_mine_channels() {
     }
 }
 
-void AbstractBridge::receive(ChannelUpdate &&chan_up) {
+void AbstractBridge::receive(const ChannelUpdate &chan_up) {
     auto cdid = _ptr->get_cycle_detect_channel_name();
     if (!cdid.empty()) {
         auto iter = std::find(chan_up.lst.begin(), chan_up.lst.end(), cdid);
@@ -110,14 +110,14 @@ void AbstractBridge::receive(ChannelReset) {
 }
 
 
-void AbstractBridge::receive(Message &&msg) {
+void AbstractBridge::receive(const Message &msg) {
     auto flt = _filter.load();
     if (flt) {
         auto ch = msg.get_channel();
         //if ch is not channel, then it is mailbox or response (cannot be filtered)
         if (_ptr->is_channel(ch) && !flt->on_incoming(ch)) return; //block message
     }
-    if (!_ptr->dispatch_message(this, std::move(msg), true)) {
+    if (!_ptr->dispatch_message(this, msg, true)) {
         on_clear_path(msg.get_sender(), msg.get_channel());
     }
 }
@@ -130,7 +130,7 @@ void AbstractBridge::set_filter(std::unique_ptr<Filter> &&flt) {
     flt.reset(r);
 }
 
-void AbstractBridge::receive(ClearPath &&cp) {
+void AbstractBridge::receive(const ClearPath &cp) {
     _ptr->clear_return_path(this, cp.sender, cp.receiver);
 }
 
@@ -141,7 +141,7 @@ void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
         //block message if it is not personal message (response) or not allowed channel
         if (!pm && !flt->on_outgoing(message.get_channel())) return;
     }
-    send(Message(message));
+    send(message);
 }
 
 
@@ -171,20 +171,22 @@ bool Filter::on_outgoing_add_to_group(ChannelID, ChannelID)  {return true;}
 bool Filter::on_incoming_close_group(ChannelID)  {return true;}
 bool Filter::on_outgoing_close_group(ChannelID) {return true;}
 
-void AbstractBridge::receive(CloseGroup &&msg) {
+void AbstractBridge::receive(const CloseGroup &msg) {
     auto flt = _filter.load();
     if (flt && !flt->on_incoming_close_group(msg.group)) return;
     _ptr->close_group(this,msg.group);
 }
 
-void AbstractBridge::receive(AddToGroup &&msg) {
+void AbstractBridge::receive(const AddToGroup &msg) {
     auto flt = _filter.load();
     if (flt && !flt->on_incoming_add_to_group(msg.group, msg.target)) {
-        send(ChannelUpdate{ChannelList(&msg.group,1), Operation::erase});
+        ChannelID g = msg.group;
+        send(ChannelUpdate{ChannelList(&g,1), Operation::erase});
         return;
     }
     if (!_ptr->add_to_group(this, msg.group, msg.target)) {
-        send(ChannelUpdate{ChannelList(&msg.group,1), Operation::erase});
+        ChannelID g = msg.group;
+        send(ChannelUpdate{ChannelList(&g,1), Operation::erase});
         return;
     }
 }

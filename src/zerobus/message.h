@@ -12,20 +12,14 @@ using MessageContent = std::string_view;
 ///conversation id - using number is enough
 using ConversationID = std::uint32_t;
 
-///abstract message
-class IMessage {
-public:
-    virtual ChannelID get_sender() const = 0;
-    virtual ChannelID get_channel() const = 0;
-    virtual MessageContent get_content() const = 0;
-    virtual ConversationID get_conversation() const = 0;
-    virtual ~IMessage() = default;
-};
 
 ///message wrapper
 class Message {
 public:
-    Message(const std::shared_ptr<const IMessage> &ptr):_ptr(ptr) {}
+
+    Message(ChannelID sender, ChannelID channel, MessageContent content, ConversationID cid)
+        :_sender(sender),_channel(channel),_content(content),_cid(cid) {}
+
     ///Retrieve sender
     /**
      * @return retrieves sender's mailbox address. If you need to send a response to
@@ -34,18 +28,18 @@ public:
      * Every listener subscribes to its local mailbox by sending a message for the first
      * time
      */
-    ChannelID get_sender() const {return _ptr->get_sender();}
+    ChannelID get_sender() const {return _sender;}
     ///Retrieve channel name
     /**
      * In case that message is private (see pm flag in function on_message), this contains
      * id of your private mailbox. Otherwise it contains channel name
      *  */
-    ChannelID get_channel() const {return _ptr->get_channel();}
+    ChannelID get_channel() const {return _channel;}
 
     /**Retrieve message content
      * @return message content
      */
-    MessageContent get_content() const {return _ptr->get_content();}
+    MessageContent get_content() const {return _content;}
 
     ///Retrieve conversation ID
     /**
@@ -60,12 +54,99 @@ public:
      *
      * @return conversation ID of the message
      */
-    ConversationID get_conversation() const {return _ptr->get_conversation();}
+    ConversationID get_conversation() const {return _cid;}
 
-    bool operator==(const Message &other) const = default;
+    Message() = default;
+
+    ~Message() {
+        delete [] _buffer;
+    }
+
+    Message(const Message &other):_cid(other._cid) {
+        _buffer = persist(other);
+    }
+
+    Message(Message &&other)
+        :_sender(other._sender)
+        ,_channel(other._channel)
+        ,_content(other._content)
+        ,_cid(other._cid)
+        ,_buffer(other._buffer)
+    {
+        if (!_buffer) {
+            _buffer = persist(other);
+        }
+        other._buffer = nullptr;
+    }
+
+    Message &operator=(const Message &other) {
+        if (this != &other) {
+            if (_buffer && calc_size() >= other.calc_size()) {
+                persist(other, _buffer);
+            } else {
+                delete[] _buffer;
+                _buffer = persist(other);
+            }
+        }
+        return *this;
+    }
+
+    Message &operator=(Message &&other) {
+        if (this != &other) {
+            if (!other._buffer) {
+                return operator=(other); //force persist
+            }
+            delete [] _buffer;
+            _buffer = other._buffer;
+            other._buffer = nullptr;
+            _sender = other._sender;
+            _channel = other._channel;
+            _content = other._content;
+            _cid = other._cid;
+        }
+        return *this;
+    }
+
+
+
 
 protected:
-    std::shared_ptr<const IMessage> _ptr;
+    ChannelID _sender;
+    ChannelID _channel;
+    MessageContent _content;
+    ConversationID _cid;
+    char *_buffer = nullptr;
+
+    std::size_t calc_size() const {
+        return _sender.size()+_channel.size()+_content.size()
+                +bool(!_sender.empty())
+                +bool(!_channel.empty())
+                +bool(!_content.empty());
+    }
+
+    void persist(const Message &msg, char *iter) {
+        _sender = {iter, msg._sender.size()};
+        if (!_sender.empty()) {
+            iter = std::copy(msg._sender.begin(), msg._sender.end(), iter);
+            *iter++ = 0;
+        }
+        _channel = {iter, msg._channel.size()};
+        if (!_channel.empty()) {
+            iter = std::copy(msg._channel.begin(), msg._channel.end(), iter);
+            *iter++ = 0;
+        }
+        _content = {iter, msg._content.size()};
+        if (!_content.empty()) {
+            iter = std::copy(msg._content.begin(), msg._content.end(), iter);
+            *iter++ = 0;
+        }
+    }
+
+    char *persist(const Message &msg) {
+        char *buff = new char[msg.calc_size()];
+        persist(msg, buff);
+        return buff;
+    }
 };
 
 

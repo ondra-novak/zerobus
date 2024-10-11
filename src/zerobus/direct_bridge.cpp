@@ -20,9 +20,8 @@ DirectBridge::DirectBridge(Bus b1, Bus b2, bool connect_now)
 
 
 
-void DirectBridge::Bridge::send(ChannelUpdate &&msg) noexcept {
-    msg.lst = persist_channel_list(msg.lst, _pchns, _pchrs);    //persists this to avoid reference volatile buffers
-    _owner.on_send(*this, std::move(msg));
+void DirectBridge::Bridge::send(const ChannelUpdate &msg) noexcept {
+    _owner.on_send(*this, msg);
 }
 
 
@@ -32,31 +31,31 @@ DirectBridge::Bridge& DirectBridge::select_other(const Bridge &other) {
     throw std::runtime_error("Invalid source bridge instance (unreachable code)");
 }
 
-void DirectBridge::on_send(const Bridge &source, Bridge::ChannelUpdate &&msg) {
-    select_other(source).receive(std::move(msg));
+void DirectBridge::on_send(const Bridge &source, const Bridge::ChannelUpdate &msg) {
+    select_other(source).receive(msg);
 }
 
-void DirectBridge::on_send(const Bridge &source, Message &&msg) {
-    select_other(source).receive(std::move(msg));
+void DirectBridge::on_send(const Bridge &source, const Message &msg) {
+    select_other(source).receive(msg);
 }
 
 void DirectBridge::Bridge::on_channels_update() noexcept {
     send_mine_channels();
 }
 
-void DirectBridge::Bridge::send(Message &&msg) noexcept {
-    _owner.on_send(*this, std::move(msg));
+void DirectBridge::Bridge::send(const Message &msg) noexcept {
+    _owner.on_send(*this, msg);
 }
 
 
 
-void DirectBridge::Bridge::send(ChannelReset &&r) noexcept {
-    _owner.on_send(*this, std::move(r));
+void DirectBridge::Bridge::send(const ChannelReset &r) noexcept {
+    _owner.on_send(*this, r);
 }
 
 
-void DirectBridge::on_send(const Bridge &source, Bridge::ChannelReset &&r) {
-    select_other(source).receive(std::move(r));
+void DirectBridge::on_send(const Bridge &source, const Bridge::ChannelReset &r) {
+    select_other(source).receive(r);
 }
 
 
@@ -77,28 +76,28 @@ void DirectBridge::Bridge::cycle_detection(bool state) noexcept {
     _owner.cycle_detection(*this, state);
 }
 
-void DirectBridge::Bridge::send(CloseGroup &&msg) noexcept {
-    _owner.on_send(*this, std::move(msg));
+void DirectBridge::Bridge::send(const CloseGroup &msg) noexcept {
+    _owner.on_send(*this, msg);
 }
 
-void DirectBridge::Bridge::send(ClearPath &&msg) noexcept {
-    _owner.on_send(*this, std::move(msg));
+void DirectBridge::Bridge::send(const ClearPath &msg) noexcept {
+    _owner.on_send(*this, msg);
 }
 
-void DirectBridge::on_send(const Bridge &source, Bridge::CloseGroup &&g) {
-    select_other(source).receive(std::move(g));
+void DirectBridge::on_send(const Bridge &source, const Bridge::CloseGroup &g) {
+    select_other(source).receive(g);
 }
 
-void DirectBridge::on_send(const Bridge &source,Bridge::ClearPath &&p) {
-    select_other(source).receive(std::move(p));
+void DirectBridge::on_send(const Bridge &source,const Bridge::ClearPath &p) {
+    select_other(source).receive(p);
 }
 
-void DirectBridge::on_send(const Bridge &source, Bridge::AddToGroup &&g) {
-    select_other(source).receive(std::move(g));
+void DirectBridge::on_send(const Bridge &source, const Bridge::AddToGroup &g) {
+    select_other(source).receive(g);
 }
 
-void DirectBridge::Bridge::send(AddToGroup &&msg) noexcept {
-    _owner.on_send(*this, std::move(msg));
+void DirectBridge::Bridge::send(const AddToGroup &msg) noexcept {
+    _owner.on_send(*this, msg);
 }
 
 

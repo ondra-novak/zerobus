@@ -51,22 +51,7 @@ static void generate_mailbox_id(Iter iter) {
 
 
 
-class LocalBus::MessageDef: public IMessage {
-public:
-    MessageDef(std::string_view sender, std::string_view channel, std::string_view message, ConversationID cid, std::shared_ptr<LocalBus> owner);
-    virtual std::string_view get_sender() const override {return sender;}
-    virtual std::string_view get_channel() const override {return channel;}
-    virtual MessageContent get_content() const override {return message;}
-    virtual ConversationID get_conversation() const override {return cid;}
 
-protected:
-    std::vector<char, std::pmr::polymorphic_allocator<char> > data;
-    std::string_view sender;
-    std::string_view channel;
-    std::string_view message;
-    ConversationID cid;
-    std::shared_ptr<LocalBus> owner;
-};
 
 LocalBus::LocalBus()
     :_channels(ChannelMap::allocator_type(&_mem_resource))
@@ -199,25 +184,22 @@ std::string_view LocalBus::get_mailbox(IListener *listener)
 }
 
 
-Message LocalBus::create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) {
-    return Message(std::allocate_shared<MessageDef>(
-        std::pmr::polymorphic_allocator<MessageDef>(&_mem_resource),
-        std::string(sender), std::string(channel), std::string(msg), cid,
-        shared_from_this()
-    ));
-}
 bool LocalBus::send_message(IListener *listener, ChannelID channel, MessageContent message, ConversationID cid)
 {
     if (channel.empty()) throw std::invalid_argument("Channel name can't be empty");
     //no lock needed there
     if (listener == nullptr) {
-        return forward_message_internal(nullptr, create_message({},channel,message,cid));
+        return forward_message_internal(nullptr, Message({},channel,message,cid));
     } else {
-        return forward_message_internal(listener, create_message(get_mailbox(listener), channel, message, cid));
+        auto s = get_mailbox(listener);
+        char *c = reinterpret_cast<char *>(alloca(s.size()));       //copy sender to stack - can be removed during processing
+        std::copy(s.begin(), s.end(), c);
+        s = {c, s.size()};
+        return forward_message_internal(listener, Message(s, channel, message, cid));
     }
 }
 
-bool LocalBus::dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) {
+bool LocalBus::dispatch_message(IListener *listener, const Message &msg, bool subscribe_return_path) {
     if (listener && subscribe_return_path) {
         auto sender = msg.get_sender();
         if (!sender.empty()) {
@@ -241,10 +223,17 @@ struct LocalBus::TLSQueueItem { // @suppress("Miss copy constructor or assignmen
 struct LocalBus::TLState {
 
     std::queue<TLSQueueItem> _queue;
-    void run_queue(TLSQueueItem item) {
-        auto can_run = _queue.empty();
-        _queue.push(std::move(item));
-        if (can_run) {
+    bool _running = false;
+
+
+    void run_queue(const PChanMapItem &channel, const Message &msg, IListener *listener) noexcept {
+        if (_running) {
+            _queue.push({channel, msg, listener});
+        } else {
+            _running = true;
+            channel->enum_listeners([&](IListener *l){
+                if (l != listener) l->on_message(msg, false);
+            });
             while (!_queue.empty()) {
                 TLSQueueItem &x = _queue.front();
                 x.channel->enum_listeners([&x](IListener *l){
@@ -252,6 +241,7 @@ struct LocalBus::TLState {
                 });
                 _queue.pop();
             }
+            _running = false;
         }
     }
 
@@ -261,7 +251,7 @@ struct LocalBus::TLState {
 thread_local LocalBus::TLState LocalBus::TLState::_tls_state = {};
 
 
-bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
+bool LocalBus::forward_message_internal(IListener *listener,  const Message &msg) {
     PChanMapItem ch;
     ChannelID chanid = msg.get_channel();
 
@@ -300,7 +290,7 @@ bool LocalBus::forward_message_internal(IListener *listener,  Message &&msg) {
     } while (false);
 
     //process channel outside of lock (has own lock)
-    TLState::_tls_state.run_queue({std::move(ch), std::move(msg), std::move(listener)});
+    TLState::_tls_state.run_queue(std::move(ch), msg, std::move(listener));
     return true;
 }
 
@@ -349,15 +339,18 @@ void LocalBus::close_group(IListener *owner, ChannelID group_name) {
     }
 }
 
-void LocalBus::run_priv_queue(IListener *target, Message &&msg, bool pm) {
-    bool run = _private_queue.empty();
-    _private_queue.push_back({target,  std::move(msg), pm});
-    if (run) {
+void LocalBus::run_priv_queue(IListener *target, const Message &msg, bool pm) {
+    if (_priv_queue_running) {
+        _private_queue.push_back({target,  std::move(msg), pm});
+    } else {
+        _priv_queue_running = true;
+        target->on_message(msg, pm);
         while (!_private_queue.empty()) {
             auto &x = _private_queue.front();
             x.target->on_message(x.msg, pm);
             _private_queue.pop_front();
         }
+        _priv_queue_running = false;
     }
 
 }
@@ -395,6 +388,7 @@ void LocalBus::get_active_channels(IListener *listener,FunctionRef<void(ChannelL
                 _tmp_channels.push_back(_cycle_detector_id);
             }
             _tmp_channels.push_back(k);
+            _tmp_channels_ref.push_back(v);
         }
     }
     if (!cycle_added) {
@@ -402,6 +396,7 @@ void LocalBus::get_active_channels(IListener *listener,FunctionRef<void(ChannelL
     }
 
     cb({_tmp_channels.begin(), _tmp_channels.end()});
+    _tmp_channels_ref.clear();
 }
 
 void LocalBus::get_subscribed_channels(IListener *listener,FunctionRef<void(ChannelList)> &&cb) const {
@@ -499,32 +494,6 @@ bool LocalBus::is_channel(ChannelID id) const {
     return iter != _channels.end() && !iter->second->empty();
 }
 
-LocalBus::MessageDef::MessageDef(std::string_view sender,
-        std::string_view channel, std::string_view message, ConversationID cid,
-        std::shared_ptr<LocalBus> owner)
-:data(std::pmr::polymorphic_allocator<char>(&owner->_mem_resource))
-,cid(cid)
-,owner(std::move(owner))
-{
-    //we use polymorphic allocator to allocate one space for all three strings
-    //calculate total size (+ 3times terminating zero)
-    auto needsz = sender.size()+channel.size()+message.size()+3;
-    //allocate buffer
-    data.resize(needsz,0);
-    //copy each string to buffer
-    //construct string_view
-    //append zero
-    auto iter = data.data();
-    this->sender = std::string_view(iter, sender.size());
-    iter = std::copy(sender.begin(), sender.end(), iter);
-    *iter++ = 0;
-    this->channel= std::string_view(iter, channel.size());
-    iter = std::copy(channel.begin(), channel.end(), iter);
-    *iter++ = 0;
-    this->message= std::string_view(iter, message.size());
-    iter = std::copy(message.begin(), message.end(), iter);
-    *iter++ = 0;
-}
 
 LocalBus::BackPathStorage::BackPathStorage(std::pmr::memory_resource &res)
 :_entries(BackPathMap::allocator_type(&res))

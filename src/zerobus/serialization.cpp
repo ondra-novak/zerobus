@@ -21,7 +21,7 @@ enum class MessageType: std::uint8_t {
         close_group = 0xF8,
 };
 
-Deserialization::Result Deserialization::operator ()(std::string_view msgtext, IBridgeAPI *api) {
+Deserialization::Result Deserialization::operator ()(std::string_view msgtext) {
     if (msgtext.empty()) return {};
     auto t = static_cast<MessageType>(msgtext[0]);
     msgtext = msgtext.substr(1);
@@ -32,7 +32,8 @@ Deserialization::Result Deserialization::operator ()(std::string_view msgtext, I
             auto sender = read_string(msgtext);
             auto channel = read_string(msgtext);
             auto content = read_string(msgtext);
-            return api->create_message(sender, channel, content, cid);
+            return Result(std::in_place_type<Message>, sender, channel, content, cid);
+//            return Message(sender, channel, content, cid);
         }
         case MessageType::channels_replace:
         case MessageType::channels_add:

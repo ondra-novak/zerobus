@@ -7,18 +7,14 @@ const zerobus = (function(){
 
 
     const MessageType = {
-        message: 0,               // a message
-        channels_replace: 1,       // list of channels
-        channels_add: 2,           // list of channels
-        channels_erase: 3,         // list of channels
-        channels_reset: 4,         // send from other side that they unsubscribed all channels
-        clear_path: 5,             // clear return path
-        add_to_group: 6,
-        close_group: 7,
-        welcome: 8,                // notifies, successful login (it also assumes channels_reset in case of re-login)
-        auth_req: 9,               // sent by one side to request authentication
-        auth_response: 10,          // sent by other side to response authentication
-        auth_failed: 11             // authentication failed - client should close connection
+        message: 0xFF,               // a message
+        channels_replace: 0xFE,       // list of channels
+        channels_add: 0xFD,           // list of channels
+        channels_erase: 0xFC,         // list of channels
+        channels_reset: 0xFB,         // send from other side that they unsubscribed all channels
+        clear_path: 0xFA,             // clear return path
+        add_to_group: 0xF9,
+        close_group: 0xF8,
     };
 
     class Message {
@@ -415,7 +411,7 @@ const zerobus = (function(){
             }
         }
 
-        apply_their_channels(channels, operaton) {
+        receive_channels(channels, operaton) {
             if (operaton == MessageType.channels_add) {
                 channels.forEach(ch=>this._bus.subscribe(ch, this._listener));
             } else if (operaton == MessageType.channels_erase) {
@@ -426,18 +422,18 @@ const zerobus = (function(){
             }
         }
 
-        apply_their_reset() {
+        receive_reset() {
             this.#cur_channels.clear();
             this.send_mine_channels();
         }
 
-        apply_their_clear_path(sender, receiver) {
+        receive_clear_path(sender, receiver) {
             this._bus.clear_return_path(this._listener,sender,receiver);
         }
-        apply_their_add_to_group(group, target) {
+        receive_add_to_group(group, target) {
             this._bus.add_to_group(this._listener, group, target);
         }
-        apply_their_close_group(group) {
+        receive_close_group(group) {
             this._bus.close_group(this._listener, group);
         }
         register_monitor() {
@@ -514,7 +510,7 @@ const zerobus = (function(){
 
         #ws;
         #url;
-        #binb = new BinBuilder;
+        #binb = new BinBuilder;    
 
         constructor(bus, url) {
             super(bus)
@@ -551,9 +547,7 @@ const zerobus = (function(){
                 case MessageType.channels_erase: this.#parse_channels(mtype,iter);break;
                 case MessageType.add_to_group:this.#parse_add_to_group(iter);break;
                 case MessageType.close_group:this.#parse_close_group(iter);break;
-                case MessageType.welcome: this.register_monitor()
-                                          /* no break */
-                case MessageType.channels_reset: this.apply_their_reset();break;
+                case MessageType.channels_reset: this.receive_reset();break;
                 case MessageType.clear_path: this.#parse_clear_path(iter);break;
                 case MessageType.welcome: this.send_mine_channels();break;
             }
@@ -567,7 +561,7 @@ const zerobus = (function(){
                 const str = dec.decode(decode_binary_string(iter));
                 channels.push(str);
             }
-            this.apply_their_channels(channels, operation);
+            this.receive_channels(channels, operation);
         }
 
         #parse_message(iter){
@@ -583,21 +577,21 @@ const zerobus = (function(){
             const dec = new TextDecoder();
             const sender = dec.decode(decode_binary_string(iter));
             const receiver  = dec.decode(decode_binary_string(iter));
-            this.apply_their_clear_path(sender, receiver);
+            this.receive_clear_path(sender, receiver);
         }
 
         #parse_add_to_group(iter) {
             const dec = new TextDecoder();
             const group = dec.decode(decode_binary_string(iter));
             const target  = dec.decode(decode_binary_string(iter));
-            this.apply_their_add_to_group(group,target);
+            this.receive_add_to_group(group,target);
 
         }
 
         #parse_close_group(iter) {
             const dec = new TextDecoder();
             const group = dec.decode(decode_binary_string(iter));
-            this.apply_their_close_group(group);
+            this.receive_close_group(group);
 
         }
 

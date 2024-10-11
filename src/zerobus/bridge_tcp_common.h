@@ -66,12 +66,12 @@ protected:
     bool _handshake = true;
     bool _output_allowed = false;
 
-    virtual void send(ChannelReset&&) noexcept override;
-    virtual void send(CloseGroup&&) noexcept override;
-    virtual void send(Message &&msg) noexcept override;
-    virtual void send(ChannelUpdate &&msg) noexcept override;
-    virtual void send(ClearPath&&) noexcept override;
-    virtual void send(AddToGroup&&) noexcept override;
+    virtual void send(const ChannelReset &) noexcept override;
+    virtual void send(const CloseGroup &) noexcept override;
+    virtual void send(const Message &msg) noexcept override;
+    virtual void send(const ChannelUpdate &msg) noexcept override;
+    virtual void send(const ClearPath &) noexcept override;
+    virtual void send(const AddToGroup &) noexcept override;
     void read_from_connection();
 
     bool after_send(std::size_t sz);
@@ -109,7 +109,7 @@ protected:
     static thread_local Serialization _ser;
 
     using AbstractBridge::receive;
-    virtual void receive(Deserialization::UserMsg &&) {}
+    virtual void receive(const Deserialization::UserMsg &) {}
 
     bool block_hwm(std::unique_lock<std::mutex> &lk);
 

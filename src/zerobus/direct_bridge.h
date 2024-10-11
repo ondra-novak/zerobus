@@ -33,12 +33,12 @@ protected:
         virtual ~Bridge() override;
 
         virtual void on_channels_update() noexcept override;
-        virtual void send(Message &&msg) noexcept override;
-        virtual void send(ChannelUpdate &&msg) noexcept override;
-        virtual void send(ChannelReset &&) noexcept override;
-        virtual void send(CloseGroup &&msg) noexcept override;
-        virtual void send(ClearPath &&msg) noexcept override;
-        virtual void send(AddToGroup &&) noexcept override;
+        virtual void send(const Message &msg) noexcept override;
+        virtual void send(const ChannelUpdate &msg) noexcept override;
+        virtual void send(const ChannelReset &) noexcept override;
+        virtual void send(const CloseGroup &msg) noexcept override;
+        virtual void send(const ClearPath &msg) noexcept override;
+        virtual void send(const AddToGroup &) noexcept override;
         virtual void cycle_detection(bool state) noexcept override;
 
     protected:
@@ -55,12 +55,12 @@ protected:
 
     Bridge &select_other(const Bridge &other);
 
-    virtual void on_send(const Bridge &source, Bridge::ChannelUpdate &&msg);
-    virtual void on_send(const Bridge &source, Message &&msg);
-    virtual void on_send(const Bridge &source, Bridge::ChannelReset &&msg);
-    virtual void on_send(const Bridge &source, Bridge::CloseGroup &&msg);
-    virtual void on_send(const Bridge &source, Bridge::ClearPath &&msg);
-    virtual void on_send(const Bridge &source, Bridge::AddToGroup &&);
+    virtual void on_send(const Bridge &source, const Bridge::ChannelUpdate &msg);
+    virtual void on_send(const Bridge &source, const Message &msg);
+    virtual void on_send(const Bridge &source, const Bridge::ChannelReset &msg);
+    virtual void on_send(const Bridge &source, const Bridge::CloseGroup &msg);
+    virtual void on_send(const Bridge &source, const Bridge::ClearPath &msg);
+    virtual void on_send(const Bridge &source, const Bridge::AddToGroup &msg);
     virtual void cycle_detection(const Bridge &, bool ) noexcept {}
 
 };

@@ -31,8 +31,7 @@ public:
     virtual void unsubscribe(IListener *listener, ChannelID channel) override;
     virtual void unsubscribe_all(IListener *listener) override;
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) override;
-    virtual bool dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) override;
-    virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) override;
+    virtual bool dispatch_message(IListener *listener, const Message &msg, bool subscribe_return_path) override;
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList)> &&callback) const override;
     virtual void get_subscribed_channels(IListener *listener, FunctionRef<void(ChannelList)> &&callback) const override;
     virtual void register_monitor(IMonitor *mon) override;
@@ -56,7 +55,6 @@ public:
 
 protected:
 
-    class MessageDef;
 
     using mstring = std::basic_string<char, std::char_traits<char>, std::pmr::polymorphic_allocator<char> >;
     template<typename T>
@@ -184,9 +182,11 @@ protected:
     mvector<IMonitor *> _monitors;      //list of monitors
     PrivateQueue _private_queue;
     mutable std::vector<ChannelID> _tmp_channels;    //temporary vector for get_active_channels
+    mutable std::vector<PChanMapItem> _tmp_channels_ref;    //temporary vector for get_active_channels
     mutable std::string _cycle_detector_id = {};    //contains a random string which is used to detect cycles
     mutable const IListener *_last_proxy=nullptr;    //pointer to last proxy - to check, whether there are more proxies
     mutable bool _channels_change = false;
+    bool _priv_queue_running = false;
     mutable unsigned int _recursion = 0;
     ///erase mailbox
     /**
@@ -210,9 +210,9 @@ protected:
     PChanMapItem get_channel_lk(ChannelID name);
 
 
-    bool forward_message_internal(IListener *listener,  Message &&msg) ;
+    bool forward_message_internal(IListener *listener,  const Message &msg) ;
 
-    void run_priv_queue(IListener *target, Message &&msg, bool pm);
+    void run_priv_queue(IListener *target, const Message &msg, bool pm);
 
     struct TLSQueueItem;
     struct TLState;

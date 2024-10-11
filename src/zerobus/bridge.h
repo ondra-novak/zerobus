@@ -27,8 +27,7 @@ public:
      */
     virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList) > &&cb) const = 0;
     virtual void unsubscribe_all_channels(IListener *listener) = 0;
-    virtual Message create_message(ChannelID sender, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
-    virtual bool dispatch_message(IListener *listener, Message &&msg, bool subscribe_return_path) = 0;
+    virtual bool dispatch_message(IListener *listener, const Message &msg, bool subscribe_return_path) = 0;
     ///retieve channel name used to detect cycles
     /**
      * @return name of channel which should not be subscribed. It is intended to detect
@@ -146,18 +145,18 @@ public:
      * it from multiple threads
      *
      */
-    void receive(ChannelUpdate &&chan_up);
+    void receive(const ChannelUpdate &chan_up);
 
     void receive(ChannelReset);
 
 
     ///apply their clear path command
-    void receive(ClearPath &&cp);
+    void receive(const ClearPath &cp);
 
-    void receive(CloseGroup &&msg) ;
-    void receive(AddToGroup &&msg);
+    void receive(const CloseGroup &msg) ;
+    void receive(const AddToGroup &msg);
 
-    void receive(Message &&msg);
+    void receive(const Message &msg);
 
 
 
@@ -186,12 +185,12 @@ protected:
      * @param channels list channels
      * @param op operation with channels
      */
-    virtual void send(ChannelUpdate &&msg) noexcept = 0;
-    virtual void send(Message &&msg) noexcept = 0;
-    virtual void send(ChannelReset &&) noexcept = 0;
-    virtual void send(CloseGroup &&) noexcept = 0;
-    virtual void send(AddToGroup &&) noexcept = 0;
-    virtual void send(ClearPath &&) noexcept = 0;
+    virtual void send(const ChannelUpdate &msg) noexcept = 0;
+    virtual void send(const Message &msg) noexcept = 0;
+    virtual void send(const ChannelReset &) noexcept = 0;
+    virtual void send(const CloseGroup &) noexcept = 0;
+    virtual void send(const AddToGroup &) noexcept = 0;
+    virtual void send(const ClearPath &) noexcept = 0;
 
     virtual void process_mine_channels(ChannelList lst) noexcept;
 

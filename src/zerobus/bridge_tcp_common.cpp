@@ -101,9 +101,9 @@ std::string_view BridgeTCPCommon::get_view_to_send() const {
 }
 
 void BridgeTCPCommon::deserialize_message(const std::string_view &msg) {
-    std::visit([&](auto &&m){
-        this->receive(std::move(m));
-    }, _deser(msg, _ptr.get()));
+    std::visit([&](const auto &m){
+        this->receive(m);
+    }, _deser(msg));
 }
 
 void BridgeTCPCommon::receive_complete(std::string_view data) noexcept {
@@ -250,27 +250,27 @@ void BridgeTCPCommon::set_hwm(std::size_t hwm, std::size_t timeout_ms) {
     _hwm_timeout = timeout_ms;
 }
 
-void BridgeTCPCommon::send(ChannelReset&& m) noexcept {
+void BridgeTCPCommon::send(const ChannelReset& m) noexcept {
     output_message(_ser(m));
 }
 
-void BridgeTCPCommon::send(CloseGroup&& m) noexcept {
+void BridgeTCPCommon::send(const CloseGroup& m) noexcept {
     output_message(_ser(m));
 }
 
-void BridgeTCPCommon::send(Message &&m) noexcept {
+void BridgeTCPCommon::send(const Message &m) noexcept {
     output_message(_ser(m));
 }
 
-void BridgeTCPCommon::send(ChannelUpdate &&m) noexcept {
+void BridgeTCPCommon::send(const ChannelUpdate &m) noexcept {
     output_message(_ser(m));
 }
 
-void BridgeTCPCommon::send(ClearPath&&m) noexcept {
+void BridgeTCPCommon::send(const ClearPath &m) noexcept {
     output_message(_ser(m));
 }
 
-void BridgeTCPCommon::send(AddToGroup&&m) noexcept {
+void BridgeTCPCommon::send(const AddToGroup &m) noexcept {
     output_message(_ser(m));
 }
 

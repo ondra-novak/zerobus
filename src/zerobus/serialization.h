@@ -23,7 +23,7 @@ public:
             Msg::AddToGroup,
             Msg::CloseGroup>;
 
-    Result operator()(std::string_view msgtext, IBridgeAPI *api);
+    Result operator()(std::string_view msgtext);
 public: //static helpers
 
     ///Read unsigned int

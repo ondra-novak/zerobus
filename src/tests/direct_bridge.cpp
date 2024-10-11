@@ -37,16 +37,16 @@ protected:
         std::cout << std::endl;
     }
 
-    virtual void on_send(const Bridge &source, Bridge::ChannelReset &&r) override {
+    virtual void on_send(const Bridge &source, const Bridge::ChannelReset &r) override {
         log(source, "RESET");
         DirectBridge::on_send(source, std::move(r));
     }
-    virtual void on_send(const DirectBridge::Bridge &source, Message &&msg) override {
+    virtual void on_send(const DirectBridge::Bridge &source, const Message &msg) override {
         log(source, "MESSAGE: sender: ", msg.get_sender(), " channel: ", msg.get_channel(),
                 " content: ", msg.get_content(), " conversation: ", msg.get_conversation());
-        DirectBridge::on_send(source, std::move(msg));
+        DirectBridge::on_send(source, msg);
     }
-    virtual void on_send(const DirectBridge::Bridge &source, Bridge::ChannelUpdate &&r) override {
+    virtual void on_send(const DirectBridge::Bridge &source, const Bridge::ChannelUpdate &r) override {
         std::ostringstream chlist;
         char sep = ' ';
         for (auto c: r.lst) {
@@ -57,7 +57,7 @@ protected:
                           r.op == AbstractBridge::Operation::erase?"ERASE":"REPLACE", chlist.view());
         DirectBridge::on_send(source, std::move(r));
     }
-    virtual void on_send(const Bridge &source, Bridge::ClearPath &&r) override {
+    virtual void on_send(const Bridge &source, const Bridge::ClearPath &r) override {
         log(source, "CLEAR_PATH: ",r.sender," -> ",r.receiver);
         DirectBridge::on_send(source, std::move(r));
     }
@@ -65,11 +65,11 @@ protected:
         if (state) log(source, "CYCLE DETECTED!");
         else log(source, "CYCLE cleared");
     }
-    virtual void on_send(const Bridge &source, Bridge::CloseGroup &&g) override {
+    virtual void on_send(const Bridge &source, const Bridge::CloseGroup &g) override {
         log(source, "CLOSE_GROUP: ",g.group);
         DirectBridge::on_send(source, std::move(g));
     }
-    virtual void on_send(const Bridge &source, Bridge::AddToGroup &&g) override {
+    virtual void on_send(const Bridge &source, const Bridge::AddToGroup &g) override {
         log(source, "ADD_TO_GROUP: ",g.target," -> ",g.group);
         DirectBridge::on_send(source, std::move(g));
 
