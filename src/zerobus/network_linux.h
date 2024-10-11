@@ -36,6 +36,9 @@ public:
     ///request to destroy server
     virtual void destroy(ConnHandle ident) override;
 
+    virtual bool sync_wait(ConnHandle connection, std::atomic<std::uintptr_t> &var, std::uintptr_t block_value, std::chrono::system_clock::time_point timeout) override;
+    virtual void sync_notify(ConnHandle connection) override;
+
     std::jthread run_thread();
 
     void run(std::stop_token tkn);
@@ -45,6 +48,7 @@ public:
     ///Clear existing timeout
     virtual void clear_timeout(ConnHandle ident) override;
 
+    virtual void yield(ConnHandle connection, std::function<void()> fn) override;
 
 protected:
 
@@ -65,7 +69,9 @@ protected:
         IPeer *_send_cb = {};
         IServer *_accept_cb = {};
         IPeerServerCommon *_timeout_cb = {};
+        std::function<void()> _yield = {};
         int _cbprotect = {};
+        bool _destroy_on_exit = false;
 
         ///invoke one of callbacks
         /**
@@ -95,10 +101,10 @@ protected:
     SocketInfo *socket_by_ident(ConnHandle id);
 
 
-    void process_event_lk(std::unique_lock<std::mutex> &lk, const  WaitRes &e);
+    void process_event_lk(std::unique_lock<std::mutex> &lk, const  WaitRes &e, std::vector<std::function<void()> > &yield_queue);
     std::chrono::system_clock::time_point get_epoll_timeout_lk();
 
-    void apply_flags_lk(SocketInfo *sock);
+    void apply_flags_lk(SocketInfo *sock) noexcept;
 };
 
 

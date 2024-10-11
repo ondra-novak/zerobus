@@ -6,9 +6,12 @@ namespace zerobus {
 BridgeTCPClient::BridgeTCPClient(Bus bus, std::shared_ptr<INetContext> ctx, std::string address)
 :BridgeTCPCommon(std::move(bus), ctx, ctx->peer_connect(get_address_from_url(address)), false)
 ,_address(std::move(address))
+,_session_id(generate_session_id())
 {
     register_monitor(this);
     init();
+
+
 }
 
 BridgeTCPClient::BridgeTCPClient(Bus bus, std::string address)
@@ -16,8 +19,22 @@ BridgeTCPClient::BridgeTCPClient(Bus bus, std::string address)
 
 }
 
+
+
 BridgeTCPClient::~BridgeTCPClient() {
     unregister_monitor(this);
+    output_message(ws::Message{"", ws::Type::connClose, _ws_builder.closeNormal});
+    if (_linger_timeout) {
+        std::unique_lock lk(_mx);
+        _hwm = 0;
+        _hwm_timeout = _linger_timeout;
+        block_hwm(lk);
+    }
+    destroy();
+}
+
+void BridgeTCPClient::set_linger_timeout(std::size_t timeout_ms) {
+    _linger_timeout = timeout_ms;
 }
 
 
@@ -31,6 +48,9 @@ void BridgeTCPClient::on_timeout() noexcept {
     }
 }
 
+void BridgeTCPClient::close() {
+    BridgeTCPClient::lost_connection();
+}
 
 void BridgeTCPClient::lost_connection() {
     try {
@@ -61,15 +81,19 @@ void BridgeTCPClient::clear_to_send() noexcept {
     } else {
         BridgeTCPCommon::clear_to_send();
     }
+
 }
 
 
 bool BridgeTCPClient::send_handshake() {
     std::string key = ws::generate_ws_key();
     _expected_ws_accept = ws::calculate_ws_accept(key);
+    std::string path = get_path_from_url(_address);
+    if (path.empty() || path.back() != '/') path.push_back('/');
+    path.append(_session_id);
 
     std::ostringstream hdr;
-    hdr << "GET " << get_path_from_url(_address) << " HTTP/1.1\r\n"
+    hdr << "GET " << path << " HTTP/1.1\r\n"
            "Host: " << get_address_from_url(_address) << "\r\n"
            "Upgrade: websocket\r\n"
            "Connection: Upgrade\r\n"
@@ -127,6 +151,19 @@ bool BridgeTCPClient::check_ws_response(std::string_view hdr) {
             && upgrade && connection && accept;
 }
 
+constexpr std::string_view valid_chars =
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZ"
+    "abcdefghijklmnopqrstuvwxyz"
+    "0123456789-_";
 
 
+std::string BridgeTCPClient::generate_session_id() {
+    std::string s;
+    s.resize(32);
+    std::random_device rnd;
+    std::uniform_int_distribution<unsigned char> dist(0,valid_chars.size()-1);
+    for (auto &c: s) c = valid_chars[dist(rnd)];
+    return s;
 }
+}
+

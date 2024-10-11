@@ -31,6 +31,9 @@ public:
 
     virtual ~BridgeTCPClient() override;
 
+
+    void set_linger_timeout(std::size_t timeout_ms);
+
 protected:
 
     virtual void on_timeout() noexcept override;
@@ -41,6 +44,8 @@ protected:
     std::string _address;
     std::string _expected_ws_accept;
     std::string _header;
+    std::string _session_id;
+    std::size_t _linger_timeout = 1000;
 
 
     bool _timeout_reconnect = false;
@@ -49,8 +54,12 @@ protected:
 
 
     virtual void lost_connection() override;
+    virtual void close() override;
 
     bool check_ws_response(std::string_view hdr);
+    static std::string generate_session_id();
 };
+
+
 
 }

@@ -12,7 +12,6 @@ BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,ConnH
 ,_aux(aux)
 ,_ws_builder(client)
 ,_ws_parser(_input_data, false)
-
 {
 }
 
@@ -23,7 +22,7 @@ void BridgeTCPCommon::init() {
 }
 
 BridgeTCPCommon::~BridgeTCPCommon() {
-    _ctx->destroy(_aux);
+    destroy();
 }
 
 void BridgeTCPCommon::clear_to_send() noexcept {
@@ -51,6 +50,8 @@ bool BridgeTCPCommon::after_send(std::size_t sz) {
     // - if this buffer is empty, this is invalid operation, so return false (nothing to do)
     if (_output_msg_sp.empty()) return false;
 
+    //write finished signal
+    ++_sig_write_finished;
     // increase position of output cursor
     _output_cursor += sz;
     // if we reached end, writing is done
@@ -124,7 +125,7 @@ void BridgeTCPCommon::receive_complete(std::string_view data) noexcept {
                 case ws::Type::connClose:
                     output_message(ws::Message{"", ws::Type::connClose, _ws_builder.closeNormal});
                     _ws_parser.reset();
-                    lost_connection();
+                    close();
                     return;
                 default:    //ignore unknown message
                     break;
@@ -139,15 +140,32 @@ void BridgeTCPCommon::receive_complete(std::string_view data) noexcept {
 }
 
 
+void BridgeTCPCommon::destroy() {
+    if (!_destroyed) {
+        _destroyed = true;
+        _ctx->destroy(_aux);
+    }
+}
 void BridgeTCPCommon::read_from_connection() {
     _ctx->receive(_aux, _input_buffer, this);
 }
 
+bool BridgeTCPCommon::block_hwm(std::unique_lock<std::mutex> &lk) {
+    if (get_view_to_send().size() > _hwm) {
+        auto expires = std::chrono::system_clock::now()+std::chrono::milliseconds(_hwm_timeout);
+        while (get_view_to_send().size() > _hwm) {
+            auto sig = _sig_write_finished.load();
+            lk.unlock();
+            if (!_ctx->sync_wait(_aux, _sig_write_finished, sig, expires)) return false;
+        }
+    }
+    return true;
+}
 
 void BridgeTCPCommon::output_message(const ws::Message &msg) {
-    std::lock_guard _(_mx);
+    std::unique_lock lk(_mx);
     if (_handshake) return; //can't send message when handshake
-    if (_output_data.size() > _hwm) return ;    //TODO: try to slow down when buffer reaches HWM
+    if (!block_hwm(lk)) return;
     _output_msg_sp.push_back(_output_data.size());
     _ws_builder.build(msg, _output_data);
     flush_buffer();
@@ -226,9 +244,10 @@ std::string BridgeTCPCommon::get_path_from_url(std::string_view url) {
 
 }
 
-void BridgeTCPCommon::set_hwm(std::size_t hwm) {
+void BridgeTCPCommon::set_hwm(std::size_t hwm, std::size_t timeout_ms) {
     std::lock_guard _(_mx);
     _hwm = hwm;
+    _hwm_timeout = timeout_ms;
 }
 
 void BridgeTCPCommon::send(ChannelReset&& m) noexcept {
@@ -254,5 +273,6 @@ void BridgeTCPCommon::send(ClearPath&&m) noexcept {
 void BridgeTCPCommon::send(AddToGroup&&m) noexcept {
     output_message(_ser(m));
 }
+
 
 }

@@ -32,22 +32,6 @@ public:
     BridgeTCPServer &operator=(const BridgeTCPServer &) = delete;
     virtual ~BridgeTCPServer() override;
 
-    ///Accept authentication for waiting peer
-    /**
-     * @param id id of peer. This id is available at the structure AuthInfo
-     */
-    void accept_auth(unsigned int id);
-    ///Accept authentication for waiting peer and apply filter
-    /**
-     * @param id id of peer. This id is available at the structure AuthInfo
-     * @param flt channel filter
-     */
-    void accept_auth(unsigned int id, std::unique_ptr<Filter> flt);
-    ///Reject authentication for waiting peer
-    /**
-     * @param id id of peer. This id is available at the structure AuthInfo
-     */
-    void reject_auth(unsigned int id);
 
 
     struct CustomPage {
@@ -76,9 +60,32 @@ public:
      */
     void send_ping();
 
-    void set_hwm(std::size_t sz);
+    ///set high water mark
+    /**
+     * @param hwm specified high water mark limit for total buffered data in bytes. Default is
+     *  1 MB
+     * @param timeout_ms specifies timeout how long is sending blocked if high water mark
+     *    limit is reached. This blocking is synchronous. If timeout is reached, the
+     *    message is dropped (and lost). You can specify some small timeout to slow down
+     *    sending in case that data are generated faster than is speed of the connection.
+     *    Default is 1 second
+     */
+    void set_hwm(std::size_t hwm, std::size_t timeout_ms);
+
+    void set_session_timeout(std::size_t timeout_sec);
 
 protected:
+
+    ///called when peer is connected
+    /**
+     * @param p connected peer, it should be in state after initial handshake
+     */
+    virtual void on_peer_connect(BridgeTCPCommon &p);
+    ///called when peer is lost
+    /**
+     * @param p lost peer, it should be in state before its destruction
+     */
+    virtual void on_peer_lost(BridgeTCPCommon &p);
 
     virtual void on_channels_update() noexcept override;
     virtual void on_accept(ConnHandle aux, std::string peer_addr) noexcept override;
@@ -90,25 +97,32 @@ protected:
         Peer(BridgeTCPServer &owner, ConnHandle aux, unsigned int id);
         Peer(const Peer &) = delete;
         Peer &operator=(const Peer &) = delete;
+        ~Peer();
         void initial_handshake();
         virtual void receive_complete(std::string_view data) noexcept override;
         virtual void lost_connection() override;
+        virtual void on_timeout() noexcept override;
 
         bool check_dead();
         unsigned int get_id() const {return _id;}
+        std::string_view get_session_id() const {return _session_id;}
         bool is_lost() const {return _lost;}
         bool disabled() const {return  _handshake;}
+        virtual void close() override;
+        void reconnect(ConnHandle aux);
 
     protected:
         bool _activity_check = false;
         bool _ping_sent = false;
         bool _lost = false;
         unsigned int _id;
+        std::string _session_id;
 
         struct ParseResult {
             std::string_view key;
             std::string_view uri;
             std::string_view method;
+            std::string_view sessionid;
         };
 
         bool websocket_handshake(std::string_view &data);
@@ -129,14 +143,24 @@ protected:
     std::vector<std::unique_ptr<Peer> > _peers;
     std::chrono::system_clock::time_point _next_ping = {};
     std::size_t _hwm = 1024*1024;
+    std::size_t _hwm_timeout = 1000;    //1 second
+    std::size_t _session_timeout = 0;
     unsigned int _id_cntr = 1;
     bool _send_mine_channels_flag = false;
     bool _lost_peers_flag = false;
     std::function<CustomPage(std::string_view)> _custom_page;
 
 
-    void on_auth_response(Peer *p, std::string_view ident, std::string_view proof, std::string_view salt);
     void lost_connection();
+    ///try to handover the session
+    /**
+     * @param handle connection handle
+     * @param session_id session id
+     * @retval true connection has been handed over to original peer instance. You should close this
+     * peer
+     * @retval false connection has not been handed over, continue in this peer
+     */
+    bool handover(Peer *peer, ConnHandle handle, std::string_view session_id);
 
 
     template<typename Fn>

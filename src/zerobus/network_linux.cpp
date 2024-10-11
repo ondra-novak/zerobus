@@ -84,6 +84,9 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
         eventfd_write(efd, 1);
     });
 
+    std::vector<std::function<void()> > yield_queue;
+    yield_queue.reserve(4);
+
     _epoll.add(efd, EPOLLIN, -1);
 
     while (!tkn.stop_requested()) {
@@ -111,18 +114,25 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
                 if (nfo && nfo->_timeout_cb) {
                     auto cb = std::exchange(nfo->_timeout_cb, nullptr);
                     nfo->invoke_cb(lk, _cond, [&]{cb->on_timeout();});
+                    if (nfo->_yield) {
+                        yield_queue.push_back(std::move(nfo->_yield));
+                    }
                 }
             }
         } else {
             auto &e = *res;
             if (e.ident != static_cast<ConnHandle>(-1)) {
-                process_event_lk(lk, e);
+                process_event_lk(lk, e, yield_queue);
             } else {
                 eventfd_t dummy;
                 eventfd_read(efd, &dummy);
             }
-            if (tkn.stop_requested()) break;
         }
+        lk.unlock();
+        for (auto &x: yield_queue) x();
+        yield_queue.clear();
+        if (tkn.stop_requested()) break;
+        lk.lock();
     }
 
 }
@@ -397,7 +407,7 @@ void NetContext::SocketInfo::invoke_cb(std::unique_lock<std::mutex> &lk, std::co
 
 
 
-void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRes &e) {
+void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRes &e, std::vector<std::function<void()> > &yield_queue) {
     auto ctx = socket_by_ident(e.ident);
     if (!ctx) return;
     ctx->_cur_flags = 0;
@@ -434,10 +444,36 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRe
         if (peer) ctx->invoke_cb(lk, _cond, [&]{peer->clear_to_send();});
     }
     apply_flags_lk(ctx);
+    if (ctx->_yield) {
+        yield_queue.push_back(std::move(ctx->_yield));
+    }
 
 }
 
-void NetContext::apply_flags_lk(SocketInfo *ctx) {
+void NetContext::yield(ConnHandle connection, std::function<void()> fn) {
+    std::lock_guard _(_mx);
+    auto ctx = socket_by_ident(connection);
+    if (ctx) ctx->_yield = std::move(fn);
+}
+
+bool NetContext::sync_wait(ConnHandle connection,
+        std::atomic<std::uintptr_t> &var, std::uintptr_t block_value,
+        std::chrono::system_clock::time_point timeout) {
+    std::unique_lock lk(_mx);
+    while (var.load() == block_value) {
+        if (socket_by_ident(connection) == nullptr) return false;
+        if (_cond.wait_until(lk, timeout) == std::cv_status::timeout) return false;
+    }
+    return true;
+}
+
+void NetContext::sync_notify(ConnHandle ) {
+    std::unique_lock lk(_mx);   //must be under lock
+    _cond.notify_all();
+
+}
+
+void NetContext::apply_flags_lk(SocketInfo *ctx) noexcept {
     if (ctx->_flags != ctx->_cur_flags) {
         _epoll.mod(ctx->_socket, ctx->_flags|EPOLLONESHOT, ctx->_ident);
         ctx->_cur_flags = ctx->_flags;

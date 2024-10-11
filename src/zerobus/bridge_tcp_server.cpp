@@ -48,7 +48,7 @@ void BridgeTCPServer::on_accept(ConnHandle aux, std::string /*peer_addr*/) noexc
     //TODO report peer_addr
     std::lock_guard _(_mx);
     auto p = std::make_unique<Peer>(*this, aux, _id_cntr++);
-    p->set_hwm(_hwm);
+    p->set_hwm(_hwm, _hwm_timeout);
     _peers.push_back(std::move(p));
     _ctx->accept(_aux, this);
 }
@@ -88,9 +88,14 @@ BridgeTCPServer::Peer::Peer(BridgeTCPServer &owner, ConnHandle aux, unsigned int
     init();
 }
 
+BridgeTCPServer::Peer::~Peer() {
+    destroy();
+}
+
 void BridgeTCPServer::Peer::initial_handshake() {
     Peer::send(Msg::ChannelReset{});
     Peer::send_mine_channels();
+    _owner.on_peer_connect(*this);
 }
 
 
@@ -107,8 +112,12 @@ bool BridgeTCPServer::Peer::check_dead() {
 }
 
 void BridgeTCPServer::Peer::lost_connection() {
-    _lost = true;
-    _owner.lost_connection();
+    if (_owner._session_timeout) {
+        _ctx->set_timeout(_aux, std::chrono::system_clock::now()+std::chrono::seconds(_owner._session_timeout), this);
+    } else {
+        _owner.on_peer_lost(*this);
+        close();
+    }
 }
 
 template<typename Fn>
@@ -123,18 +132,6 @@ void BridgeTCPServer::call_with_peer(unsigned int id, Fn &&fn) {
 }
 
 
-void BridgeTCPServer::accept_auth(unsigned int id) {
-    call_with_peer(id, [&](Peer *p){
-        p->initial_handshake();
-    });
-}
-
-void BridgeTCPServer::accept_auth(unsigned int id, std::unique_ptr<Filter> flt) {
-    call_with_peer(id, [&](Peer *p){
-        p->set_filter(std::move(flt));
-        p->initial_handshake();
-    });
-}
 
 
 void BridgeTCPServer::set_custom_page_callback(
@@ -152,12 +149,18 @@ void BridgeTCPServer::send_ping() {
 
 }
 
-void BridgeTCPServer::set_hwm(std::size_t sz) {
+void BridgeTCPServer::set_hwm(std::size_t sz, std::size_t timeout_ms) {
     std::lock_guard _(_mx);
     _hwm = sz;
+    _hwm_timeout = timeout_ms;
     for (auto &x: _peers) {
-        x->set_hwm(sz);
+        x->set_hwm(sz,timeout_ms);
     }
+}
+
+void BridgeTCPServer::Peer::close() {
+    _lost = true;
+    _owner.lost_connection();
 }
 
 void BridgeTCPServer::lost_connection() {
@@ -170,20 +173,22 @@ void BridgeTCPServer::Peer::receive_complete(std::string_view data) noexcept {
     _activity_check = false;
     if (_handshake) {
         if (data.empty()) {
-            lost_connection();
-            return;
+            close();
         }
         std::copy(data.begin(), data.end(), std::back_inserter(_input_data));
         std::string_view t(_input_data.data(),_input_data.size());
         auto p = t.find("\r\n\r\n");
         if (p != t.npos) {
             if (websocket_handshake(t)) {
+                if (!_session_id.empty() && _owner.handover(this, _aux, _session_id)) {
+                    close();
+                    return;
+                }
                 _input_data.clear();
                 read_from_connection();
                 start_peer();
             } else {
-                lost_connection();
-                return;
+                close();
             }
 
         }
@@ -216,12 +221,16 @@ BridgeTCPServer::Peer::ParseResult BridgeTCPServer::Peer::parse_websocket_header
     auto method = split(first_line, " ");
     auto path = split(first_line, " ");
     auto protocol = split(first_line, " ");
+    std::string_view session;
     bool ok = icmp(method, "get")
-            && path == _owner._path
+            && path.substr(0, _owner._path.size()) == _owner._path
             && icmp(protocol,"http/1.1")
             && upgrade && connection && version;
     if (!ok) wskey= {};
-    return {wskey, path, method};
+    else {
+        session = path.substr(_owner._path.size());
+    }
+    return {wskey, path, method, session};
 
 }
 
@@ -255,6 +264,9 @@ bool BridgeTCPServer::Peer::websocket_handshake(std::string_view &data) {
                 "Connection: Upgrade\r\n"
                 "Sec-WebSocket-Accept: ";
         resp << ws::calculate_ws_accept(rs.key) << "\r\n\r\n";
+        if (rs.sessionid.size() >= 32) {
+            _session_id.append(rs.sessionid);
+        }
 
     }
     _output_msg_sp.push_back(_output_data.size());
@@ -264,10 +276,43 @@ bool BridgeTCPServer::Peer::websocket_handshake(std::string_view &data) {
     return !rs.key.empty();
 }
 
+void BridgeTCPServer::Peer::reconnect(ConnHandle aux) {
+    _ctx->destroy(aux);
+    _aux = aux;
+    _input_data.clear();
+    read_from_connection();
+    _ctx->ready_to_send(_aux, this);
+
+}
+
+void BridgeTCPServer::Peer::on_timeout() noexcept {
+    _owner.on_peer_lost(*this);
+    close();
+}
+
 
 void BridgeTCPServer::Peer::start_peer() {
     _handshake = false;
     initial_handshake();
+}
+
+void BridgeTCPServer::set_session_timeout(std::size_t timeout_sec) {
+    _session_timeout = timeout_sec;
+}
+
+void BridgeTCPServer::on_peer_connect(BridgeTCPCommon &) {}
+void BridgeTCPServer::on_peer_lost(BridgeTCPCommon &) {}
+
+bool BridgeTCPServer::handover(Peer *peer, ConnHandle handle, std::string_view session_id) {
+    std::lock_guard _(_mx);
+    auto iter = std::find_if(_peers.begin(), _peers.end(), [&](const auto &p) {
+        return p->get_session_id() == session_id;
+    });
+    if (iter != _peers.end() && iter->get() != peer) {
+        (*iter)->reconnect(handle);
+        return true;
+    }
+    return false;
 }
 
 }

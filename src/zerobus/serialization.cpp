@@ -16,9 +16,9 @@ enum class MessageType: std::uint8_t {
         ///clear return path
         clear_path = 0xFA,
         ///add to group
-        add_to_group = 0xF8,
+        add_to_group = 0xF9,
         ///close group
-        close_group = 0xF7,
+        close_group = 0xF8,
 };
 
 Deserialization::Result Deserialization::operator ()(std::string_view msgtext, IBridgeAPI *api) {

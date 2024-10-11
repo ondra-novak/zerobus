@@ -11,6 +11,7 @@ public:
 
     static constexpr int input_buffer_size = 8192;
     static constexpr std::string_view magic = "zbus";
+    static constexpr unsigned char close_session_msg = 0x1F;
 
 
     virtual ~BridgeTCPCommon() override;
@@ -20,7 +21,17 @@ public:
     static std::string get_address_from_url(std::string_view url);
     static std::string get_path_from_url(std::string_view url);
 
-    void set_hwm(std::size_t hwm);
+    ///set high water mark
+    /**
+     * @param hwm specified high water mark limit for total buffered data in bytes. Default is
+     *  1 MB
+     * @param timeout_ms specifies timeout how long is sending blocked if high water mark
+     *    limit is reached. This blocking is synchronous. If timeout is reached, the
+     *    message is dropped (and lost). You can specify some small timeout to slow down
+     *    sending in case that data are generated faster than is speed of the connection.
+     *    Default is 1 second
+     */
+    void set_hwm(std::size_t hwm, std::size_t timeout_ms);
 
 protected:
 
@@ -29,13 +40,20 @@ protected:
     virtual void output_message(std::string_view message) ;
     virtual void on_timeout() noexcept override;
 
-    virtual void lost_connection() {}
+    virtual void lost_connection() = 0;
+    virtual void close() = 0;
+
+    void destroy();
 
     std::shared_ptr<INetContext> _ctx;
     ConnHandle _aux;
     ws::Builder _ws_builder;
     ws::Parser _ws_parser;
     std::size_t _hwm = 1024*1024;   //1MB
+    std::size_t _hwm_timeout = 1000;    //1 second
+    bool _destroyed = false;
+
+    std::atomic<std::uint64_t> _sig_write_finished = {};
 
     char _input_buffer[input_buffer_size];
 
@@ -91,7 +109,9 @@ protected:
     static thread_local Serialization _ser;
 
     using AbstractBridge::receive;
-    void receive(Deserialization::UserMsg &&) {}
+    virtual void receive(Deserialization::UserMsg &&) {}
+
+    bool block_hwm(std::unique_lock<std::mutex> &lk);
 
 };
 
