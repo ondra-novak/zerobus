@@ -199,6 +199,7 @@ Bridge between starts
             ▼     ▼                                                                 ▼     ▼
 ```
 
+
 ## Direct messages
 
 Sending direct messages is easy, just send a message to the sender ID as a reply. This message will then arrive as a personal message directly to the original sender's node. They can then send a reply back to the original recipient and this way you can communicate back and forth as many times as you like
@@ -209,18 +210,18 @@ Typical use is for RPC. The server listens for RPC requests on the selected chan
 
 
 ```
-//RPC ping service
-int main() {
-    auto bus = Bus::create();
-    ClientCallback rpc_ping(bus, [](AbstractClient &c, const Message &msg, bool ){
-        c.send_message(msg.get_sender(), msg.get_content(), msg.get_conversation());
-    });
-    rpc_ping.subscribe("ping"); //subscribe to channel "ping"
-
- //...
- //...   
+    //RPC ping service
+    int main() {
+        auto bus = Bus::create();
+        ClientCallback rpc_ping(bus, [](AbstractClient &c, const Message &msg, bool ){
+            c.send_message(msg.get_sender(), msg.get_content(), msg.get_conversation());
+        });
+        rpc_ping.subscribe("ping"); //subscribe to channel "ping"
     
-}
+     //...
+     //...   
+        
+    }
 ```
 
 The above client acts as RPC server which responds with content of the request (ping). The sender receives response as personal message
