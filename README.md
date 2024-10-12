@@ -77,8 +77,7 @@ int main() {
     //....   
 }
 
-
-
+```
 
 ## Extending a bus over network
 
