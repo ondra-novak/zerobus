@@ -25,6 +25,11 @@ public:
 
     void connect();
 
+    AbstractBridge &getBridge1();
+    const AbstractBridge &getBridge1() const;
+    AbstractBridge &getBridge2();
+    const AbstractBridge &getBridge2() const;
+
 protected:
 
     class Bridge: public AbstractBridge, public IMonitor { // @suppress("Miss copy constructor or assignment operator")

@@ -1,7 +1,9 @@
 #pragma once
 #include "listener.h"
-#include "functionref.h"
+
+#include <memory>
 #include <span>
+#include <vector>
 
 namespace zerobus {
 
@@ -9,6 +11,37 @@ class IBus {
 public:
 
     using ChannelList = std::span<ChannelID>;
+
+    ///An object used to temporarily store the channel list obtained from the Bus object
+    /**Because the Bus environment is dynamic and can change in the background,
+     * it is necessary to ensure that the channel list obtained is firm and valid
+     * at the time it is obtained. In addition, the object allows the reuse of
+     * already allocated space from the previous use.
+     *
+     * The object contains locks that are held for the lifetime of the object.
+     * Holding locks can cause some allocated memory that is no longer
+     * needed to remain allocated. Therefore, it is a good idea to call
+     * clear() when the list is no longer needed.
+     */
+    class ChannelListStorage  {
+    public:
+
+        ///construct storage
+        ChannelListStorage() = default;
+        ///retrieve stored channel list
+        ChannelList get_channels() {return _channels;}
+        ///clear all channels and release some memory
+        /**
+         * This doesn't affect a memory preallocated for next usage, it only releases
+         * associated data with current list
+         */
+        void clear() {_channels.clear(); _locks.clear();}
+
+
+        std::vector<ChannelID> _channels;
+        std::vector<std::shared_ptr<std::nullptr_t> > _locks;
+    };
+
 
     virtual ~IBus() = default;
 
@@ -22,13 +55,16 @@ public:
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
     virtual std::string get_random_channel_name(std::string_view prefix) const = 0;
     virtual bool is_channel(ChannelID id) const = 0;
-    virtual void get_subscribed_channels(IListener *listener, FunctionRef<void(ChannelList) > &&cb) const = 0;
+    virtual ChannelList get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const = 0;
 
 };
 
 class Bus {
 public:
 
+
+    using ChannelList = IBus::ChannelList;
+    using ChannelListStorage = IBus::ChannelListStorage;
     ///create new bus;
     static Bus create();
 
@@ -141,16 +177,16 @@ public:
         return _ptr->is_channel(id);
     }
 
-    ///retrieve subscribed channels for listener
+    ///Retrieve subscribed channel by this listener
     /**
-     *
-     * @param listener
-     * @param cb callback function which receives a span of channels
+     * @param listener listener
+     * @param storage object used as storage for channel data and makes return value valid. You need
+     * to keep this object while you processing the result
+     * @return list of channels. List is always ordered (std::less<std::string>)
      */
-    template<std::invocable<std::span<ChannelID> > Callback>
-    void get_subscribed_channels(IListener *listener, Callback &&cb) {
-        _ptr->get_subscribed_channels(listener, cb);
-    }
+     ChannelList get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const {
+         return _ptr->get_subscribed_channels(listener, storage);
+     }
 
 
     auto get_handle() const {return _ptr;}

@@ -32,8 +32,8 @@ public:
     virtual void unsubscribe_all(IListener *listener) override;
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) override;
     virtual bool dispatch_message(IListener *listener, const Message &msg, bool subscribe_return_path) override;
-    virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList)> &&callback) const override;
-    virtual void get_subscribed_channels(IListener *listener, FunctionRef<void(ChannelList)> &&callback) const override;
+    virtual ChannelList get_active_channels(IListener *listener, ChannelListStorage &storage) const override;
+    virtual ChannelList get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const override;
     virtual void register_monitor(IMonitor *mon) override;
     virtual void unregister_monitor(const IMonitor *mon) override;
     virtual bool is_channel(ChannelID id) const override;
@@ -45,7 +45,7 @@ public:
     virtual bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) override;
     virtual void close_group(IListener *owner, ChannelID group_name) override;
     virtual void close_all_groups(IListener *owner) override;
-    virtual void unsubscribe_all_channels(IListener *listener) override;
+    virtual void unsubscribe_all_channels(IListener *listener, bool and_groups) override;
 
     ///Create local message broker;
     static Bus create();
@@ -181,8 +181,6 @@ protected:
     BackPathStorage _back_path;
     mvector<IMonitor *> _monitors;      //list of monitors
     PrivateQueue _private_queue;
-    mutable std::vector<ChannelID> _tmp_channels;    //temporary vector for get_active_channels
-    mutable std::vector<PChanMapItem> _tmp_channels_ref;    //temporary vector for get_active_channels
     mutable std::string _cycle_detector_id = {};    //contains a random string which is used to detect cycles
     mutable const IListener *_last_proxy=nullptr;    //pointer to last proxy - to check, whether there are more proxies
     mutable bool _channels_change = false;
@@ -204,7 +202,7 @@ protected:
      */
     std::string_view get_mailbox(IListener *listener);
 
-    bool unsubscribe_all_channels_lk(IListener *listener);
+    bool unsubscribe_all_channels_lk(IListener *listener, bool and_groups);
 
 
     PChanMapItem get_channel_lk(ChannelID name);

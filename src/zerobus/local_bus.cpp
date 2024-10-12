@@ -79,7 +79,7 @@ bool LocalBus::subscribe(IListener *listener, ChannelID channel)
     if (channel.empty()) return false;
     std::lock_guard _(*this);
     if (channel == _cycle_detector_id) {
-        unsubscribe_all_channels_lk(listener);
+        unsubscribe_all_channels_lk(listener, false);
         throw CycleDetectedException();
     }
     auto chan = get_channel_lk(channel);
@@ -107,7 +107,7 @@ void LocalBus::unsubscribe_all(IListener *listener)
     erase_mailbox_lk(listener);
     erase_groups_lk(listener);
     _back_path.remove_listener(listener);
-    if (unsubscribe_all_channels_lk(listener)) {
+    if (unsubscribe_all_channels_lk(listener, true)) {
         _channels_change = true;
     }
 }
@@ -117,18 +117,18 @@ void LocalBus::unsubcribe_private(IListener *listener) {
     erase_mailbox_lk(listener);
 }
 
-void LocalBus::unsubscribe_all_channels(IListener *listener) {
+void LocalBus::unsubscribe_all_channels(IListener *listener, bool and_groups) {
     std::lock_guard _(*this);
-    if (unsubscribe_all_channels_lk(listener)) {
+    if (unsubscribe_all_channels_lk(listener, and_groups)) {
         _channels_change = true;
     }
 }
 
-bool LocalBus::unsubscribe_all_channels_lk(IListener *listener) {
+bool LocalBus::unsubscribe_all_channels_lk(IListener *listener, bool and_groups) {
     bool ech = false;
     for (auto iter = _channels.begin(); iter != _channels.end();) {
         auto &ch = *iter->second;
-        if (ch.remove_listener(listener)) {
+        if ((and_groups || ch.get_owner() == nullptr) && ch.remove_listener(listener)) {
             iter = _channels.erase(iter);
             ech = true;
         } else {
@@ -170,7 +170,7 @@ void LocalBus::erase_mailbox_lk(IListener *listener) {
 
 std::string_view LocalBus::get_mailbox(IListener *listener)
 {
-    static constexpr std::string_view mbx_prefix = "!mbx_";
+    static constexpr std::string_view mbx_prefix = "mbx_";
 
     std::lock_guard _(*this);
     auto iter = _mailboxes_by_ptr.find(listener);
@@ -370,9 +370,9 @@ void LocalBus::unregister_monitor(const IMonitor *mon) {
 }
 
 
-void LocalBus::get_active_channels(IListener *listener,FunctionRef<void(ChannelList)> &&cb) const {
+LocalBus::ChannelList LocalBus::get_active_channels(IListener *listener,ChannelListStorage &storage) const {
     std::lock_guard _(*this);
-    _tmp_channels.clear();
+    storage.clear();
     if (_last_proxy && listener != _last_proxy) {
         if (_cycle_detector_id.empty()) {
             _cycle_detector_id = get_random_channel_name(cycle_detection_prefix);
@@ -385,27 +385,28 @@ void LocalBus::get_active_channels(IListener *listener,FunctionRef<void(ChannelL
         if (v->can_export(listener)) {
             if (!cycle_added && k > _cycle_detector_id) {
                 cycle_added = true;
-                _tmp_channels.push_back(_cycle_detector_id);
+                storage._channels.push_back(_cycle_detector_id);
             }
-            _tmp_channels.push_back(k);
-            _tmp_channels_ref.push_back(v);
+            storage._channels.push_back(k);
+            storage._locks.emplace_back(v, nullptr);
         }
     }
     if (!cycle_added) {
-        _tmp_channels.push_back(_cycle_detector_id);
+        storage._channels.push_back(_cycle_detector_id);
     }
-
-    cb({_tmp_channels.begin(), _tmp_channels.end()});
-    _tmp_channels_ref.clear();
+    return storage.get_channels();
 }
 
-void LocalBus::get_subscribed_channels(IListener *listener,FunctionRef<void(ChannelList)> &&cb) const {
+LocalBus::ChannelList LocalBus::get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const {
     std::lock_guard _(*this);
-    _tmp_channels.clear();
+    storage.clear();
     for (const auto &[k,v]: _channels) {
-        if (v->has(listener)) _tmp_channels.push_back(k);
+        if (v->has(listener)) {
+            storage._channels.push_back(k);
+            storage._locks.emplace_back(v, nullptr);
+        }
     }
-    cb({_tmp_channels.begin(), _tmp_channels.end()});
+    return storage.get_channels();
 }
 
 LocalBus::ChanDef::ChanDef(std::string_view name, std::pmr::memory_resource *memres)

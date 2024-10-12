@@ -1,7 +1,6 @@
 #pragma once
-#include "bus.h"
-#include "monitor.h"
-#include "functionref.h"
+#include "bridge_api.h"
+
 #include "filter.h"
 
 #include <span>
@@ -9,61 +8,6 @@
 #include <atomic>
 namespace zerobus {
 
-class IBridgeAPI : public IBus {
-public:
-
-    static constexpr std::string_view cycle_detection_prefix = "cdp_";
-
-    using ChannelList = std::span<ChannelID>;
-
-    virtual void register_monitor(IMonitor *mon) = 0;
-    virtual void unregister_monitor(const IMonitor *mon) = 0;
-    ///Retrieve active channels relative to listener
-    /**
-     * @param listener the function skips channels subscribed by this listener. Use nullptr to show all channels
-     * @param cb callback function
-     *
-     * @note Returned list should be in lexicographic order (std::less)
-     */
-    virtual void get_active_channels(IListener *listener, FunctionRef<void(ChannelList) > &&cb) const = 0;
-    virtual void unsubscribe_all_channels(IListener *listener) = 0;
-    virtual bool dispatch_message(IListener *listener, const Message &msg, bool subscribe_return_path) = 0;
-    ///retieve channel name used to detect cycles
-    /**
-     * @return name of channel which should not be subscribed. It is intended to detect
-     * cyclces. The bridge should check incoming channels for this string. If the
-     * string is found, the bridge knows, that it closes the cycle, so it should
-     * temporarily disable its bridging function
-     */
-    virtual std::string_view get_cycle_detect_channel_name() const = 0;
-    static std::shared_ptr<IBridgeAPI> from_bus(const std::shared_ptr<IBus> &bus) {
-        return std::static_pointer_cast<IBridgeAPI>(bus);
-    }
-
-    ///Clears path to the sender
-    /**
-     * @param lsn bridge that was responsible to deliver the message
-     * @param sender id of sender of the last message
-     * @param receiver id of receiver if the last message
-     * @retval true cleared
-     * @retval false no such path
-     */
-    virtual bool clear_return_path(IListener *lsn, ChannelID sender, ChannelID receiver) = 0;
-
-    ///calls on_update_channels on all monitors
-    /**
-     * This call can be performed asynchronously, or out of current scope. It
-     * only guarantees that this call happen as soon as possible.
-     */
-    virtual void force_update_channels() = 0;
-
-};
-
-///exception is thrown when cycle is detected during subscribtion
-class CycleDetectedException : public std::exception {
-public:
-    virtual const char *what() const noexcept override {return "zerobus: Cycle detected";}
-};
 
 namespace Msg {
 
@@ -125,13 +69,15 @@ public:
 
     ///Sends list of channels of current broker to the other side
     /**
+     * @param reset set true to enforce sending whole list ("replace");
+     *
      * Retrieves active list of channels from a connected broker and generates a list which is then
      * forwarded to the function on_channels_update(). It also detects changes in the list and skips
      * sending the list if no change detected
      *
-     * @note @b mt-safety: this method is not mt-safe
+     * @note @b mt-safety: this method is mt-safe.
      */
-    void send_mine_channels();
+    void send_mine_channels(bool reset = false) noexcept;
 
     ///Apply list of channels of other/remote broker
     /**
@@ -167,8 +113,14 @@ public:
         _ptr->unregister_monitor(mon);
     }
 
-    void set_filter(std::unique_ptr<Filter> &&flt);
-
+    ///set filter object
+    /**
+     * @param flt new filter object. Function stores previous filter object to the flt variable.
+     *
+     * @note this function is MT Safe when filter is set for the first time. If filter is removed
+     * or replace, you should somehow ensure, that filter is not used after removal.
+     */
+    void set_filter(std::unique_ptr<Filter> &flt);
 
     Bus get_bus() const {return Bus(_ptr);}
 
@@ -200,15 +152,13 @@ protected:
 
     std::shared_ptr<IBridgeAPI> _ptr;
 
-    std::vector<char> _char_buffer = {};
+    std::vector<char> _char_buffer = {};    ///buffer to store character data for persistent channels
     std::vector<ChannelID> _cur_channels = {};
     std::vector<ChannelID> _tmp = {};   ///< temporary buffer for channel operations
+    IBus::ChannelListStorage _bus_channels = {}; ///<temporary buffer to retrieve channels
     std::atomic<Filter *> _filter = {};
+    std::atomic<unsigned int> _send_mine_channels_lock = {0};
     bool _cycle_detected = false;
-
-
-
-
 
     static ChannelList persist_channel_list(const ChannelList &source, std::vector<ChannelID> &channels, std::vector<char> &characters);
 

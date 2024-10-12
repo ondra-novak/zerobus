@@ -64,7 +64,7 @@ void DirectBridge::connect() {
     if (!_connected) {
         _connected = true;
         on_send(_b1, Bridge::ChannelReset{});
-        on_send(_b1, Bridge::ChannelReset{});
+        on_send(_b2, Bridge::ChannelReset{});
         _b1.on_channels_update();
         _b2.on_channels_update();
     }
@@ -90,6 +90,22 @@ void DirectBridge::on_send(const Bridge &source, const Bridge::CloseGroup &g) {
 
 void DirectBridge::on_send(const Bridge &source,const Bridge::ClearPath &p) {
     select_other(source).receive(p);
+}
+
+AbstractBridge& DirectBridge::getBridge1() {
+    return _b1;
+}
+
+const AbstractBridge& DirectBridge::getBridge1() const {
+    return _b1;
+}
+
+AbstractBridge& DirectBridge::getBridge2() {
+    return _b2;
+}
+
+const AbstractBridge& DirectBridge::getBridge2() const {
+    return _b2;
 }
 
 void DirectBridge::on_send(const Bridge &source, const Bridge::AddToGroup &g) {

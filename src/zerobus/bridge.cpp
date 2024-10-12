@@ -28,6 +28,8 @@ void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
     if (_cur_channels.empty()) {
         if (lst.empty()) return;
         send(ChannelUpdate{lst, Operation::replace});
+    } else if (lst.size()<(_cur_channels.size()) >> 1) {
+        send(ChannelUpdate{lst, Operation::replace});
     } else {
 
 
@@ -48,12 +50,28 @@ void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
     persist_channel_list(lst, _cur_channels, _char_buffer);
 }
 
-void AbstractBridge::send_mine_channels() {
-    if (!_cycle_detected) {
-        _ptr->get_active_channels(this, [&](auto lst){process_mine_channels(lst);});
-    } else {
-        process_mine_channels({});
+void AbstractBridge::send_mine_channels(bool reset) noexcept {
+    bool rep;
+    do {
+        if (_send_mine_channels_lock.fetch_add(reset?1025:1) != 0) return;
+        if (reset) {
+            _cur_channels.clear();
+        }
+        if (!_cycle_detected) {
+            process_mine_channels(_ptr->get_active_channels(this, _bus_channels));
+        } else {
+            process_mine_channels({});
+        }
+        auto r = _send_mine_channels_lock.exchange(0);
+        auto r1 = r % 1024;
+        auto r2 = r / 1024;
+        rep = r1 > 1;
+        reset = r2 > 1;
     }
+    //repeat send_mine_channels if requested otherwise unlock
+    while (rep);
+
+
 }
 
 void AbstractBridge::receive(const ChannelUpdate &chan_up) {
@@ -66,22 +84,27 @@ void AbstractBridge::receive(const ChannelUpdate &chan_up) {
                     _cycle_detected = false;
                     cycle_detection(_cycle_detected);
                     send(ChannelReset{});
-                    _ptr->force_update_channels();
+                    send_mine_channels();
                     return;
                 }
             } else {
                 if (!_cycle_detected) {
                     _cycle_detected = true;
                     cycle_detection(_cycle_detected);
-                    _ptr->unsubscribe_all_channels(this);
+                    send_mine_channels();
+                    _ptr->unsubscribe_all_channels(this, false);
                     return;
                 }
             }
+        } else if (chan_up.op == Operation::replace && _cycle_detected) {
+            _cycle_detected = false;
+            cycle_detection(_cycle_detected);
+            send_mine_channels();
         }
     }
     if (_cycle_detected) return;
     switch (chan_up.op) {
-        case Operation::replace: _ptr->unsubscribe_all_channels(this);
+        case Operation::replace: _ptr->unsubscribe_all_channels(this, false);
                                  [[fallthrough]];
         case Operation::add: {
             auto flt = _filter.load();
@@ -103,10 +126,7 @@ void AbstractBridge::receive(const ChannelUpdate &chan_up) {
 }
 
 void AbstractBridge::receive(ChannelReset) {
-    if (_cur_channels.empty()) return; //no active channels - do nothing
-    //enforce refresh
-    _cur_channels.clear();
-    _ptr->force_update_channels();
+    send_mine_channels(true);
 }
 
 
@@ -125,7 +145,7 @@ void AbstractBridge::receive(const Message &msg) {
 
 
 
-void AbstractBridge::set_filter(std::unique_ptr<Filter> &&flt) {
+void AbstractBridge::set_filter(std::unique_ptr<Filter> &flt) {
     auto r = _filter.exchange(flt.release());
     flt.reset(r);
 }

@@ -1,6 +1,5 @@
 
 #include <zerobus/monitor.h>
-#include <zerobus/functionref.h>
 #include <zerobus/client.h>
 #include <zerobus/bridge_tcp_client.h>
 #include <zerobus/bridge_tcp_server.h>

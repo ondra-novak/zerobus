@@ -1,7 +1,6 @@
 #include "check.h"
 
 #include <zerobus/monitor.h>
-#include <zerobus/functionref.h>
 #include <zerobus/client.h>
 #include <zerobus/direct_bridge.h>
 #include <future>
@@ -16,10 +15,6 @@ class VerboseBridge: public DirectBridge {
 public:
 
     VerboseBridge(Bus b1, Bus b2): DirectBridge(std::move(b1),std::move(b2), false) {
-        connect();
-    }
-    VerboseBridge(Bus b1, Bus b2, std::unique_ptr<Filter> flt): DirectBridge(std::move(b1),std::move(b2), false) {
-        _b1.set_filter(std::move(flt));
         connect();
     }
 
@@ -184,8 +179,12 @@ void filter_channels() {
     auto slave1 = Bus::create();
     auto slave2 = Bus::create();
 
-    VerboseBridge br1(slave1, master, std::make_unique<TestFlt>());
-    VerboseBridge br2(master, slave2, std::make_unique<TestFlt>());
+    std::unique_ptr<Filter> flt1 = std::make_unique<TestFlt>();
+    std::unique_ptr<Filter> flt2 = std::make_unique<TestFlt>();
+    VerboseBridge br1(slave1, master);
+    VerboseBridge br2(master, slave2);
+    br1.getBridge1().set_filter(flt1);
+    br2.getBridge1().set_filter(flt2);
     std::string result;
 
     auto sn = ClientCallback(slave2, [&](AbstractClient &c, const Message &msg, bool){
@@ -216,8 +215,14 @@ void groups() {
     auto slave1 = Bus::create();
     auto slave2 = Bus::create();
 
-    VerboseBridge br1(slave1, master, std::make_unique<TestFlt>());
-    VerboseBridge br2(master, slave2, std::make_unique<TestFlt>());
+    std::unique_ptr<Filter> flt1 = std::make_unique<TestFlt>();
+    std::unique_ptr<Filter> flt2 = std::make_unique<TestFlt>();
+
+    VerboseBridge br1(slave1, master);
+    VerboseBridge br2(master, slave2);
+    br1.getBridge1().set_filter(flt1);
+    br2.getBridge1().set_filter(flt2);
+
     std::string result;
 
 
