@@ -206,7 +206,7 @@ bool Builder::build_t(const Message &message, Fn &&output) {
         std::uniform_int_distribution<> dist(0, 255);
 
         for (int i = 0; i < 4; ++i) {
-            masking_key[i] = dist(_rnd);
+            masking_key[i] = static_cast<char>(dist(_rnd));
             output(masking_key[i]);
         }
     } else {
@@ -547,8 +547,8 @@ std::string calculate_ws_accept(std::string_view key) {
 std::string generate_ws_key() {
     std::array<unsigned char, 16> buff;
     std::random_device rnd;
-    std::uniform_int_distribution<unsigned char> dist(0,255);
-    for (auto &c: buff) c = dist(rnd);
+    std::uniform_int_distribution<unsigned int> dist(0,255);
+    for (auto &c: buff) c = static_cast<unsigned char>(dist(rnd));
     return base64_encode(buff);
 
 }

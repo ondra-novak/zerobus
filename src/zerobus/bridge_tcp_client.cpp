@@ -161,7 +161,7 @@ std::string BridgeTCPClient::generate_session_id() {
     std::string s;
     s.resize(32);
     std::random_device rnd;
-    std::uniform_int_distribution<unsigned char> dist(0,valid_chars.size()-1);
+    std::uniform_int_distribution<unsigned int> dist(0,static_cast<unsigned int>(valid_chars.size()-1));
     for (auto &c: s) c = valid_chars[dist(rnd)];
     return s;
 }

@@ -39,7 +39,7 @@ public:
 
 
 
-    T *allocate(int n) {
+    T *allocate(std::size_t n) {
         if (n>1) {
             return reinterpret_cast<T *>(::operator new(sizeof(T)*n));
         }
@@ -56,7 +56,7 @@ public:
         return reinterpret_cast<T *>(p);
     }
 
-    void deallocate(T *ptr, int n) {
+    void deallocate(T *ptr, std::size_t n) {
         if (n>1) {
             ::operator delete(ptr);
             return;

@@ -1,4 +1,5 @@
 #include "direct_bridge.h"
+#include <stdexcept>
 
 namespace zerobus {
 

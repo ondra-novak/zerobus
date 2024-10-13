@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <mutex>
 #include <numeric>
+#include <iterator>
 
 namespace zerobus {
 

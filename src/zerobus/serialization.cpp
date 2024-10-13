@@ -32,7 +32,7 @@ Deserialization::Result Deserialization::operator ()(std::string_view msgtext) {
             auto sender = read_string(msgtext);
             auto channel = read_string(msgtext);
             auto content = read_string(msgtext);
-            return Result(std::in_place_type<Message>, sender, channel, content, cid);
+            return Result(std::in_place_type<Message>, sender, channel, content, static_cast<ConversationID>(cid));
 //            return Message(sender, channel, content, cid);
         }
         case MessageType::channels_replace:

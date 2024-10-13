@@ -1,6 +1,7 @@
 #pragma once
 
 #include "bridge.h"
+#include <iterator>
 #include <variant>
 
 namespace zerobus {
