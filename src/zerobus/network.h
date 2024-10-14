@@ -114,37 +114,9 @@ public:
     virtual void destroy(ConnHandle connection) = 0;
 
 
-    ///Run anything outside of the handle
-    /**
-     * @param connection handle of connection which currently executes a callback.
-     * Note that you must be inside of a callback, otherwise the function won't be called.
-     *
-     * @param fn a function which is executed right when execution leave current handle
-     * The execution is performed during safe context, there is no limit what you can do.
-     * You can close connection and/or release network context as the last reference. In
-     * such case, its thread (which is current thread for now) is detached and destroyed
-     * after this function returns.
-     */
-    virtual void yield(ConnHandle connection, std::function<void()> fn) = 0;
+    ///Enqueue an operation to dispatcher's thread
+    virtual void enqueue(std::function<void()> fn) = 0;
 
-    ///Performs synchronous wait on given atomic variable
-    /**
-     * @param connection associated connection
-     * @param var atomic variable to check
-     * @param block_value value of the atomic variable which causes blocking
-     * @param timeout timeout when unblock even if the condition is not fulfilled
-     * @retval true variable changed
-     * @retval false timeout reached, or connection has been destroyed
-     */
-    virtual bool sync_wait(ConnHandle connection, std::atomic<std::uintptr_t> &var, std::uintptr_t block_value, std::chrono::system_clock::time_point timeout) = 0;
-
-    ///Performs notify about the change of a atomic variable
-    /**
-     * @param connection associated connection
-     * @note this function is called automatically when and event is exited, so you don't need
-     * to call this in an event function
-     */
-    virtual void sync_notify(ConnHandle connection) = 0;
 
     ///sets timeout at given time
     /**

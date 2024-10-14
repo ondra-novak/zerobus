@@ -1,10 +1,18 @@
 #include "bridge_tcp_common.h"
+
+#include <condition_variable>
 #include <random>
 #include <variant>
 namespace zerobus {
 
 
 thread_local Serialization BridgeTCPCommon::_ser = {};
+
+static std::condition_variable &get_shared_cond_var() {
+    static std::condition_variable cond;
+    return cond;
+}
+
 
 BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,ConnHandle aux, bool client)
 :AbstractBridge(std::move(bus))
@@ -51,7 +59,7 @@ bool BridgeTCPCommon::after_send(std::size_t sz) {
     if (_output_msg_sp.empty()) return false;
 
     //write finished signal
-    ++_sig_write_finished;
+    get_shared_cond_var().notify_all();
     // increase position of output cursor
     _output_cursor += sz;
     // if we reached end, writing is done
@@ -154,9 +162,8 @@ bool BridgeTCPCommon::block_hwm(std::unique_lock<std::mutex> &lk) {
     if (get_view_to_send().size() > _hwm) {
         auto expires = std::chrono::system_clock::now()+std::chrono::milliseconds(_hwm_timeout);
         while (get_view_to_send().size() > _hwm) {
-            auto sig = _sig_write_finished.load();
-            lk.unlock();
-            if (!_ctx->sync_wait(_aux, _sig_write_finished, sig, expires)) return false;
+            if (get_shared_cond_var().wait_until(lk, expires) == std::cv_status::timeout)
+                return false;
         }
     }
     return true;
