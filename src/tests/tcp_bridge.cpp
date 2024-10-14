@@ -1,9 +1,9 @@
 #include "check.h"
 
-#include <zerobus/monitor.h>
 #include <zerobus/client.h>
 #include <zerobus/bridge_tcp_client.h>
 #include <zerobus/bridge_tcp_server.h>
+#include <zerobus/channel_notify.h>
 #include <future>
 
 using namespace zerobus;
@@ -29,12 +29,8 @@ void direct_bridge_simple() {
 
     sn.subscribe("reverse");
 
-    int cnt = 0;
-    while (!slave.is_channel("reverse") && cnt < 1000) {
-       std::this_thread::sleep_for(std::chrono::milliseconds(10));    //wait until route is propagated
-       ++cnt;
-    }
-    CHECK_LESS(cnt,1000);   //must not take too long
+    bool w = channel_wait_for(slave, "reverse", std::chrono::seconds(2));
+    CHECK(w);
 
 
     cn.send_message("reverse", "ahoj svete");
@@ -65,13 +61,8 @@ void two_hop_bridge() {
     });
 
     sn.subscribe("reverse");
-
-    int cnt = 0;
-    while (!slave1.is_channel("reverse") && cnt < 1000) {
-       std::this_thread::sleep_for(std::chrono::milliseconds(10));    //wait until route is propagated
-       ++cnt;
-    }
-    CHECK_LESS(cnt,1000);   //must not take too long
+    bool w = channel_wait_for(slave1, "reverse", std::chrono::seconds(2));
+    CHECK(w);
 
 
     cn.send_message("reverse", "ahoj svete");
