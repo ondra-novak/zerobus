@@ -36,6 +36,10 @@ struct CloseGroup {
     ChannelID group;
 };
 
+struct GroupEmpty {
+    ChannelID group;
+};
+
 struct AddToGroup {
     ChannelID group;
     ChannelID target;
@@ -56,6 +60,7 @@ public:
     using ClearPath = Msg::ClearPath;
     using CloseGroup = Msg::CloseGroup;
     using AddToGroup = Msg::AddToGroup;
+    using GroupEmpty = Msg::GroupEmpty;
 
     AbstractBridge(Bus bus);
 
@@ -103,6 +108,7 @@ public:
     void receive(const AddToGroup &msg);
 
     void receive(const Message &msg);
+    void receive(const GroupEmpty &msg);
 
 
 
@@ -130,6 +136,7 @@ public:
             zerobus::ChannelID receiver) noexcept override;
     virtual void on_add_to_group(zerobus::ChannelID group_name,
             zerobus::ChannelID target_id) noexcept override;
+    virtual void on_group_empty(ChannelID group_name) noexcept override;
 
 protected:
     ///override - send channels to other side
@@ -143,8 +150,8 @@ protected:
     virtual void send(const CloseGroup &) noexcept = 0;
     virtual void send(const AddToGroup &) noexcept = 0;
     virtual void send(const ClearPath &) noexcept = 0;
+    virtual void send(const GroupEmpty &) noexcept = 0;
 
-    virtual void process_mine_channels(ChannelList lst) noexcept;
 
     ///diagnostic override called when cycle detection state changed;
     virtual void cycle_detection(bool ) noexcept {};
@@ -164,6 +171,7 @@ protected:
 
     virtual void on_message(const Message &message, bool pm) noexcept override;
 
+    void process_mine_channels(ChannelList lst, bool reset) noexcept;
 
 
 };

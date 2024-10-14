@@ -12,18 +12,18 @@ int main() {
     auto bus = zerobus::Bus::create();      //now we have a bus instance
     //...
     //...
-    
-    //subscribe a listener    
-    bus.subscribe("channel_name", listener); 
-    
+
+    //subscribe a listener
+    bus.subscribe("channel_name", listener);
+
     //broadcast an anonymous message
-    bus.send_message(nullptr, "channel_name", "message");   
-    
+    bus.send_message(nullptr, "channel_name", "message");
+
      //broadcast a message and set listener as a sender
-    bus.send_message(listener, "other_channel", "message"); 
+    bus.send_message(listener, "other_channel", "message");
 ```
-    
-    
+
+
 ## Listener
 
 You need create listeners by implementing `IListener interface`
@@ -38,7 +38,7 @@ public:
         //...
     }
 };
-// NOTE - not complete declaration, see doxygen documentation  
+// NOTE - not complete declaration, see doxygen documentation
 ```
 
 The listener can receive messages through the method `on_message`. It receives a `Message` object and `pm` flag which specifies, whether the message is direct (personal) message (Personal Message), if this flag is false, the message was broadcasted to a subscribed channel
@@ -55,7 +55,7 @@ public:
 ```
 * **sender** - ID of sender, it can be used as **channel** name to post direct messages. Anonymous messages have "" as sender
 * **channel** - ID of channel where message was broadcasted. Personal messages have ID of received (this listener)
-* **content** - content of message. 
+* **content** - content of message.
 * **conversation** - Conversation ID (UINT), this is a free to use number to distinguish different conversations within a communication
 
 **NOTE** - routing informations (sender and channel) should be UTF-8 strings. The message content can be binary. The strings are transfered as octet-stream with no additional encoding. However the javascript client is able to work only with a binary content
@@ -68,13 +68,13 @@ public:
 
 int main() {
     auto bus = zerobus::Bus::create();      //now we have a bus instance
-    
+
     zerobus::ClientCallback client(bus, [&](zerobus::AbstractClient &c, const zerobus::Message &msg, bool pm) {
             //c - this client
             //msg - received message
             //pm - whether personal message
     });
-    //....   
+    //....
 }
 
 ```
@@ -105,11 +105,11 @@ int main() {
 }
 ```
 
-You only need to keep the above instances to keep connection active. This connects two applications into single bus, where node (listener) from one application can communicate with node (listener) in other application. 
+You only need to keep the above instances to keep connection active. This connects two applications into single bus, where node (listener) from one application can communicate with node (listener) in other application.
 
-There is no limit how many connections are connected to the server. There is also no limits how many bridges can extends the bus instance in each application. 
+There is no limit how many connections are connected to the server. There is also no limits how many bridges can extends the bus instance in each application.
 
-**NOTE**: **Avoid cycles!** The `zerobus` is able to detect cycle and solve such situation somehow, but such solution is never ideal. The `zerobus` is not ready fo cycles is connection topology. 
+**NOTE**: **Avoid cycles!** The `zerobus` is able to detect cycle and solve such situation somehow, but such solution is never ideal. The `zerobus` is not ready fo cycles is connection topology.
 
 ### Examples of topologies
 
@@ -163,7 +163,7 @@ Kaskade
                │                            │
                │                            │
                │                            │
-               │                            │   
+               │                            │
                ▼                            ▼
           ┌────┴─────┐                 ┌────┴─────┐
           │  client1 │                 │  client2 │
@@ -216,10 +216,10 @@ Typical use is for RPC. The server listens for RPC requests on the selected chan
             c.send_message(msg.get_sender(), msg.get_content(), msg.get_conversation());
         });
         rpc_ping.subscribe("ping"); //subscribe to channel "ping"
-    
+
      //...
-     //...   
-        
+     //...
+
     }
 ```
 
@@ -252,7 +252,7 @@ bus.send_message(owner, group_name, message)
 
 In order to obtain a `recipient_id`, a request for a future recipient must first be received, as with the RPC. You use `sender_id` as recipient id. The initial request can be like request to a subscribe into group. The owner can for example check authorization of such request
 
-To close group, the owner need to call 
+To close group, the owner need to call
 
 ```
 bus.close_group(owner, group_name);
@@ -266,7 +266,7 @@ bus.unsubscribe(recipient, group_name)
 
 ## Before client is destroyed
 
-Every client should unsubscribe from all channels. This is performed by function 
+Every client should unsubscribe from all channels. This is performed by function
 
 ```
 bus.unsubscribe_all(client)
@@ -277,11 +277,11 @@ The `AbstractClient` and `ClientCallback` do this in destructor automatically
 
 ## The protocol
 
-The `zerobus` uses **WebSocket** as underlying protocol. It uses `binary` messages that are exchanged between server and client. 
+The `zerobus` uses **WebSocket** as underlying protocol. It uses `binary` messages that are exchanged between server and client.
 
  - each message has the first byte as **message type**
  - following bytes depends on message type
- 
+
 there are several message types defined
 
 
@@ -289,19 +289,19 @@ there are several message types defined
 
 A message sent from one node to other
 
-Contains: 
+Contains:
 - conversation_id: uint
 - sender: string
 - channel: string
 - content: string
 
 (see `serialization rules` below)
-    
+
 ### Message type 0xFE - Channels (replace)
 
 List of channels listened by other side. Replace any existing subscribtion by new list
 
-Contains: 
+Contains:
 - count of channels: uint
 - channels...: array of string
 
@@ -312,7 +312,7 @@ Contains:
 
 List of channels listened by other side. Add new channels to existing list
 
-Contains: 
+Contains:
 - count of channels: uint
 - channels...: array of string
 
@@ -323,7 +323,7 @@ Contains:
 
 List of channels listened by other side. Unsubscribe specified list of channels
 
-Contains: 
+Contains:
 - count of channels: uint
 - channels...: array of string
 
@@ -345,18 +345,18 @@ This message has no extra arguments
    |                    |
 ```
 
-### Message type 0xFA - Clear Path 
+### Message type 0xFA - Clear Path
 
 Sent from recepient's node when recipient is no longer available (has been destroyed)
 
-Contains: 
+Contains:
 - sender id: string
 - recepient id: string
 
 (see `serialization rules` below)
-    
 
-### Message type 0xF9 - Add to group 
+
+### Message type 0xF9 - Add to group
 
 Sent from group owner to recepient's node when recepient is added to a multicast group
 
@@ -370,6 +370,17 @@ Contains:
 ### Message type 0xF8 - Close group
 
 Sent from group owner to whole group when group is closed
+
+Contains:
+- group name : string
+
+(see `serialization rules` below)
+
+### Message type 0xF7 - Group empty
+
+Sent to group owner when last member left the group. The bridge is often
+owner of forwarded groups, so when last member left the group, the bridge
+itself can close forwarding and unsubscribe self from the upstream group.
 
 Contains:
 - group name : string
@@ -395,7 +406,7 @@ Example: 12345h -> 41 23 45
 - length: UINT
 - content: bytes[length]
 
-Example: `Hello` -> 05 'H' 'e' 'l' 'l' 'o' 
+Example: `Hello` -> 05 'H' 'e' 'l' 'l' 'o'
 
 #### serialization or multiple arguments and arrays
 
@@ -412,22 +423,22 @@ The filter can specify filter rules for incoming and outgoing messages.
 ```
 class Filter {
 public:
-    
+
     //incoming messages
-    virtual bool on_incoming(ChannelID id); 
-    
+    virtual bool on_incoming(ChannelID id);
+
     //outgoing messages
-    virtual bool on_outgoing(ChannelID id); 
-    
+    virtual bool on_outgoing(ChannelID id);
+
     //incoming add to group message
     virtual bool on_incoming_add_to_group(ChannelID group_name, ChannelID target_id);
-    
+
     //outgoing add to group message
     virtual bool on_outgoing_add_to_group(ChannelID group_name, ChannelID target_id);
-    
+
     //incoming close group message
     virtual bool on_incoming_close_group(ChannelID group_name);
-    
+
     //outgoing close group message
     virtual bool on_outgoing_close_group(ChannelID group_name);
 

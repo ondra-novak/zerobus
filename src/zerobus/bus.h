@@ -145,6 +145,10 @@ public:
         _ptr->close_group(owner, group_name);
     }
 
+    ///close all groups owned by given owner
+    /**
+     * @param owner owner
+     */
     virtual void close_all_groups(IListener *owner) {
         _ptr->close_all_groups(owner);
     }
@@ -173,6 +177,14 @@ public:
         return _ptr->get_random_channel_name(prefix);
     }
 
+    ///Tests, whether channel exists
+    /**
+     * @param id channel name
+     * @retval true channel exists
+     * @retval false channel not found
+     *
+     * @note this includes groups as well. You cannot check for mailbox id
+     */
     bool is_channel(ChannelID id) const {
         return _ptr->is_channel(id);
     }

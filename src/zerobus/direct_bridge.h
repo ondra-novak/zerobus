@@ -44,6 +44,8 @@ protected:
         virtual void send(const CloseGroup &msg) noexcept override;
         virtual void send(const ClearPath &msg) noexcept override;
         virtual void send(const AddToGroup &) noexcept override;
+        virtual void send(const AbstractBridge::GroupEmpty&) noexcept override;
+
         virtual void cycle_detection(bool state) noexcept override;
 
     protected:
@@ -66,6 +68,7 @@ protected:
     virtual void on_send(const Bridge &source, const Bridge::CloseGroup &msg);
     virtual void on_send(const Bridge &source, const Bridge::ClearPath &msg);
     virtual void on_send(const Bridge &source, const Bridge::AddToGroup &msg);
+    virtual void on_send(const Bridge &source, const Bridge::GroupEmpty &msg);
     virtual void cycle_detection(const Bridge &, bool ) noexcept {}
 
 };

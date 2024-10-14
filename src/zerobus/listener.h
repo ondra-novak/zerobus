@@ -67,6 +67,16 @@ public:
      */
     virtual void on_close_group(ChannelID group_name) noexcept= 0;
 
+    ///called when last member of group left the group, so group is empty now
+    /**
+     * Members can leave group by calling unsubscribe with group name or
+     * by unsubscribe_all. If this happen with last member, this event is called.
+     * Because there cannot be groups without members, this also means, that group
+     * has been erased.
+     *
+     * @param group_name name of group
+     */
+    virtual void on_group_empty(ChannelID group_name) noexcept = 0;
 };
 
 

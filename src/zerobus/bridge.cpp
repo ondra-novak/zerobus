@@ -15,7 +15,7 @@ AbstractBridge::AbstractBridge(Bus bus)
 
 
 
-void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
+void AbstractBridge::process_mine_channels(ChannelList lst, bool reset) noexcept {
 
     auto flt = _filter.load();
     if (flt) {
@@ -26,18 +26,11 @@ void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
         lst = ChannelList(lst.begin(), e);
     }
 
-    if (_cur_channels.empty()) {
-        if (lst.empty()) return;
-        send(ChannelUpdate{lst, Operation::replace});
-    } else if (lst.size()<(_cur_channels.size()) >> 1) {
+    if (_cur_channels.empty() || reset) {
+        if (!lst.empty()) send(ChannelUpdate{lst, Operation::replace});
+    } else if (lst.empty()) {
         send(ChannelUpdate{lst, Operation::replace});
     } else {
-
-
-//        std::sort(lst.begin(), lst.end());
-//      no sort needed, it is already sorted
-
-
         std::set_difference(lst.begin(), lst.end(),
                 _cur_channels.begin(), _cur_channels.end(), std::back_inserter(_tmp));
         if (!_tmp.empty()) send(ChannelUpdate{_tmp, Operation::add});
@@ -52,20 +45,19 @@ void AbstractBridge::process_mine_channels(ChannelList lst) noexcept {
 }
 
 void AbstractBridge::send_mine_channels(bool reset) noexcept {
+    constexpr unsigned int reset_flag  = 1 << 10;
+    constexpr unsigned int lock_flag = 1;
     bool rep;
     do {
-        if (_send_mine_channels_lock.fetch_add(reset?1025:1) != 0) return;
-        if (reset) {
-            _cur_channels.clear();
-        }
+        if (_send_mine_channels_lock.fetch_add(lock_flag + (reset?reset_flag:0)) != 0) return;
         if (!_cycle_detected) {
-            process_mine_channels(_ptr->get_active_channels(this, _bus_channels));
+            process_mine_channels(_ptr->get_active_channels(this, _bus_channels), reset);
         } else {
-            process_mine_channels({});
+            process_mine_channels({}, reset);
         }
         auto r = _send_mine_channels_lock.exchange(0);
-        auto r1 = r % 1024;
-        auto r2 = r / 1024;
+        auto r1 = r & (reset_flag-1);
+        auto r2 = r / (reset_flag);
         rep = r1 > 1;
         reset = r2 > 1;
     }
@@ -155,6 +147,9 @@ void AbstractBridge::receive(const ClearPath &cp) {
     _ptr->clear_return_path(this, cp.sender, cp.receiver);
 }
 
+void AbstractBridge::on_group_empty(ChannelID group_name) noexcept {
+    send(Msg::GroupEmpty{group_name});
+}
 
 void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
     auto flt = _filter.load();
@@ -233,6 +228,10 @@ AbstractBridge::~AbstractBridge() {
     _ptr->unsubscribe_all(this);
     auto flt = _filter.load();
     delete flt;
+}
+
+void AbstractBridge::receive(const GroupEmpty &msg) {
+    _ptr->unsubscribe(this, msg.group);
 }
 
 }

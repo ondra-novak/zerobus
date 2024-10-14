@@ -53,7 +53,6 @@ protected:
     std::size_t _hwm_timeout = 1000;    //1 second
     bool _destroyed = false;
 
-    std::atomic<std::uint64_t> _sig_write_finished = {};
 
     char _input_buffer[input_buffer_size];
 
@@ -72,6 +71,7 @@ protected:
     virtual void send(const ChannelUpdate &msg) noexcept override;
     virtual void send(const ClearPath &) noexcept override;
     virtual void send(const AddToGroup &) noexcept override;
+    virtual void send(const GroupEmpty &) noexcept override;
     void read_from_connection();
 
     bool after_send(std::size_t sz);
@@ -112,6 +112,7 @@ protected:
     virtual void receive(const Deserialization::UserMsg &) {}
 
     bool block_hwm(std::unique_lock<std::mutex> &lk);
+
 
 };
 
