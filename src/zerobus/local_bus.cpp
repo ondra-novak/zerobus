@@ -117,6 +117,8 @@ void LocalBus::unsubcribe_private(IListener *listener) {
     erase_mailbox_lk(listener);
 }
 
+
+
 void LocalBus::unsubscribe_all_channels(IListener *listener, bool and_groups) {
     std::lock_guard _(*this);
     if (unsubscribe_all_channels_lk(listener, and_groups)) {
@@ -128,7 +130,8 @@ bool LocalBus::unsubscribe_all_channels_lk(IListener *listener, bool and_groups)
     bool ech = false;
     for (auto iter = _channels.begin(); iter != _channels.end();) {
         auto &ch = *iter->second;
-        if ((and_groups || ch.get_owner() == nullptr) && ch.remove_listener(listener)) {
+        auto owner = ch.get_owner();
+        if ((and_groups || owner == nullptr) && ch.remove_listener(listener)) {
             iter = _channels.erase(iter);
             ech = true;
         } else {
@@ -333,6 +336,7 @@ void LocalBus::close_group(IListener *owner, ChannelID group_name) {
     auto citer = _channels.find(group_name);
     if (citer != _channels.end()) {
         if (citer->second->get_owner() == owner) {
+            citer->second->set_owner(nullptr);
             _channels.erase(citer);
             _channels_change = true;
         }
@@ -417,6 +421,7 @@ LocalBus::ChanDef::~ChanDef() {
     enum_listeners([&](IListener *lsn){
         lsn->on_close_group(_name);
     });
+    if (_owner) _owner->on_group_empty(_name); //clear group
 }
 
 void LocalBus::ChanDef::lock() {
@@ -559,11 +564,12 @@ bool LocalBus::clear_return_path(IListener *lsn, ChannelID sender, ChannelID rec
         }
         return true;
     }
-    auto iter = _mailboxes_by_name.find(sender);
-    if (iter != _mailboxes_by_name.end()) {
-        iter->second->on_clear_path(sender, receiver);
+    {
+        auto iter = _mailboxes_by_name.find(sender);
+        if (iter != _mailboxes_by_name.end()) {
+            iter->second->on_clear_path(sender, receiver);
+        }
     }
-
 
     return false;
 }

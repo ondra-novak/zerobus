@@ -19,6 +19,8 @@ enum class MessageType: std::uint8_t {
         add_to_group = 0xF9,
         ///close group
         close_group = 0xF8,
+        ///close group
+        group_empty = 0xF7,
 };
 
 Deserialization::Result Deserialization::operator ()(std::string_view msgtext) {
@@ -67,6 +69,10 @@ Deserialization::Result Deserialization::operator ()(std::string_view msgtext) {
         }
         case MessageType::channels_reset: {
             return Msg::ChannelReset{};
+        }
+        case MessageType::group_empty: {
+            auto group = read_string(msgtext);
+            return Msg::GroupEmpty{group};
         }
 
     }
@@ -155,6 +161,11 @@ std::string_view Deserialization::read_string(std::string_view &msgtext) {
 
 std::string_view Serialization::finish_write() const {
     return {_buffer.data(), _buffer.size()};
+}
+
+std::string_view Serialization::operator ()(const Msg::GroupEmpty &msg) {
+    compose_message(start_write(), MessageType::group_empty, msg.group);
+    return finish_write();
 }
 
 }

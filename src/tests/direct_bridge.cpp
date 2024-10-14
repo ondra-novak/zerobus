@@ -28,20 +28,34 @@ protected:
         auto ptrt = bt.get_bus().get_handle().get();
         auto idt = (reinterpret_cast<std::uintptr_t>(ptrt) / 8) & 0xFFF;
         std::cout << std::setw(4) << ids << "->" << std::setw(4) << idt << ": ";
+        std::cout << "+-";
+        for (int i = 1; i < level; ++i) std::cout << '-';
         (std::cout << ... << args);
         std::cout << std::endl;
     }
 
+    static int level;
+public:
+    void lock() {
+        level++;
+    }
+    void unlock() {
+        level--;
+    }
+protected:
     virtual void on_send(const Bridge &source, const Bridge::ChannelReset &r) override {
+        std::lock_guard _(*this);
         log(source, "RESET");
         DirectBridge::on_send(source, std::move(r));
     }
     virtual void on_send(const DirectBridge::Bridge &source, const Message &msg) override {
+        std::lock_guard _(*this);
         log(source, "MESSAGE: sender: ", msg.get_sender(), " channel: ", msg.get_channel(),
                 " content: ", msg.get_content(), " conversation: ", msg.get_conversation());
         DirectBridge::on_send(source, msg);
     }
     virtual void on_send(const DirectBridge::Bridge &source, const Bridge::ChannelUpdate &r) override {
+        std::lock_guard _(*this);
         std::ostringstream chlist;
         char sep = ' ';
         for (auto c: r.lst) {
@@ -53,23 +67,34 @@ protected:
         DirectBridge::on_send(source, std::move(r));
     }
     virtual void on_send(const Bridge &source, const Bridge::ClearPath &r) override {
+        std::lock_guard _(*this);
         log(source, "CLEAR_PATH: ",r.sender," -> ",r.receiver);
         DirectBridge::on_send(source, std::move(r));
     }
     virtual void cycle_detection(const DirectBridge::Bridge &source, bool state) noexcept override{
+        std::lock_guard _(*this);
         if (state) log(source, "CYCLE DETECTED!");
         else log(source, "CYCLE cleared");
     }
     virtual void on_send(const Bridge &source, const Bridge::CloseGroup &g) override {
+        std::lock_guard _(*this);
         log(source, "CLOSE_GROUP: ",g.group);
         DirectBridge::on_send(source, std::move(g));
     }
     virtual void on_send(const Bridge &source, const Bridge::AddToGroup &g) override {
+        std::lock_guard _(*this);
         log(source, "ADD_TO_GROUP: ",g.target," -> ",g.group);
         DirectBridge::on_send(source, std::move(g));
-
+    }
+    virtual void on_send(const Bridge &source, const Bridge::GroupEmpty &g) override {
+        std::lock_guard _(*this);
+        log(source, "GROUP_EMPTY: ",g.group);
+        DirectBridge::on_send(source, std::move(g));
     }
 };
+
+
+int VerboseBridge::level = 0;
 
 void direct_bridge_simple() {
     std::cout << __FUNCTION__ << std::endl;
@@ -245,12 +270,41 @@ void groups() {
 
 }
 
+void clear_path_group_test() {
+    std::cout << __FUNCTION__ << std::endl;
+    auto master = Bus::create();
+    auto slave1 = Bus::create();
+    auto slave2 = Bus::create();
+    std::string result;
+
+    VerboseBridge br1(slave1, master);
+    VerboseBridge br2(slave2, master);
+    auto sn = ClientCallback(slave1, [&](AbstractClient &c, const Message &msg, bool){
+        std::string s ( msg.get_content());
+        std::reverse(s.begin(), s.end());
+        c.add_to_group("gr", msg.get_sender());
+        c.send_message("gr", s, msg.get_conversation());
+    });
+    auto cn= ClientCallback(slave2, [&](AbstractClient &, const Message &msg, bool){
+        result=std::string(msg.get_content());
+    });
+
+    sn.subscribe("reverse");
+    cn.send_message("reverse", "ahoj svete");
+    CHECK_EQUAL(result, "etevs joha");
+    cn.unsubscribe_all();
+    bool r1 = sn.send_message("gr", "aaa");
+    CHECK(!r1);
+}
+
 int main() {
     direct_bridge_simple();
     direct_bridge_cycle();
     clear_path_test();
     filter_channels();
     groups();
-
+    clear_path_group_test();
 }
+
+
 

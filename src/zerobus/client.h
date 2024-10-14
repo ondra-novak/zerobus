@@ -113,6 +113,7 @@ public:
     virtual void on_close_group(ChannelID ) noexcept override {}
     virtual void on_clear_path(ChannelID , ChannelID ) noexcept override {}
     virtual void on_add_to_group(ChannelID , ChannelID ) noexcept override {}
+    virtual void on_group_empty(ChannelID ) noexcept override {}
 
 protected:
     Fn _fn;
