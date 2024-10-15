@@ -603,11 +603,11 @@ void NetContextWin::accept(ConnHandle ident, IServer *server) {
 
 template<typename Fn>
 void NetContextWin::SocketInfo::invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn) {
-    ++_cbprotect;
+    ++_cb_call_cntr;
     lk.unlock();
     fn();
     lk.lock();
-    if (--_cbprotect == 0) {
+    if (--_cb_call_cntr == 0) {
         cond.notify_all();
     }
 }
@@ -622,7 +622,7 @@ void NetContextWin::destroy(ConnHandle ident) {
     std::unique_lock lk(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
-    _cond.wait(lk, [&]{return ctx->_cbprotect == 0;}); //wait for finishing all callbacks
+    _cond.wait(lk, [&]{return ctx->_cb_call_cntr == 0;}); //wait for finishing all callbacks
     closesocket(ctx->_socket);
     if (ctx->_accept_cb) closesocket(ctx->_accept_socket);
     _tmset.erase({ctx->_tmtp, ident});

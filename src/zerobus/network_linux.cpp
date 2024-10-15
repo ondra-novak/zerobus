@@ -46,6 +46,20 @@ std::string sockaddr_to_string(const sockaddr* addr) {
 }
 
 
+static void default_log_function(std::string_view, std::source_location ) {
+    //empty
+}
+
+NetContext::NetContext(ErrorCallback ecb)
+    :_ecb(std::move(ecb))
+    ,_tmset(TimeoutSet::allocator_type(&_pool))
+ {
+}
+
+NetContext::NetContext(): NetContext(&default_log_function) {}
+
+
+
 std::chrono::system_clock::time_point NetContext::get_epoll_timeout_lk() {
     if (!_tmset.empty()) {
         return _tmset.begin()->first;
@@ -54,17 +68,17 @@ std::chrono::system_clock::time_point NetContext::get_epoll_timeout_lk() {
 }
 
 NetContext::SocketInfo *NetContext::alloc_socket_lk() {
-    if (_first_free_socket_ident >= _sockets.size()) {
-        _sockets.resize(_first_free_socket_ident+1);
-        _sockets.back()._ident = _sockets.size();
-    }
-    SocketInfo *nfo = &_sockets[_first_free_socket_ident];
-    std::swap(nfo->_ident,_first_free_socket_ident);
-    return nfo;
+    while (_first_free_socket_ident >= _sockets.size()) {
+       _sockets.push_back(std::make_unique<SocketInfo>());
+       _sockets.back()->_ident = static_cast<ConnHandle>(_sockets.size());
+   }
+   SocketInfo *nfo = _sockets[_first_free_socket_ident].get();
+   std::swap(nfo->_ident,_first_free_socket_ident);
+   return nfo;
 }
 
 void NetContext::free_socket_lk(ConnHandle id) {
-    SocketInfo *nfo = &_sockets[id];
+    SocketInfo *nfo = _sockets[id].get();
     std::destroy_at(nfo);
     std::construct_at(nfo);
     nfo->_ident = _first_free_socket_ident;
@@ -73,7 +87,7 @@ void NetContext::free_socket_lk(ConnHandle id) {
 
 NetContext::SocketInfo *NetContext::socket_by_ident(ConnHandle id) {
     if (id >= _sockets.size()) return nullptr;
-    auto r = &_sockets[id];
+    auto r = _sockets[id].get();
     return r->_ident == id?r:nullptr;
 }
 
@@ -162,7 +176,7 @@ std::size_t NetContext::send(ConnHandle ident, std::string_view data) {
             if (e == EWOULDBLOCK || e == EPIPE || e == ECONNRESET) {
                 s = 0;
             } else {
-                throw std::system_error(e, std::system_category(), "recv failed");
+                report_error(std::system_error(e, std::system_category()), "send");
             }
         }
         return s;
@@ -267,7 +281,7 @@ void NetContext::destroy(ConnHandle ident) {
     std::unique_lock lk(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
-    _cond.wait(lk, [&]{return ctx->_cbprotect == 0;}); //wait for finishing all callbacks
+    _cond.wait(lk, [&]{return ctx->_cb_call_cntr == 0;}); //wait for finishing all callbacks
     _epoll.del(ctx->_socket);
     ::close(ctx->_socket);
     _tmset.erase({ctx->_tmtp, ident});
@@ -396,11 +410,11 @@ void NetContext::clear_timeout(ConnHandle ident) {
 
 template<typename Fn>
 void NetContext::SocketInfo::invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn) {
-    ++_cbprotect;
+    ++_cb_call_cntr;
     lk.unlock();
     fn();
     lk.lock();
-    if (--_cbprotect == 0) {
+    if (--_cb_call_cntr == 0) {
         cond.notify_all();
     }
 }
@@ -424,11 +438,14 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRe
                 _epoll.add(n,0, nfo->_ident);;
 
                 ctx->invoke_cb(lk, _cond, [&]{if (srv) srv->on_accept(nfo->_ident, sockaddr_to_string(saddr));});
+            } else {
+                report_error(std::system_error(errno, std::system_category()), "accept");
             }
         }
         if (ctx->_recv_cb) {
             int r = recv(ctx->_socket, ctx->_recv_buffer.data(), ctx->_recv_buffer.size(), MSG_DONTWAIT);
             if (r < 0) {
+                report_error(std::system_error(errno, std::system_category()), "receive");
                  r = 0; //any error - close connection
             }
             auto peer = std::exchange(ctx->_recv_cb, nullptr);
@@ -463,7 +480,7 @@ void NetContext::apply_flags_lk(SocketInfo *ctx) noexcept {
 }
 
 
-std::shared_ptr<INetContext> make_context(int iothreads) {
+std::shared_ptr<INetContext> make_network_context(int iothreads) {
     auto p = std::make_shared<NetThreadedContext>(iothreads);
     p->start();
     return p;
@@ -488,6 +505,17 @@ void NetThreadedContext::start() {
         t = run_thread();
     }
 }
+
+template <typename E>
+void NetContext::report_error(E exception, std::string_view action, std::source_location loc)
+{
+    try {
+        throw exception;
+    } catch (...){
+        _ecb(action, loc);
+    }
+}
+
 
 
 

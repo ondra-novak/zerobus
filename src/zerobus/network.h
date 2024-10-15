@@ -110,12 +110,18 @@ public:
      * @note the function blocks, if there are active callbacks. You must finish
      * all callbacks to finish this functions
      *
-     * If you need to destroy from callback, you need to call destroy_on_return();
+     * If you need to destroy from callback, you need to use enqueue() to move
+     * execution out of callback.
      */
     virtual void destroy(ConnHandle connection) = 0;
 
 
     ///Enqueue an operation to dispatcher's thread
+    /** Enqueued operation is not considered as callback call, so it
+     * is good context to perform destructions
+     *
+     * @param fn function to enqueue
+     */
     virtual void enqueue(std::function<void()> fn) = 0;
 
 
@@ -136,6 +142,9 @@ class IPeerServerCommon {
 public:
     virtual ~IPeerServerCommon() = default;
     ///called when time specified by set_timeout() is reached
+    /**
+     * @note this call is marked as callback function. You cannot call destroy() from it
+     */
     virtual void on_timeout() noexcept= 0;
 };
 
@@ -148,12 +157,17 @@ public:
      * When this function called, you can call send() which will be able to send
      * a data to the connection. You should then use ready_to_send() if you
      * need to write more data.
+     *
+     * @note this call is marked as callback function. You cannot call destroy() from it
      */
     virtual void clear_to_send() noexcept= 0;
 
     ///called by context, if receive is complete,
     /**
      * @param data received data. If the string is empty, then connection has been closed
+     *
+     * @note this call is marked as callback function. You cannot call destroy() from it
+     *
      */
     virtual void receive_complete(std::string_view data) noexcept= 0;
 };
@@ -165,6 +179,8 @@ public:
     ///called when new connection is accepted
     /**
      * You need to create peer and set the returned value as aux
+     *
+     * @note this call is marked as callback function. You cannot call destroy() from it
      */
     virtual void on_accept(ConnHandle connection, std::string peer_addr) noexcept= 0;
 };
@@ -173,7 +189,7 @@ public:
 /**
  * @param string contains name of operation during error reported
  * @param source_location location of error in library source code
- * 
+ *
  * @note The actual error description is carried as a current exception. Use std::current_exception() to
  * retrieve exception to analyze what happened
  */

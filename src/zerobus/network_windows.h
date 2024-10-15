@@ -1,5 +1,4 @@
 #include "network.h"
-#include "cluster_alloc.h"
 #include <condition_variable>
 #include <memory>
 #include <memory_resource>
@@ -51,12 +50,12 @@ protected:
         ConnHandle _ident = static_cast<ConnHandle>(-1);    //this connection handle
         SOCKET _socket = INVALID_SOCKET;                    //associated socket
         std::span<char> _recv_buffer;                       //reference to receiving buffer
-        std::chrono::system_clock::time_point _tmtp = {};   //current scheduled timeout - function set_timeout() 
+        std::chrono::system_clock::time_point _tmtp = {};   //current scheduled timeout - function set_timeout()
         IPeer *_recv_cb = {};                               //callback object for recv
-        IPeer *_send_cb = {};                               //callback object for send 
+        IPeer *_send_cb = {};                               //callback object for send
         IServer *_accept_cb = {};                           //callback object for accept
         IPeerServerCommon *_timeout_cb = {};                //callback object for timeout
-        int _cbprotect = {};                                //count of currently active callbacks (must be 0 to destroy)
+        int _cb_call_cntr = {};                                //count of currently active callbacks (must be 0 to destroy)
         bool _clear_to_send = false;                        //sending is allowed
         bool _error = false;                                //error reported and connection is lost
         bool _connecting = false;                            //socket is connecting (connect)
@@ -118,7 +117,7 @@ protected:
 
 
 class Win32ErrorCategory: public std::error_category {
-public:   
+public:
     virtual ~Win32ErrorCategory() noexcept = default;
     virtual const char* name() const noexcept override;
     virtual std::string message(int _Errval) const override;

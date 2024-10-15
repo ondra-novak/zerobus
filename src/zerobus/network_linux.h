@@ -4,8 +4,10 @@
 #include "cluster_alloc.h"
 #include <condition_variable>
 #include <memory>
+#include <memory_resource>
 #include <thread>
 #include <set>
+#include <source_location>
 
 
 namespace zerobus {
@@ -18,6 +20,8 @@ class NetContext: public INetContext, public std::enable_shared_from_this<NetCon
 public:
 
 
+    explicit NetContext(ErrorCallback ecb);
+    NetContext();
     virtual ConnHandle peer_connect(std::string address) override;
     virtual void reconnect(ConnHandle ident, std::string address_port) override;
     ///start receiving data
@@ -53,7 +57,7 @@ protected:
     using MyEPoll = EPoll<ConnHandle>;
     using WaitRes = MyEPoll::WaitRes;
     using TimeoutInfo = std::pair<std::chrono::system_clock::time_point, ConnHandle>;
-    using TimeoutSet = std::set<TimeoutInfo,  std::less<TimeoutInfo>, ClusterAlloc<TimeoutInfo> >;
+    using TimeoutSet = std::set<TimeoutInfo,  std::less<TimeoutInfo>, std::pmr::polymorphic_allocator<TimeoutInfo> >;
 
 
     struct SocketInfo {
@@ -67,7 +71,7 @@ protected:
         IPeer *_send_cb = {};
         IServer *_accept_cb = {};
         IPeerServerCommon *_timeout_cb = {};
-        int _cbprotect = {};
+        int _cb_call_cntr = {};
 
         ///invoke one of callbacks
         /**
@@ -79,12 +83,14 @@ protected:
         void invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn);
     };
 
-    using SocketList = std::vector<SocketInfo>;
+    using SocketList = std::vector<std::unique_ptr<SocketInfo>  >;
 
     mutable std::mutex _mx;
+    ErrorCallback _ecb;
     MyEPoll _epoll = {};
     SocketList _sockets = {};
     ConnHandle _first_free_socket_ident = 0;
+    std::pmr::unsynchronized_pool_resource _pool;
     TimeoutSet _tmset;
     std::condition_variable _cond;
 
@@ -96,6 +102,7 @@ protected:
     SocketInfo *alloc_socket_lk();
     void free_socket_lk(ConnHandle id);
     SocketInfo *socket_by_ident(ConnHandle id);
+    template<typename E> void report_error(E exception, std::string_view action, std::source_location loc = std::source_location::current());
 
 
     void process_event_lk(std::unique_lock<std::mutex> &lk, const  WaitRes &e);
@@ -117,7 +124,7 @@ protected:
 };
 
 
-std::shared_ptr<INetContext> make_context(int iothreads);
+
 
 
 
