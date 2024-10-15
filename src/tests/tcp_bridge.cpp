@@ -2,7 +2,7 @@
 #define _CRTDBG_MAP_ALLOC
 #include <stdlib.h>
 #include <crtdbg.h>
-#endif 
+#endif
 #include "check.h"
 
 #include <zerobus/client.h>
@@ -10,6 +10,7 @@
 #include <zerobus/bridge_tcp_server.h>
 #include <zerobus/channel_notify.h>
 #include <future>
+#include <thread>
 
 using namespace zerobus;
 
