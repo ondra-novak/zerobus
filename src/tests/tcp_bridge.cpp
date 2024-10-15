@@ -145,6 +145,51 @@ void detect_cycle_test() {
     CHECK_EQUAL(r, "etevs joha");
 }
 
+class ReconnectClientTest: public FlagRef, public BridgeTCPClient {
+public:
+    template<typename F, typename ... Args>
+    ReconnectClientTest(F &f, Args ... args):FlagRef(f), BridgeTCPClient(args...) {}
+    virtual void lost_connection() {
+        BridgeTCPClient::lost_connection();
+        flag.store(true);
+        flag.notify_all();
+    }
+};
+
+void test_reconnect() {
+    std::cout << __FUNCTION__ << std::endl;
+    auto master = Bus::create();
+    auto slave = Bus::create();
+    std::atomic<bool> flag = {false};
+
+    std::promise<std::string> result;
+
+    ReconnectClientTest client(flag, master, "localhost:12121");
+
+    auto sn = ClientCallback(master, [&](AbstractClient &c, const Message &msg, bool){
+        std::string s ( msg.get_content());
+        std::reverse(s.begin(), s.end());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
+    });
+    auto cn= ClientCallback(slave, [&](AbstractClient &, const Message &msg, bool){
+        result.set_value(std::string(msg.get_content()));
+    });
+
+    sn.subscribe("reverse");
+
+    flag.wait(false);
+
+    BridgeTCPServer server(slave, "localhost:12121");
+
+    bool w = channel_wait_for(slave, "reverse", std::chrono::hours(2));
+    CHECK(w);
+
+
+    cn.send_message("reverse", "ahoj svete");
+    auto r = result.get_future().get();
+    CHECK_EQUAL(r, "etevs joha");
+
+}
 
 int main() {
 #ifdef _WIN32
@@ -166,5 +211,5 @@ int main() {
     direct_bridge_simple();
     two_hop_bridge();
     detect_cycle_test();
-
+    test_reconnect();
 }

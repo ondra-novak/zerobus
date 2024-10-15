@@ -48,6 +48,9 @@ void DirectBridge::Bridge::send(const Message &msg) noexcept {
     _owner.on_send(*this, msg);
 }
 
+void DirectBridge::Bridge::send(const GroupReset &msg) noexcept {
+    _owner.on_send(*this, msg);
+}
 
 
 void DirectBridge::Bridge::send(const ChannelReset &r) noexcept {
@@ -85,6 +88,11 @@ void DirectBridge::Bridge::send(const ClearPath &msg) noexcept {
     _owner.on_send(*this, msg);
 }
 void DirectBridge::on_send(const Bridge &source, const Bridge::GroupEmpty &msg) {
+    select_other(source).receive(msg);
+}
+
+void DirectBridge::on_send(const Bridge &source, const Bridge::GroupReset &msg)
+{
     select_other(source).receive(msg);
 }
 

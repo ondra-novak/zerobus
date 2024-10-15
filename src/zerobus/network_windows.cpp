@@ -256,7 +256,7 @@ void setSocketNonBlocking(SOCKET sock) {
     std::ignore = ioctlsocket(sock, FIONBIO, &mode);
 }
 
-ConnHandle NetContextWin::connect_peer(std::string address_port) {
+SOCKET NetContextWin::connect_peer(std::string address_port, DWORD key, OVERLAPPED *ovr) {
     size_t port_pos = address_port.rfind(':');
     if (port_pos == std::string::npos) {
         throw std::invalid_argument("Invalid address format (missing port)");
@@ -281,7 +281,6 @@ ConnHandle NetContextWin::connect_peer(std::string address_port) {
         throw std::invalid_argument("Invalid address or port: " + std::string(gai_strerror(status)));
     }
 
-    auto ctx = alloc_socket_lk();
 
     SOCKET sockfd =  INVALID_SOCKET;
     for (struct addrinfo* p = res; p != nullptr; p = p->ai_next) {
@@ -297,9 +296,9 @@ ConnHandle NetContextWin::connect_peer(std::string address_port) {
         }
 
         setSocketNonBlocking(sockfd);
-        CreateIoCompletionPort(reinterpret_cast<HANDLE>(sockfd), _completion_port, ctx->_ident+key_offset, 0);
-        ZeroMemory(&ctx->_send_ovr, sizeof(OVERLAPPED));
-        if (!mswsock.ConnectEx(sockfd,p->ai_addr, static_cast<int>(p->ai_addrlen), NULL, 0, NULL, &ctx->_send_ovr)) {
+        CreateIoCompletionPort(reinterpret_cast<HANDLE>(sockfd), _completion_port, key, 0);
+        ZeroMemory(ovr, sizeof(OVERLAPPED));
+        if (!mswsock.ConnectEx(sockfd,p->ai_addr, static_cast<int>(p->ai_addrlen), NULL, 0, NULL, ovr)) {
             auto e = WSAGetLastError();
             if (e != ERROR_IO_PENDING) {
                 closesocket(sockfd);
@@ -313,14 +312,10 @@ ConnHandle NetContextWin::connect_peer(std::string address_port) {
     freeaddrinfo(res);
 
     if (sockfd ==  INVALID_SOCKET) {
-        free_socket_lk(ctx->_ident);
         throw std::system_error(errno, std::generic_category(), "Failed to connect");
     }
+    return sockfd;
 
-    ctx->_clear_to_send = false;    
-    ctx->_socket = sockfd;
-    ctx->_connecting = true;
-    return ctx->_ident;
 }
 
 
@@ -342,19 +337,45 @@ NetContextWin::SocketInfo *NetContextWin::socket_by_ident(ConnHandle id) {
 
 ConnHandle NetContextWin::peer_connect(std::string address_port)  {
     std::lock_guard _(_mx);
-    return connect_peer(address_port);
+    auto ctx = alloc_socket_lk();
+    try {
+        SOCKET s =  connect_peer(std::move(address_port),ctx->_ident+key_offset,&ctx->_send_ovr);
+        ctx->_socket = s;
+        ctx->_connecting = true;
+        return ctx->_ident;
+    } catch (...) {
+        free_socket_lk(ctx->_ident);
+        throw;
+    }
 }
 
  void NetContextWin::reconnect(ConnHandle ident, std::string address_port) {
-     std::lock_guard _(_mx);
-     auto ctx = socket_by_ident(ident);
-     if (!ctx) return;
-     auto newh = connect_peer(std::move(address_port));
-     auto newctx = socket_by_ident(newh);
-     closesocket(ctx->_socket);
-     ctx->_socket = newctx->_socket;
-     ctx->_connecting = true;
-     ctx->_clear_to_send = false;
+    ConnHandle oldh;
+        {
+        std::lock_guard _(_mx);
+        auto nctx = alloc_socket_lk();
+        try {
+            SOCKET s = connect_peer(std::move(address_port),ident+key_offset,&nctx->_send_ovr);
+            nctx->_socket = s;
+            nctx->_connecting = true;
+        } catch (...) {
+            free_socket_lk(nctx->_ident);
+            throw;
+        }
+        oldh = nctx->_ident;
+        auto octx = socket_by_ident(ident);
+        if (octx) {
+            std::swap(_sockets[oldh], _sockets[ident]);
+            nctx->_connecting = true;
+            nctx->_ident = ident;
+            octx->_ident = oldh;
+            nctx->_timeout_cb = octx->_timeout_cb;
+            nctx->_tmtp = octx->_tmtp;
+        }
+    }
+     enqueue([this,oldh]{
+        destroy(oldh);
+     });
  }
 
 
@@ -411,6 +432,7 @@ void NetContextWin::run_worker(std::stop_token tkn)  {
                 x();
                 if (tkn.stop_requested()) return;
             }
+            actions.clear();
             lk.lock();
             std::swap(actions, _actions);
         }
@@ -698,6 +720,7 @@ static std::string GetErrorMessage(int _Errval) {
     out.resize(needsz);
     WideCharToMultiByte(CP_UTF8,0,s,static_cast<int>(sz),out.data(),static_cast<int>(out.size()),NULL,NULL);
     LocalFree(s);
+    out.append("(Error code=").append(std::to_string(_Errval)).append(")");
     return out;
 }
 

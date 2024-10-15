@@ -8,18 +8,14 @@ BridgeTCPClient::BridgeTCPClient(Bus bus, std::shared_ptr<INetContext> ctx, std:
 ,_address(std::move(address))
 ,_session_id(generate_session_id())
 {
-    register_monitor(this);
-    init();
-
-
+     register_monitor(this);
+    _ctx->ready_to_send(_aux, this);
 }
 
 BridgeTCPClient::BridgeTCPClient(Bus bus, std::string address)
 :BridgeTCPClient(std::move(bus), make_network_context(1), std::move(address)) {
 
 }
-
-
 
 BridgeTCPClient::~BridgeTCPClient() {
     unregister_monitor(this);
@@ -59,7 +55,7 @@ void BridgeTCPClient::lost_connection() {
         _ctx->reconnect(_aux, get_address_from_url(_address));
         _output_cursor = 0; //last output incomplete message will be send again
         _handshake = true;
-        BridgeTCPCommon::init();
+        _ctx->ready_to_send(_aux, this);
     } catch (...) {
         _timeout_reconnect = true;
         _ctx->set_timeout(_aux, std::chrono::system_clock::now()+std::chrono::seconds(2), this);
@@ -77,7 +73,10 @@ void BridgeTCPClient::clear_to_send() noexcept {
         if (!send_handshake()) {
           //magic should fit to the buffer whole
             lost_connection();
+        } else {
+            read_from_connection();
         }
+         
     } else {
         BridgeTCPCommon::clear_to_send();
     }
@@ -126,6 +125,7 @@ void BridgeTCPClient::receive_complete(std::string_view data) noexcept {
             } else {
                 BridgeTCPCommon::receive_complete(rest);
             }
+            send_mine_channels();
         } else {
             lost_connection();
         }

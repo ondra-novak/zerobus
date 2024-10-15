@@ -1,6 +1,7 @@
 const zerobus = (function(){
 
     function generateUID(prefix) {
+      // Zkombinování aktuálního času s náhodným číslem a konverze na řetězec
       return prefix+Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
     }
 
@@ -10,6 +11,8 @@ const zerobus = (function(){
             this.name = "PureVirtualError";
         }
     }
+
+
     const MessageType = {
         message: 0xFF,               // a message
         channels_replace: 0xFE,       // list of channels
@@ -22,6 +25,8 @@ const zerobus = (function(){
         group_empty: 0xF7,
         group_reset: 0xF6,
     };
+
+
     class Message {
         #sender;
         #channel;

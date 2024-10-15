@@ -72,6 +72,7 @@ protected:
     virtual void send(const ClearPath &) noexcept override;
     virtual void send(const AddToGroup &) noexcept override;
     virtual void send(const GroupEmpty &) noexcept override;
+    virtual void send(const GroupReset &) noexcept override;
     void read_from_connection();
 
     bool after_send(std::size_t sz);

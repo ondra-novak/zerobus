@@ -145,6 +145,7 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
                 x();
                 if (tkn.stop_requested()) return;
             }
+            actions.clear();
             lk.lock();
             std::swap(actions, _actions);
         }

@@ -10,9 +10,9 @@ BridgeTCPServer::BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std:
         , _path(BridgeTCPCommon::get_path_from_url(address_port))
         ,_custom_page([this](std::string_view uri)->CustomPage {
             if (uri == _path) {
-                return {400,"Bad request", "text/plain", "Please, use websocket connection"};
+                return {400,"Bad request", "text/plain", std::string_view("Please, use websocket connection")};
             } else {
-                return {404,"Not found", "text/html", "<html><body><h1>404 Not found</h1></body></html>"};
+                return {404,"Not found", "text/html", std::string_view("<html><body><h1>404 Not found</h1></body></html>")};
             }
         })
         {
@@ -94,6 +94,7 @@ BridgeTCPServer::Peer::~Peer() {
 
 void BridgeTCPServer::Peer::initial_handshake() {
     Peer::send(Msg::ChannelReset{});
+    Peer::send(Msg::GroupReset{});
     Peer::send_mine_channels();
     _owner.on_peer_connect(*this);
 }
@@ -242,12 +243,14 @@ bool BridgeTCPServer::Peer::websocket_handshake(std::string_view &data) {
         if (icmp(rs.method, "GET")) {
             auto cp = _owner._custom_page(rs.uri);
 
+            std::string_view content = std::visit([](const auto &x)->std::string_view{return x;}, cp.content);
+
             resp << "HTTP/1.1 "<<cp.status_code << " " << cp.status_message << "\r\n"
                     "Server: zerobus\r\n"
                     "Connection: close\r\n"
                     "Content-Type: " << cp.content_type << "\r\n"
-                    "Content-Length: " << cp.content.size() << "\r\n"
-                    "\r\n" << cp.content;
+                    "Content-Length: " << content.size() << "\r\n"
+                    "\r\n" << content;
 
         } else {
             resp << "HTTP/1.1 405 Method not allowed\r\n"
@@ -308,7 +311,7 @@ bool BridgeTCPServer::handover(Peer *peer, ConnHandle handle, std::string_view s
     auto iter = std::find_if(_peers.begin(), _peers.end(), [&](const auto &p) {
         return p->get_session_id() == session_id;
     });
-    if (iter != _peers.end() && iter->get() != peer) {
+    if (iter != _peers.end() && iter->get() != peer && !iter->get()->is_lost()) {
         (*iter)->reconnect(handle);
         return true;
     }

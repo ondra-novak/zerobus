@@ -38,7 +38,7 @@ public:
         int status_code;
         std::string status_message;
         std::string content_type;
-        std::string content;
+        std::variant<std::string_view, const char *, std::string> content;
     };
 
     ///sets callback which is called when non-websocket request is received

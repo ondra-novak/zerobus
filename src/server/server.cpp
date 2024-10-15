@@ -1,4 +1,8 @@
 
+#include <iostream>
+#include "embedded_js.h"
+
+
 #include <zerobus/monitor.h>
 #include <zerobus/client.h>
 #include <zerobus/bridge_tcp_client.h>
@@ -9,34 +13,20 @@
 
 using namespace zerobus;
 
+
+
 BridgeTCPServer::CustomPage load_page(std::string_view path) {
     if (!path.empty()) {
         path = path.substr(1);
-        if (path.find('/') == path.npos) {
-            if (path.empty()) path = "index.html";
-            std::ifstream f((std::string(path)));
-            if (!!f) {
-                std::stringstream buffer;
-                std::string_view ctx = "application/octet-stream";
-                buffer << f.rdbuf();
-                if (path.size() > 5 && path.substr(path.size()-5) == ".html") {
-                    ctx = "text/html";
-                }else if (path.size() > 3 && path.substr(path.size()-3) == ".js") {
-                    ctx = "text/javascript";
-                }
-                return {
-                    200, "OK", std::string(ctx), buffer.str()
-                };
-            } else {
-                return {
-                    404, "Not found", "text/plain","not found"
-                };
-            }
+        if (path.empty()) {
+            return {200,"Ok","text/html", client_embedded_html};
+        } else if (path == "client.js") {
+            return {200,"Ok","text/javascript", client_embedded_js};
+        } else {
+            return {404, "Not found", "text/plain","not found"};
         }
-    }
-    return {
-        403, "Forbidden", "text/plain",""
-    };
+    }    
+    return {403, "Forbidden", "text/plain",""};
 }
 
 

@@ -233,5 +233,8 @@ AbstractBridge::~AbstractBridge() {
 void AbstractBridge::receive(const GroupEmpty &msg) {
     _ptr->unsubscribe(this, msg.group);
 }
+void AbstractBridge::receive(const GroupReset &) {
+    _ptr->close_all_groups(this);
+}
 
 }

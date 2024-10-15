@@ -93,7 +93,7 @@ protected:
     SocketInfo *alloc_socket_lk();
     void free_socket_lk(ConnHandle id);
     SocketInfo *socket_by_ident(ConnHandle id);
-    ConnHandle connect_peer(std::string address_port);
+    SOCKET connect_peer(std::string address_port, DWORD key, OVERLAPPED *ovr);
     void run_worker(std::stop_token tkn) ;
     DWORD get_completion_timeout_lk();
     std::chrono::system_clock::time_point get_completion_timeout_tp_lk();

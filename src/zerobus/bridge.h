@@ -28,6 +28,7 @@ struct ChannelUpdate {
 };
 
 struct ChannelReset {};
+struct GroupReset {};
 struct ClearPath {
     ChannelID sender;
     ChannelID receiver;
@@ -61,6 +62,7 @@ public:
     using CloseGroup = Msg::CloseGroup;
     using AddToGroup = Msg::AddToGroup;
     using GroupEmpty = Msg::GroupEmpty;
+    using GroupReset = Msg::GroupReset;
 
     AbstractBridge(Bus bus);
 
@@ -109,6 +111,7 @@ public:
 
     void receive(const Message &msg);
     void receive(const GroupEmpty &msg);
+    void receive(const GroupReset &msg);
 
 
 
@@ -151,6 +154,7 @@ protected:
     virtual void send(const AddToGroup &) noexcept = 0;
     virtual void send(const ClearPath &) noexcept = 0;
     virtual void send(const GroupEmpty &) noexcept = 0;
+    virtual void send(const GroupReset &) noexcept = 0;
 
 
     ///diagnostic override called when cycle detection state changed;

@@ -23,7 +23,7 @@ Iter to_base62(std::uint64_t x, Iter iter, int digits = 1) {
     if (x>0 || digits>0) {
         iter = to_base62(x/62, iter, digits-1);
         auto rm = x%62;
-        char c = rm < 10?'0'+rm:rm<36?'A'+rm-10:'a'+rm-36;
+        char c = static_cast<char>(rm < 10?'0'+rm:rm<36?'A'+rm-10:'a'+rm-36);
         *iter = c;
         ++iter;
         return iter;
@@ -529,9 +529,9 @@ void LocalBus::BackPathStorage::store_path(const ChannelID &chan, IListener *lsn
         if (lsn == nullptr) return;
         mvector<char> name(chan.begin(), chan.end(), mvector<char>::allocator_type(_entries.get_allocator()));
         std::string_view key(name.data(), name.size());
-        auto iter = _entries.emplace(key, BackPathItem{
+        auto iter2 = _entries.emplace(key, BackPathItem{
             nullptr, nullptr, std::move(name), lsn}).first;
-        iter->second.promote(_root);
+        iter2->second.promote(_root);
         while (_entries.size() > _limit) {
             auto *l = _last;
             l->remove();

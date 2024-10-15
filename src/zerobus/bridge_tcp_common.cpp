@@ -283,6 +283,7 @@ void BridgeTCPCommon::send(const AddToGroup &m) noexcept {
 void BridgeTCPCommon::send(const GroupEmpty &m) noexcept {
     output_message(_ser(m));
 }
-
-
+void BridgeTCPCommon::send(const GroupReset &m) noexcept{
+    output_message(_ser(m));
+}
 }
