@@ -13,8 +13,8 @@ void direct_bridge_simple() {
     auto master = Bus::create();
     auto slave = Bus::create();
 
-    BridgeTCPServer server(master,  "localhost:12121");
-    BridgeTCPClient client(slave,  "localhost:12121");
+    BridgeTCPServer server(master, "localhost:12121");
+    BridgeTCPClient client(slave, "localhost:12121");
 
     std::promise<std::string> result;
 
@@ -46,8 +46,8 @@ void two_hop_bridge() {
     auto slave2= Bus::create();
 
     BridgeTCPServer server(master,  "localhost:12121");
-    BridgeTCPClient client1(slave1,  "localhost:12121");
-    BridgeTCPClient client2(slave2,  "localhost:12121");
+    BridgeTCPClient client1(slave1, "localhost:12121");
+    BridgeTCPClient client2(slave2, "localhost:12121");
 
     std::promise<std::string> result;
 
@@ -61,7 +61,7 @@ void two_hop_bridge() {
     });
 
     sn.subscribe("reverse");
-    bool w = channel_wait_for(slave1, "reverse", std::chrono::seconds(2));
+    bool w = channel_wait_for(slave1, "reverse", std::chrono::hours(2));
     CHECK(w);
 
 

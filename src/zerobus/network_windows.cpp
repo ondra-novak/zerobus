@@ -69,17 +69,43 @@ public:
 
 static MsWSock mswsock;
 
+static void default_log_function(std::string_view action, std::source_location loc) {
+    std::ostringstream ostr;
+    auto tp = std::time(nullptr);
+    std::tm ts;
+    gmtime_s(&ts, &tp);
+    std::string msg;
+    try {
+        throw;
+    } catch (const std::exception &e) {
+        msg = e.what();
+    } catch (...) {
+        msg = "Unknown error";
+    }
+    ostr << std::put_time(&ts, "%F %T") << " " << loc.file_name() << "(" << loc.line() << ") :" << msg << " [" << action << "]";
+    auto w = ostr.view();
+    int needsz = MultiByteToWideChar(CP_UTF8, 0, w.data(), static_cast<int>(w.size()),0,0);
+    std::wstring wmsg;
+    wmsg.resize(needsz);
+    MultiByteToWideChar(CP_UTF8, 0, w.data(), static_cast<int>(w.size()), wmsg.data(), needsz);
+    OutputDebugStringW(wmsg.c_str());
+}
 
 
 
-std::shared_ptr<INetContext> make_context(int iothreads) {
-    auto p = std::make_shared<NetThreadedContext>(iothreads);
+std::shared_ptr<INetContext> make_network_context(int iothreads) {
+    return make_network_context(default_log_function, iothreads);
+}
+
+std::shared_ptr<INetContext> make_network_context(ErrorCallback ecb, int iothreads) {
+    auto p = std::make_shared<NetThreadedContext>(std::move(ecb), iothreads);
     p->start();
     return p;
 }
 
-NetThreadedContext::NetThreadedContext(int threads)
-    :_threads(threads)
+NetThreadedContext::NetThreadedContext(ErrorCallback ecb, int threads)
+    :NetContextWin(std::move(ecb))
+    ,_threads(threads)
 {
 }
 
@@ -127,7 +153,7 @@ std::string sockaddr_to_string(const sockaddr* addr) {
 }
 
 
-ConnHandle NetContext::create_server(std::string address_port) {
+ConnHandle NetContextWin::create_server(std::string address_port) {
     size_t port_pos = address_port.rfind(':');
     if (port_pos == std::string::npos) {
         throw std::invalid_argument("Invalid address format (missing port)");
@@ -201,22 +227,27 @@ ConnHandle NetContext::create_server(std::string address_port) {
 }
 
 
-NetContext::SocketInfo *NetContext::alloc_socket_lk() {
-    if (_first_free_socket_ident >= _sockets.size()) {
-        _sockets.resize(_first_free_socket_ident+1);
-        _sockets.back()._ident = static_cast<ConnHandle>(_sockets.size());
+NetContextWin::SocketInfo *NetContextWin::alloc_socket_lk() {
+     while (_first_free_socket_ident >= _sockets.size()) {
+        _sockets.push_back(std::make_unique<SocketInfo>());        
+        _sockets.back()->_ident = static_cast<ConnHandle>(_sockets.size());
     }
-    SocketInfo *nfo = &_sockets[_first_free_socket_ident];
+    SocketInfo *nfo = _sockets[_first_free_socket_ident].get();
     std::swap(nfo->_ident,_first_free_socket_ident);
     return nfo;
 }
 
 
-NetContext::NetContext() {
+NetContextWin::NetContextWin(ErrorCallback ecb)
+    :_ecb(std::move(ecb))
+    ,_tmset(TimeoutSet::allocator_type(&_pool))
+ {
     _completion_port = CreateIoCompletionPort(INVALID_HANDLE_VALUE, NULL, 0, 0);    
 }
 
-NetContext::~NetContext() {
+NetContextWin::NetContextWin(): NetContextWin(default_log_function) {}
+
+NetContextWin::~NetContextWin() {
     CloseHandle(_completion_port);
 }
 
@@ -225,7 +256,7 @@ void setSocketNonBlocking(SOCKET sock) {
     std::ignore = ioctlsocket(sock, FIONBIO, &mode);
 }
 
-ConnHandle NetContext::connect_peer(std::string address_port) {
+ConnHandle NetContextWin::connect_peer(std::string address_port) {
     size_t port_pos = address_port.rfind(':');
     if (port_pos == std::string::npos) {
         throw std::invalid_argument("Invalid address format (missing port)");
@@ -267,8 +298,8 @@ ConnHandle NetContext::connect_peer(std::string address_port) {
 
         setSocketNonBlocking(sockfd);
         CreateIoCompletionPort(reinterpret_cast<HANDLE>(sockfd), _completion_port, ctx->_ident+key_offset, 0);
-        ZeroMemory(&ctx->_send_ovl, sizeof(ctx->_send_ovl));
-        if (!mswsock.ConnectEx(sockfd,p->ai_addr, static_cast<int>(p->ai_addrlen), NULL, 0, NULL, &ctx->_send_ovl)) {
+        ZeroMemory(&ctx->_send_ovr, sizeof(OVERLAPPED));
+        if (!mswsock.ConnectEx(sockfd,p->ai_addr, static_cast<int>(p->ai_addrlen), NULL, 0, NULL, &ctx->_send_ovr)) {
             auto e = WSAGetLastError();
             if (e != ERROR_IO_PENDING) {
                 closesocket(sockfd);
@@ -288,12 +319,13 @@ ConnHandle NetContext::connect_peer(std::string address_port) {
 
     ctx->_clear_to_send = false;    
     ctx->_socket = sockfd;
+    ctx->_connecting = true;
     return ctx->_ident;
 }
 
 
-void NetContext::free_socket_lk(ConnHandle id) {
-    SocketInfo *nfo = &_sockets[id];
+void NetContextWin::free_socket_lk(ConnHandle id) {
+    SocketInfo *nfo = _sockets[id].get();
     std::destroy_at(nfo);
     std::construct_at(nfo);
     nfo->_ident = _first_free_socket_ident;
@@ -301,19 +333,19 @@ void NetContext::free_socket_lk(ConnHandle id) {
 }
 
 
-NetContext::SocketInfo *NetContext::socket_by_ident(ConnHandle id) {
+NetContextWin::SocketInfo *NetContextWin::socket_by_ident(ConnHandle id) {
     if (id >= _sockets.size()) return nullptr;
-    auto r = &_sockets[id];
+    auto r = _sockets[id].get();
     return r->_ident == id?r:nullptr;
 }
 
 
-ConnHandle NetContext::peer_connect(std::string address_port)  {
+ConnHandle NetContextWin::peer_connect(std::string address_port)  {
     std::lock_guard _(_mx);
     return connect_peer(address_port);
 }
 
- void NetContext::reconnect(ConnHandle ident, std::string address_port) {
+ void NetContextWin::reconnect(ConnHandle ident, std::string address_port) {
      std::lock_guard _(_mx);
      auto ctx = socket_by_ident(ident);
      if (!ctx) return;
@@ -327,20 +359,19 @@ ConnHandle NetContext::peer_connect(std::string address_port)  {
 
 
 
-void NetContext::run_worker(std::stop_token tkn)  {
+void NetContextWin::run_worker(std::stop_token tkn)  {
     std::unique_lock lk(_mx);
     std::stop_callback __(tkn, [&]{
         PostQueuedCompletionStatus(_completion_port,0,key_exit,NULL);
     });
 
-    std::vector<std::function<void()> > yield_queue;
-    yield_queue.reserve(4);   
+    std::vector<std::function<void()> > actions;
 
     while (!tkn.stop_requested()) {
         DWORD timeout = INFINITE;
         DWORD transfered;
         ULONG_PTR key;
-        LPOVERLAPPED ovr;
+        LPOVERLAPPED ovr = NULL;
 
         bool timeout_thread = _need_timeout_thread;
         _need_timeout_thread = false;
@@ -352,6 +383,7 @@ void NetContext::run_worker(std::stop_token tkn)  {
         BOOL res;
         res = GetQueuedCompletionStatus(_completion_port,&transfered, &key, &ovr, timeout);    
         lk.lock();
+        _need_timeout_thread = true;
         if (!res && ovr == NULL) { //timeout
             auto now = std::chrono::system_clock::now();
             while (!_tmset.empty()) {
@@ -363,39 +395,43 @@ void NetContext::run_worker(std::stop_token tkn)  {
                 if (nfo && nfo->_timeout_cb) {
                     auto cb = std::exchange(nfo->_timeout_cb, nullptr);
                     nfo->invoke_cb(lk, _cond, [&]{cb->on_timeout();});
-                    if (nfo->_yield) {
-                        yield_queue.push_back(std::move(nfo->_yield));
-                    }
                 }
             }
         } else {
             if (key >= key_offset) {
                 auto err = GetLastError();
                 if (res) err = 0;
-                process_event_lk(lk, static_cast<ConnHandle>(key-key_offset), transfered, ovr, err, yield_queue);
+                process_event_lk(lk, static_cast<ConnHandle>(key-key_offset), transfered, ovr, err);
             }
         }
-        lk.unlock();
-        for (auto &x: yield_queue) x();
-        yield_queue.clear();
-        if (tkn.stop_requested()) break;
-        lk.lock();
+        std::swap(actions, _actions);
+        while (!actions.empty()) {
+            lk.unlock();
+            for (auto &x: actions) {
+                x();
+                if (tkn.stop_requested()) return;
+            }
+            lk.lock();
+            std::swap(actions, _actions);
+        }
     }
 
 }
 
-DWORD NetContext::get_completion_timeout_lk()
+DWORD NetContextWin::get_completion_timeout_lk()
 {
     auto tp = get_completion_timeout_tp_lk();
     if (tp == std::chrono::system_clock::time_point::max()) return INFINITE;
-    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tp - std::chrono::system_clock::now()).count();
+    auto now = std::chrono::system_clock::now();
+    if (tp < now) return 0;
+    auto diff = std::chrono::duration_cast<std::chrono::milliseconds>(tp - now).count();
     if (diff > static_cast<decltype(diff)>(std::numeric_limits<DWORD>::max())) {
         return INFINITE-1;
     } 
     return static_cast<DWORD>(diff);
 }
 
-std::chrono::system_clock::time_point NetContext::get_completion_timeout_tp_lk()
+std::chrono::system_clock::time_point NetContextWin::get_completion_timeout_tp_lk()
 {
     if (!_tmset.empty()) {
         return _tmset.begin()->first;
@@ -403,26 +439,29 @@ std::chrono::system_clock::time_point NetContext::get_completion_timeout_tp_lk()
     return std::chrono::system_clock::time_point::max();
 }
 
-void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandle h,  DWORD transfered, OVERLAPPED *ovr, DWORD error,  std::vector<std::function<void()> > &yield_queue) {
+void NetContextWin::process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandle h,  DWORD transfered, OVERLAPPED *ovr, DWORD error) {
     auto ctx = socket_by_ident(h);
     if (!ctx) return;    
-    if (ovr == &ctx->_send_ovl) {   //POLLOUT
-        if (ctx->_connecting)  {  //CONNECT
+    if (ovr == &ctx->_send_ovr) {   //POLLOUT
+        if (ctx->_connecting)  {  //CONNECT            
             ctx->_connecting = false;
+            if (error) report_error(Win32Error(error), "connect");
             ctx->_error = error != 0;
             ctx->_clear_to_send = true;
             auto srv = std::exchange(ctx->_send_cb, nullptr);
             ctx->invoke_cb(lk, _cond, [&]{if (srv) srv->clear_to_send();});
         } else {    //SEND
-            if (error == 0 && transfered < ctx->_aux_to_send) {
-                auto e = std::move(ctx->_aux_buffer+transfered, ctx->_aux_buffer+ctx->_aux_to_send, ctx->_aux_buffer);
-                ctx->_aux_to_send = static_cast<DWORD>(std::distance(ctx->_aux_buffer, e));
-                WSABUF bf = {ctx->_aux_to_send, ctx->_aux_buffer};                
-                int r = WSASend(ctx->_socket, &bf, 1, NULL, 0, &ctx->_send_ovl, NULL);
+            if (error == 0 && transfered < ctx->_to_send) {
+                auto e = std::move(ctx->_aux_buffer+transfered, ctx->_aux_buffer+ctx->_to_send, ctx->_aux_buffer);
+                ctx->_to_send = static_cast<DWORD>(std::distance(ctx->_aux_buffer, e));
+                WSABUF bf = {ctx->_to_send, ctx->_aux_buffer};                
+                int r = WSASend(ctx->_socket, &bf, 1, NULL, 0, &ctx->_send_ovr, NULL);
                 if (r != 0) {
                     error = WSAGetLastError();
-                    if (error != WSA_IO_PENDING) {
+                    if (error == WSA_IO_PENDING) {
                         error = 0;
+                    } else {
+                        report_error(Win32Error(error), "send");
                     }
                 }
             }
@@ -432,8 +471,8 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandle h
             if (peer) ctx->invoke_cb(lk, _cond, [&]{peer->clear_to_send();});
         } 
     }
-    if (ovr == &ctx->_recv_ovl) {   //POLLIN
-        if (ctx->_accept_cb) {
+    if (ovr == &ctx->_recv_ovr) {   //POLLIN
+        if (ctx->_accept_socket != INVALID_SOCKET) {
             auto srv = std::exchange(ctx->_accept_cb, nullptr);
             if (error == 0) {
                 sockaddr_storage *local, *remote;
@@ -443,121 +482,127 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandle h
                 
                 auto adrname = sockaddr_to_string(reinterpret_cast<sockaddr *>(remote));
                 SocketInfo *nfo = alloc_socket_lk();
-                ctx = socket_by_ident(h); //reallocation of socket list, we must find ctx again
                 nfo->_socket = ctx->_accept_socket;
+                ctx->_accept_socket = INVALID_SOCKET;
+                setSocketNonBlocking(nfo->_socket);
+                nfo->_clear_to_send = true;
                 CreateIoCompletionPort(reinterpret_cast<HANDLE>(nfo->_socket), _completion_port, nfo->_ident+key_offset, 0);
-                ctx->invoke_cb(lk, _cond, [&]{if (srv) srv->on_accept(nfo->_ident, adrname);});
+                ctx->invoke_cb(lk, _cond, [&]{if (srv) srv->on_accept(nfo->_ident, adrname);});                                
             } else {
-                ctx->invoke_cb(lk, _cond, [&]{if (srv) srv->on_accept(static_cast<ConnHandle>(-1), {});});
+                report_error(Win32Error(error), "accept");
             }
         } else {
-            if (error) transfered = 0;            
+            if (error) {
+                report_error(Win32Error(error), "recv");
+                transfered = 0;            
+            }
             auto srv = std::exchange(ctx->_recv_cb, nullptr);
             ctx->invoke_cb(lk, _cond, [&]{if (srv) srv->receive_complete({ctx->_recv_buffer.data(),transfered});});
         }
     }
-    if (ctx->_yield) {
-        yield_queue.push_back(std::move(ctx->_yield));
-    }
 
 }
 
-void NetContext::yield(ConnHandle connection, std::function<void()> fn) {
-    std::lock_guard _(_mx);
-    auto ctx = socket_by_ident(connection);
-    if (ctx) ctx->_yield = std::move(fn);
-}
-
-bool NetContext::sync_wait(ConnHandle connection,
-        std::atomic<std::uintptr_t> &var, std::uintptr_t block_value,
-        std::chrono::system_clock::time_point timeout) {
-    std::unique_lock lk(_mx);
-    while (var.load() == block_value) {
-        if (socket_by_ident(connection) == nullptr) return false;
-        if (_cond.wait_until(lk, timeout) == std::cv_status::timeout) return false;
-    }
-    return true;
-}
-
-void NetContext::sync_notify(ConnHandle ) {
-    std::unique_lock lk(_mx);   //must be under lock
-    _cond.notify_all();
-
-}
-
-void NetContext::receive(ConnHandle ident, std::span<char> buffer, IPeer *peer) {
+void NetContextWin::receive(ConnHandle ident, std::span<char> buffer, IPeer *peer) {
      std::lock_guard _(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx || ctx->_recv_cb) return;
-    WSABUF buf = {static_cast<DWORD>(buffer.size()), buffer.data()};
-    ZeroMemory(&ctx->_recv_ovl, sizeof(OVERLAPPED));
-    int rc= WSARecv(ctx->_socket, &buf, 1, NULL, 0, &ctx->_recv_ovl, NULL);
+    ctx->_recv_buffer = buffer;
     ctx->_recv_cb = peer;
-    if (rc == SOCKET_ERROR && WSA_IO_PENDING != WSAGetLastError()) {
-        PostQueuedCompletionStatus(_completion_port,0,ident + key_offset, NULL);
-    }    
+    ZeroMemory(&ctx->_recv_ovr, sizeof(OVERLAPPED));
 
+    if (ctx->_error) {
+        PostQueuedCompletionStatus(_completion_port, 0, ident+key_offset, &ctx->_recv_ovr);
+        return;
+    }
+
+    WSABUF buf = {static_cast<DWORD>(buffer.size()), buffer.data()};
+    DWORD flags = 0;
+    int rc= WSARecv(ctx->_socket, &buf, 1, NULL, &flags, &ctx->_recv_ovr, NULL);
+    if (rc == SOCKET_ERROR) {
+        auto err = GetLastError();
+        if (err != WSA_IO_PENDING) {
+            ctx->_error = true;
+            PostQueuedCompletionStatus(_completion_port,0,ident + key_offset, &ctx->_recv_ovr);            
+        }
+    }
 }
 
-std::size_t NetContext::send(ConnHandle ident, std::string_view data) {
+std::size_t NetContextWin::send(ConnHandle ident, std::string_view data) {
      std::lock_guard _(_mx);
     auto ctx = socket_by_ident(ident);
-    if (!ctx || !ctx->_clear_to_send) return 0;
+    if (!ctx || !ctx->_clear_to_send || ctx->_error) return 0;
+
     WSABUF buf = {static_cast<ULONG>(data.size()), const_cast<char *>(data.data())};
     DWORD rcv = 0;
     int rc = WSASend(ctx->_socket, &buf, 1, &rcv,0,NULL,NULL);
     if (rc == SOCKET_ERROR) {
-        if (WSAEWOULDBLOCK != WSAGetLastError()) {
+        auto err = WSAGetLastError();
+        if (WSAEWOULDBLOCK != err) {
+            report_error(std::system_error(static_cast<int>(err), Win32ErrorCategory()), "send");
             return 0;
         }
+        rcv = 0; //nothing sent
     }
     data = data.substr(rcv);
-    if (data.empty()) return rcv;
-    data = data.substr(0,sizeof(ctx->_aux_buffer));
+    if (data.empty()) return rcv;  //all send - we are good
+
+    data = data.substr(0,sizeof(ctx->_aux_buffer)); //store data in aux buffer (just small portion)
     buf.buf = const_cast<char *>(data.data());
     buf.len = static_cast<ULONG>(data.size());
-    ZeroMemory(&ctx->_recv_ovl, sizeof(OVERLAPPED));
-    rc = WSASend(ctx->_socket, &buf, 1, NULL, 0, &ctx->_recv_ovl, NULL);
+    ZeroMemory(&ctx->_send_ovr, sizeof(OVERLAPPED));
+    rc = WSASend(ctx->_socket, &buf, 1, NULL, 0, &ctx->_send_ovr, NULL);    //send data in overlapped mode to generate clear_to_send signal
     if (rc == SOCKET_ERROR) {
+        auto err = WSAGetLastError();
         if (WSA_IO_PENDING != WSAGetLastError()) {
+            report_error(std::system_error(static_cast<int>(err), Win32ErrorCategory()), "send");
             return 0;
         }
     }
-    return rcv + buf.len;
+
+    ctx->_clear_to_send = false; //currently clear to send is false
+    return rcv + buf.len; 
 }
 
-void NetContext::ready_to_send(ConnHandle ident, IPeer *peer) {
+void NetContextWin::ready_to_send(ConnHandle ident, IPeer *peer) {
     std::unique_lock lk(_mx);   
     auto ctx = socket_by_ident(ident); 
     if (!ctx) return;
     ctx->_send_cb = peer;
-    if (!ctx->_clear_to_send) return;
-    ctx->invoke_cb(lk,_cond,[&]{ctx->_send_cb->clear_to_send();});
+    if (!ctx->_clear_to_send) return;  //if clear to send is false we just registered callback
+
+    //if clear to send is true, generate signal through IOCP
+    PostQueuedCompletionStatus(_completion_port,0,ident+key_offset,&ctx->_send_ovr);
+
 }
 
-void NetContext::accept(ConnHandle ident, IServer *server) {
-    std::unique_lock lk(_mx);   
-    auto ctx = socket_by_ident(ident); 
+void NetContextWin::accept(ConnHandle ident, IServer *server) {
+    std::unique_lock lk(_mx);       auto ctx = socket_by_ident(ident); 
     if (!ctx) return;
-    if (ctx->_accept_cb) {
-        ctx->_accept_cb = server;
+    ctx->_accept_cb = server;
+    if (ctx->_accept_socket != INVALID_SOCKET)  return; //already in accept - exit
+
+    ZeroMemory(&ctx->_recv_ovr, sizeof(OVERLAPPED));
+    SOCKET newSocket = socket(ctx->_af, SOCK_STREAM, IPPROTO_TCP);  //create socket
+    if (newSocket == INVALID_SOCKET) {
+        report_last_error("socket");
         return;
     }
-    ZeroMemory(&ctx->_recv_ovl, sizeof(OVERLAPPED));
-    SOCKET newSocket = socket(ctx->_af, SOCK_STREAM, IPPROTO_TCP);
-    if (newSocket == INVALID_SOCKET) return;
     ctx->_accept_socket = newSocket;
     DWORD rd = 0;
     BOOL res = mswsock.AcceptEx(ctx->_socket, ctx->_accept_socket, 
                                 ctx->_aux_buffer, 0, sizeof(sockaddr_storage)+16,  
-                                sizeof(sockaddr_storage)+16, &rd, &ctx->_recv_ovl);
-    if (res) {
-        PostQueuedCompletionStatus(_completion_port, rd, ctx->_ident + key_offset, &ctx->_recv_ovl);
+                                sizeof(sockaddr_storage)+16, &rd, &ctx->_recv_ovr);
+    if (!res) {
+        auto err = WSAGetLastError();
+        if (err != WSA_IO_PENDING) report_last_error("accept");
+    } else {
+        PostQueuedCompletionStatus(_completion_port, rd, ctx->_ident + key_offset, &ctx->_recv_ovr);
     } 
 }
 
 template<typename Fn>
-void NetContext::SocketInfo::invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn) {
+void NetContextWin::SocketInfo::invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn) {
     ++_cbprotect;
     lk.unlock();
     fn();
@@ -567,13 +612,13 @@ void NetContext::SocketInfo::invoke_cb(std::unique_lock<std::mutex> &lk, std::co
     }
 }
 
-std::jthread NetContext::run_thread() {
+std::jthread NetContextWin::run_thread() {
     return std::jthread([this](auto tkn){
         run(std::move(tkn));
     });
 }
 
-void NetContext::destroy(ConnHandle ident) {
+void NetContextWin::destroy(ConnHandle ident) {
     std::unique_lock lk(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
@@ -584,11 +629,11 @@ void NetContext::destroy(ConnHandle ident) {
     free_socket_lk(ident);
 }
 
-void NetContext::run(std::stop_token tkn) {
+void NetContextWin::run(std::stop_token tkn) {
     run_worker(std::move(tkn));
 }
 
-void NetContext::set_timeout(ConnHandle ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) {
+void NetContextWin::set_timeout(ConnHandle ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) {
     std::lock_guard _(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
@@ -603,7 +648,7 @@ void NetContext::set_timeout(ConnHandle ident, std::chrono::system_clock::time_p
     }
 }
 
-void NetContext::clear_timeout(ConnHandle ident) {
+void NetContextWin::clear_timeout(ConnHandle ident) {
     std::lock_guard _(_mx);
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
@@ -611,5 +656,52 @@ void NetContext::clear_timeout(ConnHandle ident) {
 
 }
 
+void NetContextWin::enqueue(std::function<void()> fn)
+{
+    std::lock_guard _(_mx);
+    _actions.push_back(std::move(fn));
+    PostQueuedCompletionStatus(_completion_port,0,key_wakeup,nullptr);
+}
+
+template <typename E>
+inline void NetContextWin::report_error(E exception, std::string_view action, std::source_location loc)
+{
+    try {
+        throw exception;
+    } catch (...){
+        _ecb(action, loc);
+    }
+}
+
+void NetContextWin::report_last_error(std::string_view action, std::source_location loc)
+{
+    report_error(Win32Error(), action, loc);
+}
+
+
+
+Win32Error::Win32Error():std::system_error(static_cast<int>(GetLastError()), Win32ErrorCategory()) {}
+Win32Error::Win32Error(std::string message):std::system_error(static_cast<int>(GetLastError()), Win32ErrorCategory(), message) {}
+Win32Error::Win32Error(DWORD error):std::system_error(static_cast<int>(error), Win32ErrorCategory()) {}
+Win32Error::Win32Error(DWORD error, std::string message):std::system_error(static_cast<int>(error), Win32ErrorCategory(), message) {}
+
+static std::string GetErrorMessage(int _Errval) {
+    wchar_t *s = NULL;
+    FormatMessageW(FORMAT_MESSAGE_ALLOCATE_BUFFER | FORMAT_MESSAGE_FROM_SYSTEM | FORMAT_MESSAGE_IGNORE_INSERTS, 
+               NULL, static_cast<DWORD>(_Errval),
+               MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT),
+               (LPWSTR)&s, 0, NULL);
+
+    std::size_t sz = wcslen(s);
+    std::size_t needsz = WideCharToMultiByte(CP_UTF8,0,s,static_cast<int>(sz),NULL,0,NULL,NULL);
+    std::string out;
+    out.resize(needsz);
+    WideCharToMultiByte(CP_UTF8,0,s,static_cast<int>(sz),out.data(),static_cast<int>(out.size()),NULL,NULL);
+    LocalFree(s);
+    return out;
+}
+
+const char *Win32ErrorCategory::name() const noexcept {return "Win32 Error";}
+std::string Win32ErrorCategory::message(int _Errval) const {return GetErrorMessage(_Errval);}
 
 }

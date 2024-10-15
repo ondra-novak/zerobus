@@ -32,6 +32,10 @@ public:
     ClusterAlloc(ClusterAlloc &&other) = default;
     ClusterAlloc &operator=(ClusterAlloc &&other) = default;
     ClusterAlloc(const ClusterAlloc &) {}
+    ~ClusterAlloc() {
+        
+    }
+
 
     template<typename X>
     ClusterAlloc(const ClusterAlloc<X,_cluster_size, atomic_release> &) {}

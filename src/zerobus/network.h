@@ -5,6 +5,7 @@
 #include <memory>
 #include <chrono>
 #include <functional>
+#include <source_location>
 
 namespace zerobus {
 
@@ -168,7 +169,19 @@ public:
     virtual void on_accept(ConnHandle connection, std::string peer_addr) noexcept= 0;
 };
 
-std::shared_ptr<INetContext> make_context(int iothreads);
+/// @brief Called on error in network dispatcher - for logging purpose
+/**
+ * @param string contains name of operation during error reported
+ * @param source_location location of error in library source code
+ * 
+ * @note The actual error description is carried as a current exception. Use std::current_exception() to
+ * retrieve exception to analyze what happened
+ */
+using ErrorCallback = std::function<void(std::string_view, std::source_location)>;
+
+
+std::shared_ptr<INetContext> make_network_context(int iothreads = 1);
+std::shared_ptr<INetContext> make_network_context(ErrorCallback errcb, int iothreads = 1);
 
 
 ///creates server which calls a user callback with data required to create a new peer

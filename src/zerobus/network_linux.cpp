@@ -86,7 +86,6 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
 
     std::vector<std::function<void()> > actions;
 
-
     _epoll.add(efd, EPOLLIN, -1);
 
     while (!tkn.stop_requested()) {
@@ -135,7 +134,6 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
             lk.lock();
             std::swap(actions, _actions);
         }
-        auto act = std::move(_actions);
     }
 
 }

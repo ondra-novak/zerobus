@@ -23,7 +23,7 @@ BridgeTCPServer::BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std:
     }
 
 BridgeTCPServer::BridgeTCPServer(Bus bus, std::string address_port)
-    :BridgeTCPServer(std::move(bus), make_context(1), std::move(address_port)) {
+    :BridgeTCPServer(std::move(bus), make_network_context(1), std::move(address_port)) {
 }
 
 BridgeTCPServer::~BridgeTCPServer() {

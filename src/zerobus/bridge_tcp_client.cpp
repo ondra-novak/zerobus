@@ -15,7 +15,7 @@ BridgeTCPClient::BridgeTCPClient(Bus bus, std::shared_ptr<INetContext> ctx, std:
 }
 
 BridgeTCPClient::BridgeTCPClient(Bus bus, std::string address)
-:BridgeTCPClient(std::move(bus), make_context(1), std::move(address)) {
+:BridgeTCPClient(std::move(bus), make_network_context(1), std::move(address)) {
 
 }
 

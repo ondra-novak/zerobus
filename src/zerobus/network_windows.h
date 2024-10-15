@@ -2,6 +2,7 @@
 #include "cluster_alloc.h"
 #include <condition_variable>
 #include <memory>
+#include <memory_resource>
 #include <thread>
 #include <set>
 #define WIN32_LEAN_AND_MEAN
@@ -9,16 +10,18 @@
 #include <WinSock2.h>
 #include <ws2ipdef.h>
 #include <ws2tcpip.h>
+#include <source_location>
 
 namespace zerobus {
 
-class NetContext: public INetContext, public std::enable_shared_from_this<NetContext> {
+class NetContextWin: public INetContext, public std::enable_shared_from_this<NetContextWin> {
 public:
 
-    NetContext();
-    ~NetContext();
-    NetContext(const NetContext &) = delete;
-    NetContext &operator=(const NetContext &) = delete;
+    explicit NetContextWin(ErrorCallback ecb);
+    NetContextWin();
+    ~NetContextWin();
+    NetContextWin(const NetContextWin &) = delete;
+    NetContextWin &operator=(const NetContextWin &) = delete;
 
     virtual ConnHandle peer_connect(std::string address) override;
     virtual void reconnect(ConnHandle ident, std::string address_port) override;
@@ -28,13 +31,11 @@ public:
     virtual ConnHandle create_server(std::string address_port) override;
     virtual void accept(ConnHandle ident, IServer *server) override;
     virtual void destroy(ConnHandle ident) override;
-    virtual bool sync_wait(ConnHandle connection, std::atomic<std::uintptr_t> &var, std::uintptr_t block_value, std::chrono::system_clock::time_point timeout) override;
-    virtual void sync_notify(ConnHandle connection) override;
     std::jthread run_thread();
     void run(std::stop_token tkn);
     virtual void set_timeout(ConnHandle ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) override;
     virtual void clear_timeout(ConnHandle ident) override;
-    virtual void yield(ConnHandle connection, std::function<void()> fn) override;
+    virtual void enqueue(std::function<void()> fn) override;
 
 protected:
 
@@ -43,30 +44,28 @@ protected:
     static constexpr ULONG_PTR key_exit = 1;
 
     using TimeoutInfo = std::pair<std::chrono::system_clock::time_point, ConnHandle>;
-    using TimeoutSet = std::set<TimeoutInfo,  std::less<TimeoutInfo>, ClusterAlloc<TimeoutInfo> >;
+    using TimeoutSet = std::set<TimeoutInfo,  std::less<TimeoutInfo>,  std::pmr::polymorphic_allocator<TimeoutInfo> >;
+
 
     struct SocketInfo {
-        ConnHandle _ident = static_cast<ConnHandle>(-1);
-        SOCKET _socket = static_cast<SOCKET>(-1);
-        std::span<char> _recv_buffer;
-        std::chrono::system_clock::time_point _tmtp = {};
-        IPeer *_recv_cb = {};
-        IPeer *_send_cb = {};
-        IServer *_accept_cb = {};
-        IPeerServerCommon *_timeout_cb = {};
-        std::function<void()> _yield = {};
-        int _cbprotect = {};
-        int _af;
-        bool _clear_to_send = false;  //<socket is ready to send data
-        bool _error = false;        //<error happened, disconnect this stream
-        bool _connecting = true;    //<socket is connection - state for io completion port
-        char _aux_buffer[1024]; 
-        union {
-            DWORD _aux_to_send ;     //count of bytes to send in _aux_buffer
-            SOCKET _accept_socket ;
-        };
-        OVERLAPPED _recv_ovl;
-        OVERLAPPED _send_ovl;
+        ConnHandle _ident = static_cast<ConnHandle>(-1);    //this connection handle
+        SOCKET _socket = INVALID_SOCKET;                    //associated socket
+        std::span<char> _recv_buffer;                       //reference to receiving buffer
+        std::chrono::system_clock::time_point _tmtp = {};   //current scheduled timeout - function set_timeout() 
+        IPeer *_recv_cb = {};                               //callback object for recv
+        IPeer *_send_cb = {};                               //callback object for send 
+        IServer *_accept_cb = {};                           //callback object for accept
+        IPeerServerCommon *_timeout_cb = {};                //callback object for timeout
+        int _cbprotect = {};                                //count of currently active callbacks (must be 0 to destroy)
+        bool _clear_to_send = false;                        //sending is allowed
+        bool _error = false;                                //error reported and connection is lost
+        bool _connecting = false;                            //socket is connecting (connect)
+        char _aux_buffer[1024] = {};                        //a buffer used for accept or for send data during OVERLAPPED operation
+        DWORD _to_send = 0;                                 //count of bytes to send in the buffer
+        OVERLAPPED _send_ovr = {};                              //OVERLAPPED for send or connect
+        OVERLAPPED _recv_ovr = {};                              //OVERLAPPED for recv or accept
+        int _af;                                            //AF socket family of current socket (need for accept)
+        SOCKET _accept_socket  = INVALID_SOCKET;            //current accept socket for server
 
         ///invoke one of callbacks
         /**
@@ -77,16 +76,19 @@ protected:
         template<typename Fn>
         void invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn);
     };
-    using SocketList = std::vector<SocketInfo>;
+    using SocketList = std::vector<std::unique_ptr<SocketInfo> >;
 
 
     mutable std::mutex _mx;
+    ErrorCallback _ecb;
     HANDLE _completion_port;
     SocketList _sockets = {};
     ConnHandle _first_free_socket_ident = 0;
+    std::pmr::unsynchronized_pool_resource _pool;
     TimeoutSet _tmset;
     std::condition_variable _cond;
     bool _need_timeout_thread = false;
+    std::vector<std::function<void()> > _actions;
 
 
     SocketInfo *alloc_socket_lk();
@@ -96,14 +98,15 @@ protected:
     void run_worker(std::stop_token tkn) ;
     DWORD get_completion_timeout_lk();
     std::chrono::system_clock::time_point get_completion_timeout_tp_lk();
-    void process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandle h,  DWORD transfered, OVERLAPPED *ovr, DWORD error, std::vector<std::function<void()> > &yield_queue);
-
+    void process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandle h,  DWORD transfered, OVERLAPPED *ovr, DWORD error);
+    template<typename E> void report_error(E exception, std::string_view action, std::source_location loc = std::source_location::current());
+    void report_last_error(std::string_view action, std::source_location loc = std::source_location::current());
 };
 
-class NetThreadedContext: public NetContext {
+class NetThreadedContext: public NetContextWin {
 public:
 
-    NetThreadedContext(int threads);
+    NetThreadedContext(ErrorCallback ecb, int threads);
     ~NetThreadedContext();
     void start();
 
@@ -112,6 +115,22 @@ protected:
 };
 
 
-std::shared_ptr<INetContext> make_context(int iothreads);
+
+
+class Win32ErrorCategory: public std::error_category {
+public:   
+    virtual ~Win32ErrorCategory() noexcept = default;
+    virtual const char* name() const noexcept override;
+    virtual std::string message(int _Errval) const override;
+};
+
+
+class Win32Error: public std::system_error {
+public:
+    Win32Error();
+    Win32Error(std::string message);
+    Win32Error(DWORD error);
+    Win32Error(DWORD error, std::string message);
+};
 
 }
