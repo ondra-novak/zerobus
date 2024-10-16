@@ -87,10 +87,6 @@ protected:
         ///dtor
         ~ChanDef();
 
-        ///lock channel internals
-        void lock();        //lock the item
-        ///unlock channel internals
-        void unlock();      //unlock the item
         ///determine whether it is empty (no listeners)
         bool empty() const;
         ///add listener
@@ -99,9 +95,6 @@ protected:
         bool remove_listener(IListener *lsn);
         ///determines whether channel can be exported seen from perspective or listener
         bool can_export(IListener *lsn) const;
-        ///enumerates active listeners (available from source code only)
-        template<std::invocable<IListener *> Fn>
-        void enum_listeners(Fn &&fn);
         ///retrieve id
         ChannelID get_id() const;
 
@@ -109,14 +102,14 @@ protected:
 
         void set_owner(IListener *owner) {_owner = owner;}
 
+        void broadcast(IListener *lsn, const Message &msg) const;
+
         bool has(IListener *lsn) const;
     protected:
         mstring _name;  //a channel name
         IListener *_owner = {}; //owner of group;
         mvector<IListener *> _listeners; //list of listeners. Nullptr are skipped
-        mutable std::recursive_mutex _mx;
-        unsigned int _recursion = 0; //count of lock recursion
-        unsigned int _del_count = 0; //count of deleted listners(set nullptr);
+        mutable std::shared_mutex _mx;
     };
 
     struct BackPathItem { // @suppress("Miss copy constructor or assignment operator")
@@ -212,7 +205,11 @@ protected:
 
     void run_priv_queue(IListener *target, const Message &msg, bool pm);
 
-    struct TLSQueueItem;
+    void channel_is_empty(ChannelID id);
+
+    template<bool ref>
+    struct TLSMsgQueueItem;
+    struct TLSLsnQueueItem;
     struct TLState;
 
 
