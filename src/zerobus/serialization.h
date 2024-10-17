@@ -12,6 +12,12 @@ public:
     struct UserMsg {
         std::uint8_t type = 0;
         std::string_view payload = {};
+        friend std::ostream &operator<<(std::ostream &out, const UserMsg &m) {
+            out << "User:" << m.type<< "-" << m.payload;
+            return out;
+        }
+
+
     };
 
 

@@ -206,7 +206,7 @@ int main() {
             cond.notify_all();
         });
         std::unique_lock lk(mx);
-        if (!cond.wait_for(lk, std::chrono::minutes(1), [&]{return flag;})) abort();
+//        if (!cond.wait_for(lk, std::chrono::minutes(1), [&]{return flag;})) abort();
     });
     ws_key();
     direct_bridge_simple();

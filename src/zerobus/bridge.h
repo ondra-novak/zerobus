@@ -25,25 +25,60 @@ using ChannelList = IBridgeAPI::ChannelList;
 struct ChannelUpdate {
     ChannelList lst;
     Operation op;
+    friend std::ostream &operator<<(std::ostream &out, const ChannelUpdate &ch) {
+        out << "Update:" <<static_cast<int>(ch.op);
+        char sep = '-';
+        for (auto x: ch.lst) {
+            out << sep << x;
+            sep = ',';
+        }
+        return out;
+    }
 };
 
-struct ChannelReset {};
-struct GroupReset {};
+struct ChannelReset {
+    friend std::ostream &operator<<(std::ostream &out, const ChannelReset &) {
+        out << "Chan Reset";
+        return out;
+    }
+};
+struct GroupReset {
+    friend std::ostream &operator<<(std::ostream &out, const GroupReset &) {
+        out << "Group Reset";
+        return out;
+    }
+};
 struct ClearPath {
     ChannelID sender;
     ChannelID receiver;
+    friend std::ostream &operator<<(std::ostream &out, const ClearPath &ch) {
+        out << "Clear path:" << ch.sender << "," << ch.receiver;
+        return out;
+    }
 };
 struct CloseGroup {
     ChannelID group;
+    friend std::ostream &operator<<(std::ostream &out, const CloseGroup &ch) {
+        out << "Close group:" << ch.group;
+        return out;
+    }
 };
 
 struct GroupEmpty {
     ChannelID group;
+    friend std::ostream &operator<<(std::ostream &out, const GroupEmpty &ch) {
+        out << "Group Empty:" << ch.group;
+        return out;
+    }
 };
 
 struct AddToGroup {
     ChannelID group;
     ChannelID target;
+    friend std::ostream &operator<<(std::ostream &out, const AddToGroup &ch) {
+        out << "Add to group:" << ch.group << "," << ch.target;
+        return out;
+    }
 };
 
 

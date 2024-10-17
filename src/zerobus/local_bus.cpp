@@ -17,7 +17,7 @@ namespace zerobus {
 
 template<bool ref>
 struct LocalBus::TLSMsgQueueItem { // @suppress("Miss copy constructor or assignment operator")
-    std::conditional_t<ref, const PChanMapItem &, PChanMapItem> channel;
+    std::conditional_t<ref, const PTargetMapItem &, PTargetMapItem> channel;
     std::conditional_t<ref, const Message &, Message> message;
     IListener *listener;
 
@@ -37,14 +37,19 @@ struct LocalBus::TLSLsnQueueItem {
 
     void execute() const noexcept {
         if (owner) {
-            if (chan->remove_listener(lsn)) {
-                owner->channel_is_empty(chan->get_id());
+            if (chan) {
+                if (chan->remove_listener(lsn)) {
+                    owner->channel_is_empty(chan->get_id());
+                }
+            } else {
+                owner->remove_mailbox(lsn);
             }
         } else {
             chan->add_listener(lsn);
         }
     }
 };
+
 
 struct LocalBus::TLState {
 
@@ -140,7 +145,6 @@ LocalBus::LocalBus()
     ,_mailboxes_by_name(MailboxToListenerMap::allocator_type(&_mem_resource))
     ,_back_path(_mem_resource)
     ,_monitors(mvector<IMonitor *>::allocator_type(&_mem_resource))
-    ,_private_queue(PrivateQueue::allocator_type(&_mem_resource))
 {
 
 }
@@ -186,6 +190,16 @@ void LocalBus::unsubscribe(IListener *listener, ChannelID channel)
 void LocalBus::channel_is_empty(ChannelID id) {
     std::lock_guard _(*this);
     _channels.erase(id);
+}
+
+void LocalBus::remove_mailbox(IListener *lsn) {
+    PMBxDef def;
+    std::lock_guard _(*this);
+    auto iter = _mailboxes_by_ptr.find(lsn);
+    if (iter == _mailboxes_by_ptr.end()) return;
+    _mailboxes_by_name.erase(iter->second->get_id());
+    def = std::move(iter->second);
+    _mailboxes_by_ptr.erase(iter);
 }
 
 void LocalBus::unsubscribe_all(IListener *listener)
@@ -258,8 +272,8 @@ void LocalBus::erase_mailbox_lk(IListener *listener) {
     //always under lock
     auto iter = _mailboxes_by_ptr.find(listener);
     if (iter == _mailboxes_by_ptr.end()) return;
-    _mailboxes_by_name.erase(iter->second);
-    _mailboxes_by_ptr.erase(iter);
+    iter->second->disable();
+    TLState::_tls_state.enqueue_lsn({{},listener,shared_from_this()});
 }
 
 std::string_view LocalBus::get_mailbox(IListener *listener)
@@ -268,13 +282,17 @@ std::string_view LocalBus::get_mailbox(IListener *listener)
 
     std::lock_guard _(*this);
     auto iter = _mailboxes_by_ptr.find(listener);
-    if (iter != _mailboxes_by_ptr.end()) return iter->second;
+    if (iter != _mailboxes_by_ptr.end()) return iter->second->get_id();
     mstring mbid((mstring::allocator_type(&_mem_resource)));
     mbid.append(mbx_prefix);
     generate_mailbox_id(std::back_inserter(mbid));
-    iter = _mailboxes_by_ptr.emplace(listener, std::move(mbid)).first;
-    auto ret = _mailboxes_by_name.emplace(iter->second, listener).first->first;
-    return ret;
+    auto mbx = std::allocate_shared<MbxDef>(
+            std::pmr::polymorphic_allocator<MbxDef>(&_mem_resource),
+            listener, std::move(mbid));
+    std::string_view idstr = mbx->get_id();
+    _mailboxes_by_ptr.emplace(listener, mbx);
+    _mailboxes_by_name.emplace(idstr, mbx);
+    return idstr;
 }
 
 
@@ -315,16 +333,15 @@ thread_local LocalBus::TLState LocalBus::TLState::_tls_state = {};
 
 
 bool LocalBus::forward_message_internal(IListener *listener,  const Message &msg) {
-    PChanMapItem ch;
+    PTargetMapItem ch;
     ChannelID chanid = msg.get_channel();
 
     do{
         //mailboxes have priority (user cannot choose own mailbox name)
         auto miter = _mailboxes_by_name.find(chanid);
         if (miter != _mailboxes_by_name.end()) {
-            auto l = miter->second;
-            run_priv_queue(l, std::move(msg), true);
-            return true;
+            ch = miter->second;
+            break;
         }
 
         //channels have priority over return path
@@ -343,7 +360,7 @@ bool LocalBus::forward_message_internal(IListener *listener,  const Message &msg
         //if no path found, route to return path
         IListener *bpath = _back_path.find_path(chanid);
         if (bpath) {
-            run_priv_queue(bpath, std::move(msg), true);
+            bpath->on_message(msg, true);
             return true;
         }
 
@@ -385,8 +402,8 @@ bool LocalBus::add_to_group(IListener *owner, ChannelID group_name, ChannelID ui
         return true;
     } else {
 
-        if (!new_channel(iter->second)) return false;
-        iter->second->on_add_to_group(group_name, uid);
+        if (!new_channel(iter->second->get_owner())) return false;
+        iter->second->get_owner()->on_add_to_group(group_name, uid);
         return true;
 
     }
@@ -401,22 +418,6 @@ void LocalBus::close_group(IListener *owner, ChannelID group_name) {
             _channels_change = true;
         }
     }
-}
-
-void LocalBus::run_priv_queue(IListener *target, const Message &msg, bool pm) {
-    if (_priv_queue_running) {
-        _private_queue.push_back({target,  std::move(msg), pm});
-    } else {
-        _priv_queue_running = true;
-        target->on_message(msg, pm);
-        while (!_private_queue.empty()) {
-            auto &x = _private_queue.front();
-            x.target->on_message(x.msg, pm);
-            _private_queue.pop_front();
-        }
-        _priv_queue_running = false;
-    }
-
 }
 
 void LocalBus::register_monitor(IMonitor *mon) {
@@ -473,6 +474,19 @@ LocalBus::ChannelList LocalBus::get_subscribed_channels(IListener *listener, Cha
     return storage.get_channels();
 }
 
+LocalBus::MbxDef::MbxDef(IListener *lsn, mstring id):_owner(lsn),_id(std::move(id)) {
+
+}
+
+void LocalBus::MbxDef::disable() {
+    _disabled = true;
+}
+
+void LocalBus::MbxDef::broadcast(IListener *, const Message &msg) const {
+    if (_disabled) return ;
+    _owner->on_message(msg, true);
+}
+
 LocalBus::ChanDef::ChanDef(std::string_view name, std::pmr::memory_resource *memres)
     :_name(name, std::pmr::polymorphic_allocator<char>(memres))
     ,_listeners(std::pmr::polymorphic_allocator<std::pair<IListener *, bool> >(memres)) {}
@@ -522,8 +536,7 @@ bool LocalBus::ChanDef::can_export(IListener *lsn) const {
     std::shared_lock _(_mx);
     if (_owner) return false; //group is not exportable
     if (_listeners.empty()) return false;   //don't export empty channels
-    auto iter = std::lower_bound(_listeners.begin(), _listeners.end(), lsn);
-    return (iter == _listeners.end() || *iter != lsn);
+    return _listeners.size() > 1 || _listeners[0] != lsn;
 }
 
 ChannelID LocalBus::ChanDef::get_id() const {
@@ -607,7 +620,7 @@ bool LocalBus::clear_return_path(IListener *lsn, ChannelID sender, ChannelID rec
     {
         auto iter = _mailboxes_by_name.find(sender);
         if (iter != _mailboxes_by_name.end()) {
-            iter->second->on_clear_path(sender, receiver);
+            iter->second->get_owner()->on_clear_path(sender, receiver);
         }
     }
 

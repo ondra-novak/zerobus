@@ -60,6 +60,13 @@ protected:
     template<typename T>
     using mvector = std::vector<T, std::pmr::polymorphic_allocator<T> >;
 
+    class ITargetDef {
+    public:
+        virtual ~ITargetDef() = default;
+        virtual void broadcast(IListener *lsn, const Message &msg) const = 0;
+
+    };
+
     ///Channel definition
     /** Channel is standalone object. It is reference using shared_ptr. It cannot
      * be moved.
@@ -72,7 +79,7 @@ protected:
      * and it is clean when lock is eventually released.
      *
      */
-    class ChanDef {
+    class ChanDef : public ITargetDef{
     public:
         ///Construct channel
         /**
@@ -102,7 +109,7 @@ protected:
 
         void set_owner(IListener *owner) {_owner = owner;}
 
-        void broadcast(IListener *lsn, const Message &msg) const;
+        virtual void broadcast(IListener *lsn, const Message &msg) const override;
 
         bool has(IListener *lsn) const;
     protected:
@@ -122,19 +129,35 @@ protected:
         void remove();
     };
 
+    using PTargetMapItem = std::shared_ptr<ITargetDef>;
     using PChanMapItem = std::shared_ptr<ChanDef>;
+
+    class MbxDef: public ITargetDef {
+    public:
+        MbxDef(IListener *lsn, mstring id);
+        virtual void broadcast(IListener *lsn, const Message &msg) const override;
+        std::string_view get_id() const {return _id;}
+        IListener *get_owner() const {return _owner;}
+        void disable();
+    protected:
+        IListener *_owner;
+        mstring _id;
+        mutable std::atomic<bool> _disabled = {false};
+    };
+
+    using PMBxDef = std::shared_ptr<MbxDef>;
 
     using ListenerToChannelMap = std::unordered_map<IListener *, mvector<ChannelID>,
             std::hash<IListener *>, std::equal_to<IListener *>,
             std::pmr::polymorphic_allocator<std::pair<IListener * const, mvector<ChannelID> > > >;
     using ChannelMap = std::map<ChannelID, PChanMapItem,
             std::less<>,std::pmr::polymorphic_allocator<std::pair<const ChannelID,  PChanMapItem > > >;
-    using ListenerToMailboxMap = std::unordered_map<IListener *, mstring,
+    using ListenerToMailboxMap = std::unordered_map<IListener *, PMBxDef,
             std::hash<IListener *>, std::equal_to<IListener *>,
-            std::pmr::polymorphic_allocator<std::pair<IListener * const, mstring> > >;
-    using MailboxToListenerMap = std::unordered_map<std::string_view, IListener *,
+            std::pmr::polymorphic_allocator<std::pair<IListener * const, PMBxDef> > >;
+    using MailboxToListenerMap = std::unordered_map<std::string_view, PMBxDef,
             std::hash<std::string_view>, std::equal_to<std::string_view>,
-            std::pmr::polymorphic_allocator<std::pair<const std::string_view , IListener *> > >;
+            std::pmr::polymorphic_allocator<std::pair<const std::string_view , PMBxDef> > >;
     using BackPathMap = std::unordered_map<std::string_view, BackPathItem,
             std::hash<std::string_view>, std::equal_to<std::string_view>,
             std::pmr::polymorphic_allocator<std::pair<const std::string_view , BackPathItem > > >;
@@ -156,14 +179,6 @@ protected:
 
     };
 
-    struct PrivQueueItem { // @suppress("Miss copy constructor or assignment operator")
-        IListener *target;
-        Message msg;
-        bool pm;
-
-    };
-
-    using PrivateQueue = std::deque<PrivQueueItem, std::pmr::polymorphic_allocator<PrivQueueItem> >;
 
 
     mutable std::recursive_mutex _mutex;               //recursive mutex
@@ -173,11 +188,9 @@ protected:
     MailboxToListenerMap _mailboxes_by_name; //maps mailbox name to listener ptr
     BackPathStorage _back_path;
     mvector<IMonitor *> _monitors;      //list of monitors
-    PrivateQueue _private_queue;
     mutable std::string _cycle_detector_id = {};    //contains a random string which is used to detect cycles
     mutable const IListener *_last_proxy=nullptr;    //pointer to last proxy - to check, whether there are more proxies
     mutable bool _channels_change = false;
-    bool _priv_queue_running = false;
     mutable unsigned int _recursion = 0;
     ///erase mailbox
     /**
@@ -203,13 +216,15 @@ protected:
 
     bool forward_message_internal(IListener *listener,  const Message &msg) ;
 
-    void run_priv_queue(IListener *target, const Message &msg, bool pm);
 
     void channel_is_empty(ChannelID id);
+    void remove_mailbox(IListener *lsn);
 
     template<bool ref>
     struct TLSMsgQueueItem;
     struct TLSLsnQueueItem;
+    template<bool ref>
+    struct TLSPrivMsgQueueItem;
     struct TLState;
 
 

@@ -21,7 +21,7 @@ enum class MessageType: std::uint8_t {
         close_group = 0xF8,
         ///close group
         group_empty = 0xF7,
-        ///close all groups (lost context) 
+        ///close all groups (lost context)
         group_reset = 0xF6,
 };
 
@@ -172,7 +172,7 @@ std::string_view Serialization::operator ()(const Msg::GroupEmpty &msg) {
     compose_message(start_write(), MessageType::group_empty, msg.group);
     return finish_write();
 }
-std::string_view Serialization::operator ()(const Msg::GroupReset &msg) {
+std::string_view Serialization::operator ()(const Msg::GroupReset &) {
     compose_message(start_write(), MessageType::group_reset);
     return finish_write();
 }

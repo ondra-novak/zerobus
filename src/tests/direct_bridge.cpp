@@ -161,6 +161,41 @@ void direct_bridge_cycle() {
     CHECK_EQUAL(result, "etevs joha");
 }
 
+void detect_cycle_test2() {
+    std::cout << __FUNCTION__ << std::endl;
+    auto master = Bus::create();
+    auto slave1 = Bus::create();
+    auto slave2 = Bus::create();
+    auto master2 = Bus::create();
+    std::promise<std::string> result;
+
+    VerboseBridge b1(master, slave1);
+    VerboseBridge b2(master, slave2);
+    VerboseBridge b3(master2, slave1);
+
+
+
+    auto sn = ClientCallback(slave1, [&](AbstractClient &c, const Message &msg, bool){
+        std::string s ( msg.get_content());
+        std::reverse(s.begin(), s.end());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
+    });
+    auto cn= ClientCallback(slave2, [&](AbstractClient &, const Message &msg, bool){
+            result.set_value(std::string(msg.get_content()));
+    });
+
+    sn.subscribe("reverse");
+
+    //close the cycle
+    VerboseBridge b4(master2, slave2);
+
+
+    cn.send_message("reverse", "ahoj svete");
+    auto r = result.get_future().get();
+    CHECK_EQUAL(r, "etevs joha");
+}
+
+
 void clear_path_test() {
     std::cout << __FUNCTION__ << std::endl;
     auto master = Bus::create();
@@ -300,6 +335,7 @@ void clear_path_group_test() {
 int main() {
     direct_bridge_simple();
     direct_bridge_cycle();
+    detect_cycle_test2();
     clear_path_test();
     filter_channels();
     groups();

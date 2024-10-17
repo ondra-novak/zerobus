@@ -107,6 +107,11 @@ public:
         return *this;
     }
 
+    friend std::ostream &operator<<(std::ostream &out, const Message &m) {
+        out << "Message:" << m._sender << "," << m._channel << "," << m._content << "," << m._cid;
+        return out;
+    }
+
 
 
 

@@ -68,7 +68,29 @@ void testReqRep() {
         c.send_message(msg.get_sender(), s);
     });
     auto client = ClientCallback(broker, [&](AbstractClient &, const Message &msg, bool ){
-        result = std::string(msg.get_content());
+        result.append(std::string(msg.get_content()));
+    });
+
+    server.subscribe("reverse");
+    client.send_message("reverse", "ahoj svete");
+    CHECK_EQUAL(result, "etevs joha");
+}
+
+void testReqRep2() {
+
+    auto broker = Bus::create();
+    std::string result;
+
+    auto server = ClientCallback(broker, [&](AbstractClient &c, const Message &msg, bool ){
+        std::string s ( msg.get_content());
+        std::reverse(s.begin(), s.end());
+        c.send_message(msg.get_sender(), s);
+        c.send_message(msg.get_sender(), s);
+    });
+    auto client = ClientCallback(broker, [&](AbstractClient &c, const Message &msg, bool ){
+        result.append(std::string(msg.get_content()));
+        c.unsubscribe_all();
+
     });
 
     server.subscribe("reverse");
@@ -139,6 +161,7 @@ void testDialog() {
 int main() {
     testLocalBus();
     testReqRep();
+    testReqRep2();
     testChannelForward();
     testDialog();
 

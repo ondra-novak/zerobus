@@ -64,7 +64,7 @@ void BridgeTCPClient::lost_connection() {
 }
 
 void BridgeTCPClient::on_channels_update() noexcept {
-    _ctx->set_timeout(_aux, std::chrono::system_clock::now(), this);
+    _ctx->set_timeout(_aux, std::chrono::system_clock::time_point::min(), this);
 }
 
 
@@ -76,7 +76,7 @@ void BridgeTCPClient::clear_to_send() noexcept {
         } else {
             read_from_connection();
         }
-         
+
     } else {
         BridgeTCPCommon::clear_to_send();
     }
@@ -125,7 +125,7 @@ void BridgeTCPClient::receive_complete(std::string_view data) noexcept {
             } else {
                 BridgeTCPCommon::receive_complete(rest);
             }
-            send_mine_channels();
+            send(ChannelReset{});
         } else {
             lost_connection();
         }
