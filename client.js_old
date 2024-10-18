@@ -282,7 +282,7 @@ const zerobus = (function(){
             const chls = Object.keys(this.#channels);
             chls.forEach(name=>{
                 if (this.#channels[name]._owner == listener) {
-                    delete this.#channels[name];
+                    this.close_group(name);
                 }
             });
         }

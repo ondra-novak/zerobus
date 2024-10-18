@@ -58,7 +58,7 @@ int main() {
             thr = std::jthread([&](std::stop_token tkn){
                 while (!tkn.stop_requested()) {
                     auto tp = std::time(nullptr);
-                    c.send_message("timer_data", std::to_string(tp),0);                    
+                    c.send_message("timer_data", std::to_string(tp),0);
                     std::this_thread::sleep_for(std::chrono::seconds(1));
                 }
             });

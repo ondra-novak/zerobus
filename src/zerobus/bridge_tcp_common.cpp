@@ -116,14 +116,9 @@ std::string_view BridgeTCPCommon::get_view_to_send() const {
     return std::string_view(_output_data.data()+_output_cursor, _output_data.size()-_output_cursor);
 }
 
-static std::mutex mx;
 
 void BridgeTCPCommon::deserialize_message(const std::string_view &msg) {
     std::visit([&](const auto &m){
-        {
-            std::lock_guard _(mx);
-            std::cerr << "Received:" << this << ":" << m << std::endl;
-        }
         this->receive(m);
     }, _deser(msg));
 }
@@ -272,78 +267,37 @@ void BridgeTCPCommon::set_hwm(std::size_t hwm, std::size_t timeout_ms) {
 }
 
 void BridgeTCPCommon::send(const ChannelReset& m) noexcept {
-    {
-        std::lock_guard _(mx);
-        std::cerr << "Send:" << this << ":" << m << std::endl;
-    }
-
     output_message(_ser(m));
 }
 
 void BridgeTCPCommon::send(const CloseGroup& m) noexcept {
-    {
-        std::lock_guard _(mx);
-        std::cerr << "Send:" << this << ":" << m << std::endl;
-    }
-
     output_message(_ser(m));
 }
 
 void BridgeTCPCommon::send(const Message &m) noexcept {
-    {
-        std::lock_guard _(mx);
-        std::cerr << "Send:" << this << ":" << m << std::endl;
-    }
-
     output_message(_ser(m));
 }
 
 void BridgeTCPCommon::send(const ChannelUpdate &m) noexcept {
-    {
-        std::lock_guard _(mx);
-        std::cerr << "Send:" << this << ":" << m << std::endl;
-    }
-
     output_message(_ser(m));
 }
 
 void BridgeTCPCommon::send(const ClearPath &m) noexcept {
-    {
-        std::lock_guard _(mx);
-        std::cerr << "Send:" << this << ":" << m << std::endl;
-    }
-
     output_message(_ser(m));
 }
 
 
-void BridgeTCPCommon::send(const AddToGroup &m) noexcept {        {
-    std::lock_guard _(mx);
-    std::cerr << "Send:" << this << ":" << m << std::endl;
-}
-
+void BridgeTCPCommon::send(const AddToGroup &m) noexcept {
     output_message(_ser(m));
 }
-void BridgeTCPCommon::send(const GroupEmpty &m) noexcept {        {
-    std::lock_guard _(mx);
-    std::cerr << "Send:" << this << ":" << m << std::endl;
-}
-
+void BridgeTCPCommon::send(const GroupEmpty &m) noexcept {
     output_message(_ser(m));
 }
-void BridgeTCPCommon::send(const GroupReset &m) noexcept{        {
-    std::lock_guard _(mx);
-    std::cerr << "Send:" << this << ":" << m << std::endl;
-}
-
+void BridgeTCPCommon::send(const GroupReset &m) noexcept{
     output_message(_ser(m));
 }
 
-void BridgeTCPCommon::send(const UpdateSerial&m) noexcept { {
-    std::lock_guard _(mx);
-    std::cerr << "Send:" << this << ":" << m << std::endl;
-}
-
+void BridgeTCPCommon::send(const UpdateSerial&m) noexcept {
     output_message(_ser(m));
 }
 

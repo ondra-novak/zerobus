@@ -162,8 +162,11 @@ LocalBus::PChanMapItem LocalBus::get_channel_lk(ChannelID channel) {
 
 bool LocalBus::subscribe(IListener *listener, ChannelID channel)
 {
-    if (channel.empty()) return false;
     std::lock_guard _(*this);
+    return subscribe_lk(listener, channel);
+}
+bool LocalBus::subscribe_lk(IListener *listener, ChannelID channel) {
+    if (channel.empty()) return false;
     auto chan = get_channel_lk(channel);
     if (chan->get_owner()) return false;
     TLState::_tls_state.enqueue_lsn({std::move(chan), listener, {}});
@@ -174,6 +177,11 @@ bool LocalBus::subscribe(IListener *listener, ChannelID channel)
 void LocalBus::unsubscribe(IListener *listener, ChannelID channel)
 {
     std::lock_guard _(*this);
+    unsubscribe_lk(listener, channel);
+
+}
+void LocalBus::unsubscribe_lk(IListener *listener, ChannelID channel)
+{
 
     auto iter = _channels.find(channel);
     if (iter == _channels.end()) return;
@@ -210,6 +218,27 @@ SerialID LocalBus::get_serial(IListener *lsn) const {
         else return "";
     }
     return _this_serial;
+}
+
+void LocalBus::update_subscribtion(IListener *lsn, Operation op,ChannelList channels) {
+    std::lock_guard _(*this);
+    switch (op) {
+        case Operation::replace:
+            if (unsubscribe_all_channels_lk(lsn, false)) {
+                _channels_change = true;
+            }
+            [[fallthrough]];
+        case Operation::add:
+            for (const auto &x: channels) {
+                subscribe_lk(lsn, x);
+            }
+            break;
+        case Operation::erase:
+            for (const auto &x: channels) {
+                unsubscribe_lk(lsn, x);
+            }
+            break;
+    }
 }
 
 void LocalBus::remove_mailbox(IListener *lsn) {

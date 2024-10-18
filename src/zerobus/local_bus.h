@@ -47,6 +47,7 @@ public:
     virtual void unsubscribe_all_channels(IListener *listener, bool and_groups) override;
     virtual bool set_serial(IListener *lsn, SerialID serialId) override;
     virtual SerialID get_serial(IListener *lsn) const override;
+    virtual void update_subscribtion(IListener *lsn, Operation op, ChannelList channels) override;
 
     ///Create local message broker;
     static Bus create();
@@ -211,6 +212,8 @@ protected:
     std::string_view get_mailbox(IListener *listener);
 
     bool unsubscribe_all_channels_lk(IListener *listener, bool and_groups);
+    bool subscribe_lk(IListener *listener, ChannelID channel) ;
+    void unsubscribe_lk(IListener *listener, ChannelID channel) ;
 
 
     PChanMapItem get_channel_lk(ChannelID name);

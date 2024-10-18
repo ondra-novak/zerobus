@@ -12,6 +12,16 @@ using SerialID = std::string_view;
 class IBridgeAPI : public IBus {
 public:
 
+    enum class Operation {
+        ///replace subscribed channels with a new set
+        replace = 0,
+        ///subscribe new channels
+        add = 1,
+        ///unsubscribe channels
+        erase = 2,
+    };
+
+
     using ChannelList = std::span<ChannelID>;
 
     ///Register channel monitor
@@ -82,6 +92,17 @@ public:
      * send to other side
      */
     virtual SerialID get_serial(IListener *lsn) const = 0;
+
+    ///Update subscription (for bridges)
+    /**
+     * @param lsn listener (bridge)
+     * @param op operation
+     * @param channels list of channels
+     *
+     * @note all operations are done "atomically". There is only one signal to monitors.
+     *
+     */
+    virtual void update_subscribtion(IListener *lsn, Operation op, ChannelList channels) = 0;
 };
 
 ///exception is thrown when cycle is detected during subscribtion

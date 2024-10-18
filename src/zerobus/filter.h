@@ -1,6 +1,8 @@
 #pragma once
 #include "message.h"
 
+#include "filter.h"
+#include <atomic>
 namespace zerobus {
 
 ///Abstract interface to implement channel filters
@@ -15,6 +17,7 @@ namespace zerobus {
  */
 class Filter {
 public:
+
     ///Allow messages incoming (from external side) messages routed to given channel
     /**
      * @param id id of channel of incoming message - our channel
@@ -75,7 +78,33 @@ public:
      */
     virtual bool on_outgoing_close_group(ChannelID group_name);
 
+
+
+    ///Retrieves flag signaling whether rules has been changed
+    /**
+     * @retval true rules has been changed
+     * @retval false no rule changed
+     *
+     * @note function also clears this state
+     *
+     */
+    bool commit_rule_changed() {
+        return !_clean.test_and_set();
+    }
+
     virtual ~Filter() = default;
+protected:
+    std::atomic_flag _clean = {};
+
+    ///Sets flag signaling that filter rule changed
+    /**
+     * If filter operation causes changing in rules, use this function
+     * to signal such state.
+     */
+    void set_rule_changed() {
+        _clean.clear();
+    }
+
 };
 
 

@@ -12,14 +12,7 @@ namespace zerobus {
 
 namespace Msg {
 
-enum class Operation {
-    ///replace subscribed channels with a new set
-    replace = 0,
-    ///subscribe new channels
-    add = 1,
-    ///unsubscribe channels
-    erase = 2,
-};
+using Operation = IBridgeAPI::Operation;
 
 
 using ChannelList = IBridgeAPI::ChannelList;
@@ -232,6 +225,8 @@ protected:
 
     void process_mine_channels(ChannelList lst, bool reset) noexcept;
 
+
+    void check_rules(Filter *flt);
 
 };
 

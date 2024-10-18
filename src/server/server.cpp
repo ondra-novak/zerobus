@@ -1,8 +1,6 @@
 
 #include <iostream>
 #include "embedded_js.h"
-
-
 #include <zerobus/monitor.h>
 #include <zerobus/client.h>
 #include <zerobus/bridge_tcp_client.h>

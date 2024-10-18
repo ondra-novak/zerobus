@@ -1,7 +1,6 @@
 const zerobus = (function(){
 
     function generateUID(prefix) {
-      // Zkombinování aktuálního času s náhodným číslem a konverze na řetězec
       return prefix+Date.now().toString(36) + Math.random().toString(36).substr(2, 9);
     }
 
@@ -24,6 +23,7 @@ const zerobus = (function(){
         close_group: 0xF8,
         group_empty: 0xF7,
         group_reset: 0xF6,
+        update_serial: 0xF5,
     };
 
 
@@ -230,6 +230,11 @@ const zerobus = (function(){
         #mailboxes = new Map();
         #monitors = new Set();
         #notify = false;
+        #serial = {
+            my:generateUID(),
+            current:null,
+            source:null
+        }
 
         subscribe(channel, listener) {
             this.#check_listener(listener);
@@ -287,7 +292,7 @@ const zerobus = (function(){
             const chls = Object.keys(this.#channels);
             chls.forEach(name=>{
                 if (this.#channels[name]._owner == listener) {
-                    delete this.#channels[name];
+                    this.close_group(name);
                 }
             });
         }
@@ -433,6 +438,26 @@ const zerobus = (function(){
                 delete this.#channels[group];
             }
         }
+        
+        set_serial(lsn, serialId) {
+            if (!serialId) return;
+            const cur_id = this.#serial.source?this.#serial.current:this.#serial.my;
+            if (cur_id == serialId) {
+                return this.#serial.source == lsn;
+            }
+            if (cur_id > serialId) {
+                this.#serial.current = serialId;
+                this.#serial.source = lsn;
+            }
+            return true;
+        }
+        get_serial(lsn) {
+            if (this.#serial.source) {
+                return this.#serial.source != lsn?this.#serial.current:null;
+            }
+            return this.#serial.my;
+        }
+
     }
 
 
@@ -441,6 +466,8 @@ const zerobus = (function(){
         _bus;
         _mon;
         #cur_channels = new Set();
+        #cycle_detect = false;
+        #srl = null;
 
 
         constructor(bus) {
@@ -450,9 +477,15 @@ const zerobus = (function(){
 
         send_reset() {throw new PureVirtualError();}
         send_channels(channels, operation) {throw new PureVirtualError();}
+        send_update_serial(serial) {throw new PureVirtualError();}
 
         send_mine_channels() {
-            const chansarr = this._bus.get_active_channels(this);
+            const cur_srl = this._bus.get_serial(this);
+            if (cur_srl !== this.#srl) {
+                this.#srl = cur_srl;
+                if (cur_srl) this.send_update_serial(cur_srl);
+            }
+            const chansarr = this.#cycle_detect?[]:this._bus.get_active_channels(this);
             if (this.#cur_channels.size == 0) {
                 if (chansarr.length == 0) return;
                 this.send_channels(chansarr, MessageType.channels_replace);
@@ -494,6 +527,19 @@ const zerobus = (function(){
         }
         receive_group_empty(group) {
             this._bus.unsubscribe(this, group);
+        }
+        receive_update_serial(serial) {
+            const state = this._bus.set_serial(this, serial);
+            if (state == this.#cycle_detect) {
+                this.#cycle_detect = !this.#cycle_detect;
+                this.send_mine_channels();
+                if (this.#cycle_detect) {
+                    this._bus.unsubscribe_all_channels(this,false);                    
+                } else {
+                    this.send_reset();
+                }                 
+            }
+                        
         }
         register_monitor() {
             if (!this._mon) {
@@ -592,6 +638,7 @@ const zerobus = (function(){
                 case MessageType.clear_path: this.#parse_clear_path(iter);break;
                 case MessageType.group_empty: this.#parse_group_empty(iter);break;
                 case MessageType.group_reset: this._bus.close_all_groups(this);break;
+                case MessageType.update_serial: this.#parse_update_serial(iter);break;
 
             }
         }
@@ -643,6 +690,12 @@ const zerobus = (function(){
             this.receive_group_empty(group);
         }
 
+        #parse_update_serial(iter) {
+            const dec = new TextDecoder();
+            const serial = dec.decode(decode_binary_string(iter));
+            this.receive_update_serial(serial);
+        }
+
         send_reset() {
             this.#binb.push(MessageType.channels_reset);
             this.#ws.send(this.#binb.get_data_and_clear());
@@ -653,6 +706,11 @@ const zerobus = (function(){
             encode_uint(this.#binb,channels.length);
             channels.forEach(ch=>encode_string(this.#binb,ch));
             this.#ws.send(this.#binb.get_data_and_clear());
+        }
+        send_update_serial(serial) {
+            this.#binb.push(MessageType.update_serial);
+            encode_string(this.#binb,serial);
+            this.#ws.send(this.#binb.get_data_and_clear());            
         }
         on_message(msg) {
             this.#binb.push(MessageType.message);

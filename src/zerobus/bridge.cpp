@@ -20,10 +20,12 @@ void AbstractBridge::process_mine_channels(ChannelList lst, bool reset) noexcept
     auto flt = _filter.load();
     if (flt) {
         auto e = std::remove_if(lst.begin(), lst.end(), [&](const ChannelID ch){
-           return !flt->on_incoming(ch); //we block anounincing channel to prevent incoming message
+           return !flt->on_incoming(ch); //we block announcing channel to prevent incoming message
         });
         lst = ChannelList(lst.begin(), e);
+        check_rules(flt);
     }
+
 
     auto srl = _ptr->get_serial(this);
     std::hash<std::string_view> hasher;
@@ -38,15 +40,18 @@ void AbstractBridge::process_mine_channels(ChannelList lst, bool reset) noexcept
     } else if (lst.empty()) {
         send(ChannelUpdate{lst,  Operation::replace});
     } else {
+        bool p = false;
         std::set_difference(lst.begin(), lst.end(),
                 _cur_channels.begin(), _cur_channels.end(), std::back_inserter(_tmp));
-        if (!_tmp.empty()) send(ChannelUpdate{_tmp,  Operation::add});
+        if (!_tmp.empty()) {send(ChannelUpdate{_tmp,  Operation::add}); p = true;}
         _tmp.clear();
 
         std::set_difference(_cur_channels.begin(), _cur_channels.end(),
                 lst.begin(), lst.end(), std::back_inserter(_tmp));
-        if (!_tmp.empty()) send(ChannelUpdate{_tmp,  Operation::erase});
+        if (!_tmp.empty()) {send(ChannelUpdate{_tmp,  Operation::erase}); p = true;}
         _tmp.clear();
+        if (!p)
+            return;
     }
     persist_channel_list(lst, _cur_channels, _char_buffer);
 }
@@ -76,25 +81,19 @@ void AbstractBridge::send_mine_channels(bool reset) noexcept {
 
 void AbstractBridge::receive(const ChannelUpdate &chan_up) {
     if (_cycle_detected) return;
-    switch (chan_up.op) {
-        case Operation::replace: _ptr->unsubscribe_all_channels(this, false);
-                                 [[fallthrough]];
-        case Operation::add: {
-            auto flt = _filter.load();
-            if (flt) {
-                for (const auto &x: chan_up.lst) {
-                    //
-                    if (flt->on_outgoing(x))
-                        _ptr->subscribe(this, x);
-                }
-            } else {
-                for (const auto &x: chan_up.lst) _ptr->subscribe(this, x);
-            }
+    ChannelList chans = chan_up.lst;
+    if (chan_up.op != Operation::erase) {
+        auto flt = _filter.load();
+        if (flt) {
+            auto e = std::remove_if(chans.begin(), chans.end(), [&](const ChannelID x){
+               auto r = flt->on_outgoing(x);
+               return !r;
+            });
+            chans = {chans.begin(), e};
+            check_rules(flt);
         }
-        break;
-        case Operation::erase: for (const auto &x: chan_up.lst) _ptr->unsubscribe(this, x);
-                               break;
     }
+    _ptr->update_subscribtion(this, chan_up.op, chans);
 }
 
 void AbstractBridge::receive(ChannelReset) {
@@ -103,14 +102,18 @@ void AbstractBridge::receive(ChannelReset) {
 
 
 void AbstractBridge::receive(const Message &msg) {
-    auto flt = _filter.load();
-    if (flt) {
-        auto ch = msg.get_channel();
-        //if ch is not channel, then it is mailbox or response (cannot be filtered)
-        if (_ptr->is_channel(ch) && !flt->on_incoming(ch)) return; //block message
+    auto ch = msg.get_channel();
+    if (_ptr->is_channel(ch)) {
+        if (_cycle_detected) return;    //block message to public channel if cycle detected
+        auto flt = _filter.load();
+        if (flt) {
+            auto r = flt->on_incoming(ch);
+            if (!r) return;  //block message to public channel if filtered
+            check_rules(flt);
+        }
     }
     if (!_ptr->dispatch_message(this, msg, true)) {
-        on_clear_path(msg.get_sender(), msg.get_channel());
+        on_clear_path(msg.get_sender(), msg.get_channel()); //report that we unable to process message if no route
     }
 }
 
@@ -138,19 +141,19 @@ void AbstractBridge::receive(const UpdateSerial &msg) {
         send_mine_channels();
         if (_cycle_detected) {
             _ptr->unsubscribe_all_channels(this, false);
-            return;
         } else {
             send(ChannelReset{});
-            return;
         }
     }
 }
 
 void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
+    if (!pm && _cycle_detected) return; //block message if cycle detected;
     auto flt = _filter.load();
     if (flt) {
         //block message if it is not personal message (response) or not allowed channel
         if (!pm && !flt->on_outgoing(message.get_channel())) return;
+        check_rules(flt);
     }
     send(message);
 }
@@ -184,22 +187,20 @@ bool Filter::on_outgoing_close_group(ChannelID) {return true;}
 
 void AbstractBridge::receive(const CloseGroup &msg) {
     auto flt = _filter.load();
-    if (flt && !flt->on_incoming_close_group(msg.group)) return;
-    _ptr->close_group(this,msg.group);
+    if (!flt || flt->on_incoming_close_group(msg.group)) {
+        _ptr->close_group(this,msg.group);
+    }
+    check_rules(flt);
 }
 
 void AbstractBridge::receive(const AddToGroup &msg) {
     auto flt = _filter.load();
-    if (flt && !flt->on_incoming_add_to_group(msg.group, msg.target)) {
+    if ((flt && !flt->on_incoming_add_to_group(msg.group, msg.target))
+    ||  !_ptr->add_to_group(this, msg.group, msg.target)) {
         ChannelID g = msg.group;
         send(ChannelUpdate{ChannelList(&g,1), Operation::erase});
-        return;
     }
-    if (!_ptr->add_to_group(this, msg.group, msg.target)) {
-        ChannelID g = msg.group;
-        send(ChannelUpdate{ChannelList(&g,1), Operation::erase});
-        return;
-    }
+    check_rules(flt);
 }
 
 void AbstractBridge::on_close_group(ChannelID group_name) noexcept {
@@ -214,8 +215,10 @@ void AbstractBridge::on_clear_path(ChannelID sender, ChannelID receiver) noexcep
 
 void AbstractBridge::on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept {
     auto flt = _filter.load();
-    if (flt && !flt->on_outgoing_add_to_group(group_name, target_id)) return;
-    send(AddToGroup{group_name, target_id});
+    if (!flt || flt->on_outgoing_add_to_group(group_name, target_id)) {
+        send(AddToGroup{group_name, target_id});
+    }
+    check_rules(flt);
 }
 
 
@@ -240,6 +243,10 @@ void AbstractBridge::cycle_detection(bool cycle) noexcept {
 
 void AbstractBridge::install_cycle_detection_report(std::function<void(AbstractBridge *lsn, bool cycle)> rpt) {
     cycle_report = std::move(rpt);
+}
+
+void AbstractBridge::check_rules(Filter *flt) {
+    if (flt && flt->commit_rule_changed()) send_mine_channels(false);
 }
 
 }
