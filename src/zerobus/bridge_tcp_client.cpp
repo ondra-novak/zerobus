@@ -4,16 +4,20 @@ namespace zerobus {
 
 
 BridgeTCPClient::BridgeTCPClient(Bus bus, std::shared_ptr<INetContext> ctx, std::string address)
-:BridgeTCPCommon(std::move(bus), ctx, ctx->peer_connect(get_address_from_url(address)), false)
-,_address(std::move(address))
-,_session_id(generate_session_id())
-{
-     register_monitor(this);
-    _ctx->ready_to_send(_aux, this);
+:BridgeTCPClient(std::move(bus)) {
+    bind(std::move(ctx), std::move(address));
 }
+
 
 BridgeTCPClient::BridgeTCPClient(Bus bus, std::string address)
 :BridgeTCPClient(std::move(bus), make_network_context(1), std::move(address)) {
+
+}
+
+BridgeTCPClient::BridgeTCPClient(Bus bus)
+:BridgeTCPCommon(std::move(bus), false)
+,_session_id(generate_session_id())
+{
 
 }
 
@@ -27,6 +31,14 @@ BridgeTCPClient::~BridgeTCPClient() {
         block_hwm(lk);
     }
     destroy();
+}
+
+void BridgeTCPClient::bind(std::shared_ptr<INetContext> ctx, std::string address) {
+    BridgeTCPCommon::bind(ctx, ctx->peer_connect(get_address_from_url(address)));
+    _address = address;
+    register_monitor(this);
+   _ctx->ready_to_send(_aux, this);
+
 }
 
 void BridgeTCPClient::set_linger_timeout(std::size_t timeout_ms) {

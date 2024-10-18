@@ -14,14 +14,21 @@ static std::condition_variable &get_shared_cond_var() {
     return cond;
 }
 
-
-BridgeTCPCommon::BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx,ConnHandle aux, bool client)
+BridgeTCPCommon::BridgeTCPCommon(Bus bus, bool client_masking)
 :AbstractBridge(std::move(bus))
-,_ctx(std::move(ctx))
-,_aux(aux)
-,_ws_builder(client)
+,_ws_builder(client_masking)
 ,_ws_parser(_input_data, false)
 {
+ }
+
+
+
+void BridgeTCPCommon::bind(std::shared_ptr<INetContext> ctx, ConnHandle aux) {
+    if (_bound) throw std::runtime_error("Bridge is already bound");
+    _bound = true;
+    _ctx = std::move(ctx);
+    _aux = aux;
+
 }
 
 void BridgeTCPCommon::init() {
@@ -309,6 +316,7 @@ void BridgeTCPCommon::send(const ClearPath &m) noexcept {
     output_message(_ser(m));
 }
 
+
 void BridgeTCPCommon::send(const AddToGroup &m) noexcept {        {
     std::lock_guard _(mx);
     std::cerr << "Send:" << this << ":" << m << std::endl;
@@ -330,4 +338,13 @@ void BridgeTCPCommon::send(const GroupReset &m) noexcept{        {
 
     output_message(_ser(m));
 }
+
+void BridgeTCPCommon::send(const UpdateSerial&m) noexcept { {
+    std::lock_guard _(mx);
+    std::cerr << "Send:" << this << ":" << m << std::endl;
+}
+
+    output_message(_ser(m));
+}
+
 }

@@ -46,12 +46,13 @@ protected:
     void destroy();
 
     std::shared_ptr<INetContext> _ctx;
-    ConnHandle _aux;
+    ConnHandle _aux = 0;
     ws::Builder _ws_builder;
     ws::Parser _ws_parser;
     std::size_t _hwm = 1024*1024;   //1MB
     std::size_t _hwm_timeout = 1000;    //1 second
     bool _destroyed = false;
+    bool _bound = false;
 
 
     char _input_buffer[input_buffer_size];
@@ -73,6 +74,7 @@ protected:
     virtual void send(const AddToGroup &) noexcept override;
     virtual void send(const GroupEmpty &) noexcept override;
     virtual void send(const GroupReset &) noexcept override;
+    virtual void send(const UpdateSerial &) noexcept override;
     void read_from_connection();
 
     bool after_send(std::size_t sz);
@@ -80,7 +82,16 @@ protected:
 
     void flush_buffer();
 
-    BridgeTCPCommon(Bus bus, std::shared_ptr<INetContext> ctx, ConnHandle aux, bool client);
+    ///create common class
+    /**
+     * @param bus bus
+     * @param client_masking set true to include client masking to websocket stream. Set false
+     * to skip masking (can be used with client as server is able process unmasked frames)
+     */
+    BridgeTCPCommon(Bus bus, bool client_masking);
+
+    ///bind to network connection
+    void bind(std::shared_ptr<INetContext> ctx, ConnHandle aux);
     void init();
 
     void output_message(const ws::Message &msg);

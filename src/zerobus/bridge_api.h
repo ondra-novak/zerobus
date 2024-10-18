@@ -6,10 +6,11 @@
 
 namespace zerobus {
 
+
+using SerialID = std::string_view;
+
 class IBridgeAPI : public IBus {
 public:
-
-    static constexpr std::string_view cycle_detection_prefix = "cdp_";
 
     using ChannelList = std::span<ChannelID>;
 
@@ -44,7 +45,6 @@ public:
      * string is found, the bridge knows, that it closes the cycle, so it should
      * temporarily disable its bridging function
      */
-    virtual std::string_view get_cycle_detect_channel_name() const = 0;
     static std::shared_ptr<IBridgeAPI> from_bus(const std::shared_ptr<IBus> &bus) {
         return std::static_pointer_cast<IBridgeAPI>(bus);
     }
@@ -66,6 +66,22 @@ public:
      */
     virtual void force_update_channels() = 0;
 
+    ///Sets serial ID associated with listener
+    /**
+     * @param lsn listener (bridge) which associated with serial id
+     * @param serialId serial id
+     * @retval true accepted
+     * @retval false rejected - cycle detected
+     */
+    virtual bool set_serial(IListener *lsn, SerialID serialId) = 0;
+
+    ///Get active serial
+    /**
+     * @param lsn listener (bridge) sending serial to other side
+     * @return current network serial. Can be empty string in case, that serial don't need to be
+     * send to other side
+     */
+    virtual SerialID get_serial(IListener *lsn) const = 0;
 };
 
 ///exception is thrown when cycle is detected during subscribtion

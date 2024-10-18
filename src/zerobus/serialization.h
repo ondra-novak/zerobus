@@ -30,7 +30,8 @@ public:
             Msg::AddToGroup,
             Msg::CloseGroup,
             Msg::GroupEmpty,
-            Msg::GroupReset>;
+            Msg::GroupReset,
+            Msg::UpdateSerial>;
 
     Result operator()(std::string_view msgtext);
 public: //static helpers
@@ -59,6 +60,7 @@ public:
     std::string_view operator()(const Msg::CloseGroup &msg);
     std::string_view operator()(const Msg::GroupEmpty &msg);
     std::string_view operator()(const Msg::GroupReset &msg);
+    std::string_view operator()(const Msg::UpdateSerial &msg);
 
     template<typename ... Args>
     std::string_view operator()(std::uint8_t msg_type, const Args & ... args) {

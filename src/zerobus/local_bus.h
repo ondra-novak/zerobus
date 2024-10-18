@@ -39,13 +39,14 @@ public:
     virtual bool is_channel(ChannelID id) const override;
     virtual void unsubcribe_private(IListener *listener) override;
     virtual std::string get_random_channel_name(std::string_view prefix) const override;
-    virtual std::string_view get_cycle_detect_channel_name() const override;
     virtual bool clear_return_path(IListener *lsn, ChannelID sender, ChannelID receiver)  override;
     virtual void force_update_channels()  override;
     virtual bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) override;
     virtual void close_group(IListener *owner, ChannelID group_name) override;
     virtual void close_all_groups(IListener *owner) override;
     virtual void unsubscribe_all_channels(IListener *listener, bool and_groups) override;
+    virtual bool set_serial(IListener *lsn, SerialID serialId) override;
+    virtual SerialID get_serial(IListener *lsn) const override;
 
     ///Create local message broker;
     static Bus create();
@@ -188,8 +189,9 @@ protected:
     MailboxToListenerMap _mailboxes_by_name; //maps mailbox name to listener ptr
     BackPathStorage _back_path;
     mvector<IMonitor *> _monitors;      //list of monitors
-    mutable std::string _cycle_detector_id = {};    //contains a random string which is used to detect cycles
-    mutable const IListener *_last_proxy=nullptr;    //pointer to last proxy - to check, whether there are more proxies
+    std::string _this_serial;           //this node serial id
+    std::string _cur_serial;            //current serial id
+    IListener *_serial_source = {};     //listener which sets _cur_serial
     mutable bool _channels_change = false;
     mutable unsigned int _recursion = 0;
     ///erase mailbox

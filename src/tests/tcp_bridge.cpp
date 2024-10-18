@@ -92,19 +92,6 @@ public:
     FlagRef(std::atomic<bool> &flag):flag(flag) {}
 };
 
-template<typename Base>
-class BridgeCycleReport: public FlagRef, public Base {
-public:
-    template<typename ... Args>
-    BridgeCycleReport(std::atomic<bool> &flag, Args ... args)
-        :FlagRef(flag), Base(args...) {}
-    virtual void cycle_detection(bool f) noexcept {
-        if (f) {
-            flag.store(true);
-            flag.notify_all();
-        }
-    };
-};
 
 void detect_cycle_test() {
     std::cout << __FUNCTION__ << std::endl;
@@ -113,13 +100,18 @@ void detect_cycle_test() {
     auto slave2 = Bus::create();
     auto master2 = Bus::create();
     std::promise<std::string> result;
-    std::atomic<bool> cycle ={false};
+    std::atomic<bool> cycle_flag = {false};
 
-    BridgeCycleReport<BridgeTCPServer> server1(cycle, master,  "localhost:12121");
-    BridgeCycleReport<BridgeTCPClient> client11(cycle, slave1, "localhost:12121");
-    BridgeCycleReport<BridgeTCPClient> client12(cycle, slave2, "localhost:12121");
-    BridgeCycleReport<BridgeTCPServer> server2(cycle, master2,  "localhost:12122");
-    BridgeCycleReport<BridgeTCPClient> client21(cycle, slave1, "localhost:12122");
+    AbstractBridge::install_cycle_detection_report([&](auto,auto){
+        cycle_flag = true;
+        cycle_flag.notify_all();
+    });
+
+    BridgeTCPServer server1(master,  "localhost:12121");
+    BridgeTCPClient client11(slave1, "localhost:12121");
+    BridgeTCPClient client12(slave2, "localhost:12121");
+    BridgeTCPServer server2( master2,  "localhost:12122");
+    BridgeTCPClient client21( slave1, "localhost:12122");
 
 
 
@@ -137,13 +129,15 @@ void detect_cycle_test() {
     CHECK(w);
 
     //close the cycle
-    BridgeCycleReport<BridgeTCPClient> client22(cycle, slave2, "localhost:12122");
+    BridgeTCPClient client22(slave2, "localhost:12122");
 
-    cycle.wait(false);
+    cycle_flag.wait(false);
 
     cn.send_message("reverse", "ahoj svete");
     auto r = result.get_future().get();
     CHECK_EQUAL(r, "etevs joha");
+
+    AbstractBridge::install_cycle_detection_report({});
 }
 
 class ReconnectClientTest: public FlagRef, public BridgeTCPClient {
@@ -165,7 +159,8 @@ void test_reconnect() {
 
     std::promise<std::string> result;
 
-    ReconnectClientTest client(flag, master, "localhost:12121");
+    ReconnectClientTest client(flag, master);
+    client.bind(make_network_context(), "localhost:12121");
 
     auto sn = ClientCallback(master, [&](AbstractClient &c, const Message &msg, bool){
         std::string s ( msg.get_content());

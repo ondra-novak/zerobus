@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <sstream>
 #include <iomanip>
+#include <optional>
 using namespace zerobus;
 
 
@@ -91,6 +92,11 @@ protected:
         log(source, "GROUP_EMPTY: ",g.group);
         DirectBridge::on_send(source, std::move(g));
     }
+    virtual void on_send(const Bridge &source, const Bridge::UpdateSerial &g) override {
+        std::lock_guard _(*this);
+        log(source, "UPDATE_SERIAL: ",g.serial);
+        DirectBridge::on_send(source, std::move(g));
+    }
 };
 
 
@@ -171,7 +177,7 @@ void detect_cycle_test2() {
 
     VerboseBridge b1(master, slave1);
     VerboseBridge b2(master, slave2);
-    VerboseBridge b3(master2, slave1);
+    std::optional<VerboseBridge> b3(std::in_place, master2, slave1);
 
 
 
@@ -193,6 +199,7 @@ void detect_cycle_test2() {
     cn.send_message("reverse", "ahoj svete");
     auto r = result.get_future().get();
     CHECK_EQUAL(r, "etevs joha");
+    b3.reset();
 }
 
 

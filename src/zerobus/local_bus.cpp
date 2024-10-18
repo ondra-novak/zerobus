@@ -145,6 +145,7 @@ LocalBus::LocalBus()
     ,_mailboxes_by_name(MailboxToListenerMap::allocator_type(&_mem_resource))
     ,_back_path(_mem_resource)
     ,_monitors(mvector<IMonitor *>::allocator_type(&_mem_resource))
+    ,_this_serial(LocalBus::get_random_channel_name(""))
 {
 
 }
@@ -163,10 +164,6 @@ bool LocalBus::subscribe(IListener *listener, ChannelID channel)
 {
     if (channel.empty()) return false;
     std::lock_guard _(*this);
-    if (channel == _cycle_detector_id) {
-        unsubscribe_all_channels_lk(listener, false);
-        throw CycleDetectedException();
-    }
     auto chan = get_channel_lk(channel);
     if (chan->get_owner()) return false;
     TLState::_tls_state.enqueue_lsn({std::move(chan), listener, {}});
@@ -192,6 +189,29 @@ void LocalBus::channel_is_empty(ChannelID id) {
     _channels.erase(id);
 }
 
+bool LocalBus::set_serial(IListener *lsn, SerialID serialId) {
+    std::lock_guard _(*this);
+    if (serialId.empty()) return true;
+    SerialID cur_id = _serial_source?_cur_serial:_this_serial;
+    if (serialId == cur_id) {
+        return lsn == _serial_source;
+    }
+    if (cur_id > serialId) {
+        _serial_source = lsn;
+        _cur_serial = serialId;
+    }
+    return true;
+}
+
+SerialID LocalBus::get_serial(IListener *lsn) const {
+    std::lock_guard _(*this);
+    if (_serial_source) {
+        if (lsn != _serial_source) return _cur_serial;
+        else return "";
+    }
+    return _this_serial;
+}
+
 void LocalBus::remove_mailbox(IListener *lsn) {
     PMBxDef def;
     std::lock_guard _(*this);
@@ -209,6 +229,10 @@ void LocalBus::unsubscribe_all(IListener *listener)
     erase_groups_lk(listener);
     _back_path.remove_listener(listener);
     if (unsubscribe_all_channels_lk(listener, true)) {
+        _channels_change = true;
+    }
+    if (listener == _serial_source) {
+        _serial_source = nullptr;
         _channels_change = true;
     }
 }
@@ -438,26 +462,11 @@ void LocalBus::unregister_monitor(const IMonitor *mon) {
 LocalBus::ChannelList LocalBus::get_active_channels(IListener *listener,ChannelListStorage &storage) const {
     std::lock_guard _(*this);
     storage.clear();
-    if (_last_proxy && listener != _last_proxy) {
-        if (_cycle_detector_id.empty()) {
-            _cycle_detector_id = get_random_channel_name(cycle_detection_prefix);
-        }
-    } else {
-        _last_proxy = listener;
-    }
-    bool cycle_added = _cycle_detector_id.empty();
     for (const auto &[k,v]: _channels) {
         if (v->can_export(listener)) {
-            if (!cycle_added && k > _cycle_detector_id) {
-                cycle_added = true;
-                storage._channels.push_back(_cycle_detector_id);
-            }
             storage._channels.push_back(k);
             storage._locks.emplace_back(v, nullptr);
         }
-    }
-    if (!cycle_added) {
-        storage._channels.push_back(_cycle_detector_id);
     }
     return storage.get_channels();
 }
@@ -637,10 +646,6 @@ void LocalBus::BackPathStorage::remove_listener(IListener *l) {
             _entries.erase(std::string_view(x->id.begin(), x->id.end()));
         }
     }
-}
-
-std::string_view LocalBus::get_cycle_detect_channel_name() const {
-    return _cycle_detector_id;
 }
 
 Bus Bus::create() {

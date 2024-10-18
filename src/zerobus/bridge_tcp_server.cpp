@@ -5,22 +5,35 @@
 
 namespace zerobus {
 
-BridgeTCPServer::BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std::string address_port)
-        :_bus(bus),_ctx(std::move(ctx))
-        , _path(BridgeTCPCommon::get_path_from_url(address_port))
-        ,_custom_page([this](std::string_view uri)->CustomPage {
-            if (uri == _path) {
-                return {400,"Bad request", "text/plain", std::string_view("Please, use websocket connection")};
-            } else {
-                return {404,"Not found", "text/html", std::string_view("<html><body><h1>404 Not found</h1></body></html>")};
-            }
-        })
-        {
-        _aux = _ctx->create_server(BridgeTCPCommon::get_address_from_url(address_port));
-        auto br = IBridgeAPI::from_bus(_bus.get_handle());
-        br->register_monitor(this);
-        _ctx->accept(_aux, this);
+BridgeTCPServer::BridgeTCPServer(Bus bus)
+:_bus(std::move(bus))
+,_custom_page([this](std::string_view uri)->CustomPage {
+    if (uri == _path) {
+        return {400,"Bad request", "text/plain", std::string_view("Please, use websocket connection")};
+    } else {
+        return {404,"Not found", "text/html", std::string_view("<html><body><h1>404 Not found</h1></body></html>")};
     }
+}) {
+
+
+}
+
+void BridgeTCPServer::bind(std::shared_ptr<INetContext> ctx, std::string address_port) {
+    if (_bound) throw std::runtime_error("Server is already bound");
+    auto aux = ctx->create_server(BridgeTCPCommon::get_address_from_url(address_port));
+    _bound = true;
+    _ctx = std::move(ctx);
+    _path = BridgeTCPCommon::get_path_from_url(address_port);
+    _aux = aux;
+    auto br = IBridgeAPI::from_bus(_bus.get_handle());
+    br->register_monitor(this);
+    _ctx->accept(_aux, this);
+}
+
+BridgeTCPServer::BridgeTCPServer(Bus bus, std::shared_ptr<INetContext> ctx, std::string address_port)
+:BridgeTCPServer(std::move(bus)) {
+    bind(std::move(ctx), address_port);
+}
 
 BridgeTCPServer::BridgeTCPServer(Bus bus, std::string address_port)
     :BridgeTCPServer(std::move(bus), make_network_context(1), std::move(address_port)) {
@@ -80,11 +93,10 @@ void BridgeTCPServer::on_timeout() noexcept {
 }
 
 BridgeTCPServer::Peer::Peer(BridgeTCPServer &owner, ConnHandle aux, unsigned int id)
-    :BridgeTCPCommon(owner._bus, owner._ctx, aux, false)
+    :BridgeTCPCommon(owner._bus, false)
     ,_id(id)
-    ,_owner(owner)
-    ,_ws_parser(BridgeTCPCommon::_input_data)
-    {
+    ,_owner(owner) {
+    bind(owner._ctx, aux);
     init();
 }
 

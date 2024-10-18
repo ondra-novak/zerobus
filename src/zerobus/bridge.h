@@ -6,6 +6,7 @@
 #include <span>
 #include <vector>
 #include <atomic>
+#include <functional>
 namespace zerobus {
 
 
@@ -26,7 +27,7 @@ struct ChannelUpdate {
     ChannelList lst;
     Operation op;
     friend std::ostream &operator<<(std::ostream &out, const ChannelUpdate &ch) {
-        out << "Update:" <<static_cast<int>(ch.op);
+        out << "Update: " <<static_cast<int>(ch.op);
         char sep = '-';
         for (auto x: ch.lst) {
             out << sep << x;
@@ -35,6 +36,15 @@ struct ChannelUpdate {
         return out;
     }
 };
+
+struct UpdateSerial {
+    ChannelID serial;
+    friend std::ostream &operator<<(std::ostream &out, const UpdateSerial &ch) {
+        out << "Update serial:" << ch.serial;
+        return out;
+    }
+};
+
 
 struct ChannelReset {
     friend std::ostream &operator<<(std::ostream &out, const ChannelReset &) {
@@ -98,6 +108,7 @@ public:
     using AddToGroup = Msg::AddToGroup;
     using GroupEmpty = Msg::GroupEmpty;
     using GroupReset = Msg::GroupReset;
+    using UpdateSerial = Msg::UpdateSerial;
 
     AbstractBridge(Bus bus);
 
@@ -140,6 +151,7 @@ public:
 
     ///apply their clear path command
     void receive(const ClearPath &cp);
+    void receive(const UpdateSerial &msg);
 
     void receive(const CloseGroup &msg) ;
     void receive(const AddToGroup &msg);
@@ -176,6 +188,12 @@ public:
             zerobus::ChannelID target_id) noexcept override;
     virtual void on_group_empty(ChannelID group_name) noexcept override;
 
+
+    bool is_disabled_for_cycle() const {return _cycle_detected;}
+
+
+    static void install_cycle_detection_report(std::function<void(AbstractBridge *lsn, bool cycle)> rpt);
+
 protected:
     ///override - send channels to other side
     /**
@@ -190,10 +208,11 @@ protected:
     virtual void send(const ClearPath &) noexcept = 0;
     virtual void send(const GroupEmpty &) noexcept = 0;
     virtual void send(const GroupReset &) noexcept = 0;
+    virtual void send(const UpdateSerial &) noexcept = 0;
 
 
     ///diagnostic override called when cycle detection state changed;
-    virtual void cycle_detection(bool ) noexcept {};
+    virtual void cycle_detection(bool ) noexcept;
 protected:
 
     std::shared_ptr<IBridgeAPI> _ptr;
@@ -205,6 +224,7 @@ protected:
     std::atomic<Filter *> _filter = {};
     std::atomic<unsigned int> _send_mine_channels_lock = {0};
     bool _cycle_detected = false;
+    std::size_t srl_hash = 0;
 
     static ChannelList persist_channel_list(const ChannelList &source, std::vector<ChannelID> &channels, std::vector<char> &characters);
 

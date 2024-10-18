@@ -6,7 +6,7 @@
 
 namespace zerobus {
 
-
+static std::function<void(AbstractBridge *lsn, bool cycle)> cycle_report;
 
 
 AbstractBridge::AbstractBridge(Bus bus)
@@ -20,25 +20,32 @@ void AbstractBridge::process_mine_channels(ChannelList lst, bool reset) noexcept
     auto flt = _filter.load();
     if (flt) {
         auto e = std::remove_if(lst.begin(), lst.end(), [&](const ChannelID ch){
-           if (ch.substr(0,4) == "cdp_") return true;   //allow cdp_ channels
            return !flt->on_incoming(ch); //we block anounincing channel to prevent incoming message
         });
         lst = ChannelList(lst.begin(), e);
     }
 
+    auto srl = _ptr->get_serial(this);
+    std::hash<std::string_view> hasher;
+    auto h = hasher(srl);
+    if (h != srl_hash) {
+        srl_hash = h;
+        if (!srl.empty()) send(UpdateSerial{srl});
+    }
+
     if (_cur_channels.empty() || reset) {
         if (!lst.empty()) send(ChannelUpdate{lst, Operation::replace});
     } else if (lst.empty()) {
-        send(ChannelUpdate{lst, Operation::replace});
+        send(ChannelUpdate{lst,  Operation::replace});
     } else {
         std::set_difference(lst.begin(), lst.end(),
                 _cur_channels.begin(), _cur_channels.end(), std::back_inserter(_tmp));
-        if (!_tmp.empty()) send(ChannelUpdate{_tmp, Operation::add});
+        if (!_tmp.empty()) send(ChannelUpdate{_tmp,  Operation::add});
         _tmp.clear();
 
         std::set_difference(_cur_channels.begin(), _cur_channels.end(),
                 lst.begin(), lst.end(), std::back_inserter(_tmp));
-        if (!_tmp.empty()) send(ChannelUpdate{_tmp, Operation::erase});
+        if (!_tmp.empty()) send(ChannelUpdate{_tmp,  Operation::erase});
         _tmp.clear();
     }
     persist_channel_list(lst, _cur_channels, _char_buffer);
@@ -68,33 +75,6 @@ void AbstractBridge::send_mine_channels(bool reset) noexcept {
 }
 
 void AbstractBridge::receive(const ChannelUpdate &chan_up) {
-    auto cdid = _ptr->get_cycle_detect_channel_name();
-    if (!cdid.empty()) {
-        auto iter = std::find(chan_up.lst.begin(), chan_up.lst.end(), cdid);
-        if (iter != chan_up.lst.end()) {
-            if (chan_up.op == Operation::erase) {
-                if (_cycle_detected) {
-                    _cycle_detected = false;
-                    cycle_detection(_cycle_detected);
-                    send(ChannelReset{});
-                    send_mine_channels();
-                    return;
-                }
-            } else {
-                if (!_cycle_detected) {
-                    _cycle_detected = true;
-                    cycle_detection(_cycle_detected);
-                    send_mine_channels();
-                    _ptr->unsubscribe_all_channels(this, false);
-                    return;
-                }
-            }
-        } else if (chan_up.op == Operation::replace && _cycle_detected) {
-            _cycle_detected = false;
-            cycle_detection(_cycle_detected);
-            send_mine_channels();
-        }
-    }
     if (_cycle_detected) return;
     switch (chan_up.op) {
         case Operation::replace: _ptr->unsubscribe_all_channels(this, false);
@@ -104,8 +84,7 @@ void AbstractBridge::receive(const ChannelUpdate &chan_up) {
             if (flt) {
                 for (const auto &x: chan_up.lst) {
                     //
-                    if (x.substr(0,IBridgeAPI::cycle_detection_prefix.size())
-                            == IBridgeAPI::cycle_detection_prefix || flt->on_outgoing(x))
+                    if (flt->on_outgoing(x))
                         _ptr->subscribe(this, x);
                 }
             } else {
@@ -149,6 +128,22 @@ void AbstractBridge::receive(const ClearPath &cp) {
 
 void AbstractBridge::on_group_empty(ChannelID group_name) noexcept {
     send(Msg::GroupEmpty{group_name});
+}
+
+void AbstractBridge::receive(const UpdateSerial &msg) {
+    bool srl_state = _ptr->set_serial(this, msg.serial);
+    if (srl_state == _cycle_detected) {
+        _cycle_detected = !_cycle_detected;
+        cycle_detection(_cycle_detected);
+        send_mine_channels();
+        if (_cycle_detected) {
+            _ptr->unsubscribe_all_channels(this, false);
+            return;
+        } else {
+            send(ChannelReset{});
+            return;
+        }
+    }
 }
 
 void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
@@ -235,6 +230,16 @@ void AbstractBridge::receive(const GroupEmpty &msg) {
 }
 void AbstractBridge::receive(const GroupReset &) {
     _ptr->close_all_groups(this);
+}
+
+void AbstractBridge::cycle_detection(bool cycle) noexcept {
+    if (cycle_report) {
+        cycle_report(this, cycle);
+    }
+}
+
+void AbstractBridge::install_cycle_detection_report(std::function<void(AbstractBridge *lsn, bool cycle)> rpt) {
+    cycle_report = std::move(rpt);
 }
 
 }

@@ -29,10 +29,19 @@ public:
      */
     BridgeTCPClient(Bus bus, std::string address);
 
+    ///Construct bridge, but don't connect yet
+    /**
+     * Use bind to connect
+     * @param bus local end of the bus
+     */
+    BridgeTCPClient(Bus bus);
+
     virtual ~BridgeTCPClient() override;
 
 
     void set_linger_timeout(std::size_t timeout_ms);
+
+    void bind(std::shared_ptr<INetContext> ctx, std::string address);
 
 protected:
 

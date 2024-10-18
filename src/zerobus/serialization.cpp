@@ -23,6 +23,7 @@ enum class MessageType: std::uint8_t {
         group_empty = 0xF7,
         ///close all groups (lost context)
         group_reset = 0xF6,
+        update_serial = 0xF5,
 };
 
 Deserialization::Result Deserialization::operator ()(std::string_view msgtext) {
@@ -79,6 +80,10 @@ Deserialization::Result Deserialization::operator ()(std::string_view msgtext) {
         case MessageType::group_reset: {
             return Msg::GroupReset{};
         }
+        case MessageType::update_serial: {
+            auto serial = read_string(msgtext);
+            return Msg::UpdateSerial{serial};
+        }
 
     }
 }
@@ -113,7 +118,7 @@ std::string_view Serialization::operator ()(const Msg::ChannelUpdate &msg) {
             MessageType::channels_add,
             MessageType::channels_erase,
     };
-    auto iter = compose_message(start_write(), types[static_cast<int>(msg.op)], msg.lst.size());
+    auto iter = compose_message(start_write(), types[static_cast<int>(msg.op)],  msg.lst.size());
     for (const auto &c: msg.lst) iter = write_string(iter, c);
     return finish_write();
 }
@@ -162,6 +167,11 @@ std::string_view Deserialization::read_string(std::string_view &msgtext) {
     auto part = msgtext.substr(0,len);
     msgtext = msgtext.substr(part.size());
     return part;
+}
+
+std::string_view Serialization::operator ()(const Msg::UpdateSerial &msg) {
+    compose_message(start_write(), MessageType::update_serial, msg.serial);
+    return finish_write();
 }
 
 std::string_view Serialization::finish_write() const {

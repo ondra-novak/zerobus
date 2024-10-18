@@ -28,10 +28,23 @@ public:
      * @note creates network context with single thread
      */
     BridgeTCPServer(Bus bus, std::string address_port);
+    ///Construct bridge, but don't create server
+    /**
+     * The server must be created manually by calling function bind()
+     * @param bus bus to connect
+     */
+    BridgeTCPServer(Bus bus);
+
     BridgeTCPServer(const BridgeTCPServer &) = delete;
     BridgeTCPServer &operator=(const BridgeTCPServer &) = delete;
     virtual ~BridgeTCPServer() override;
 
+    ///Bind the instance to existing bus and create server
+    /**
+     * @param ctx network context
+     * @param address_port address and port or ws:// string
+     */
+    void bind(std::shared_ptr<INetContext> ctx, std::string address_port);
 
 
     struct CustomPage {
@@ -131,7 +144,6 @@ protected:
 
     private:
         BridgeTCPServer &_owner;
-        ws::Parser _ws_parser;
     };
 
 
@@ -148,6 +160,7 @@ protected:
     unsigned int _id_cntr = 1;
     bool _send_mine_channels_flag = false;
     bool _lost_peers_flag = false;
+    bool _bound = false;
     std::function<CustomPage(std::string_view)> _custom_page;
 
 
