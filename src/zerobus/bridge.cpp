@@ -30,10 +30,11 @@ void AbstractBridge::process_mine_channels(ChannelList lst, bool reset) noexcept
     auto srl = _ptr->get_serial(this);
     std::hash<std::string_view> hasher;
     auto h = hasher(srl);
-    if (h != srl_hash) {
-        srl_hash = h;
+    if (h != _srl_hash) {
+        _srl_hash = h;
         if (!srl.empty()) send(UpdateSerial{srl});
     }
+    if (_cycle_detected) lst = {};
 
     if (_cur_channels.empty() || reset) {
         if (!lst.empty()) send(ChannelUpdate{lst, Operation::replace});
@@ -113,7 +114,7 @@ void AbstractBridge::receive(const Message &msg) {
         }
     }
     if (!_ptr->dispatch_message(this, msg, true)) {
-        on_clear_path(msg.get_sender(), msg.get_channel()); //report that we unable to process message if no route
+        on_no_route(msg.get_sender(), msg.get_channel()); //report that we unable to process message if no route
     }
 }
 
@@ -125,7 +126,7 @@ void AbstractBridge::set_filter(std::unique_ptr<Filter> &flt) {
     flt.reset(r);
 }
 
-void AbstractBridge::receive(const ClearPath &cp) {
+void AbstractBridge::receive(const NoRoute &cp) {
     _ptr->clear_return_path(this, cp.sender, cp.receiver);
 }
 
@@ -209,8 +210,8 @@ void AbstractBridge::on_close_group(ChannelID group_name) noexcept {
     send(CloseGroup{group_name});
 }
 
-void AbstractBridge::on_clear_path(ChannelID sender, ChannelID receiver) noexcept {
-    send(ClearPath{sender, receiver});
+void AbstractBridge::on_no_route(ChannelID sender, ChannelID receiver) noexcept {
+    send(NoRoute{sender, receiver});
 }
 
 void AbstractBridge::on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept {
@@ -231,8 +232,16 @@ AbstractBridge::~AbstractBridge() {
 void AbstractBridge::receive(const GroupEmpty &msg) {
     _ptr->unsubscribe(this, msg.group);
 }
-void AbstractBridge::receive(const GroupReset &) {
-    _ptr->close_all_groups(this);
+void AbstractBridge::receive(const NewSession &msg) {
+    _version = msg.version;
+    _ptr->unsubscribe_all_channels(this, true);
+    _srl_hash = 0;  //force update_session
+    if (_cycle_detected) {
+        _cycle_detected = false;    //a new session should break cycle
+        cycle_detection(_cycle_detected);
+    }
+
+    send_mine_channels(true);
 }
 
 void AbstractBridge::cycle_detection(bool cycle) noexcept {

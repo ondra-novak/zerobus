@@ -3,16 +3,15 @@
 
 namespace zerobus {
 
-template<typename _Base = IListener>
-class AbstractClientGeneric: public _Base {
+class AbstractClient: public IListener {
 public:
 
-    AbstractClientGeneric(Bus bus):_bus(std::move(bus)) {}
-    ~AbstractClientGeneric() {_bus.unsubscribe_all(this);}
+    AbstractClient(Bus bus):_bus(std::move(bus)) {}
+    ~AbstractClient() {_bus.unsubscribe_all(this);}
 
 
-    AbstractClientGeneric(const AbstractClientGeneric &) = delete;
-    AbstractClientGeneric &operator=(const AbstractClientGeneric &) = delete;
+    AbstractClient(const AbstractClient &) = delete;
+    AbstractClient &operator=(const AbstractClient &) = delete;
 
     Bus get_bus() const {return _bus;}
 
@@ -69,17 +68,6 @@ public:
         return _bus.is_channel(id);
     }
 
-    ///retrieve subscribed channels for listener
-    /**
-     *
-     * @param listener
-     * @param cb callback function which receives a span of channels
-     */
-    template<std::invocable<std::span<ChannelID> > Callback>
-    void get_subscribed_channels( Callback &&cb) {
-        _bus.get_subscribed_channels(this, std::forward<Callback>(cb));
-    }
-
     bool add_to_group(ChannelID group_name, ChannelID sender_id) {
         return _bus.add_to_group(this, group_name, sender_id);
     }
@@ -92,11 +80,18 @@ public:
         _bus.close_all_groups(this);
     }
 
+public:
+    //Overrides
+    virtual void on_close_group(ChannelID ) noexcept override {}
+    virtual void on_no_route(ChannelID , ChannelID ) noexcept override {}
+    virtual void on_group_empty(ChannelID ) noexcept override {}
+    virtual void on_message(const Message &, bool ) noexcept override {}
+    virtual void on_add_to_group(ChannelID , ChannelID ) noexcept override {}
+
 protected:
     Bus _bus;
 };
 
-using AbstractClient = AbstractClientGeneric<IListener>;
 
 template<std::invocable<AbstractClient &, const Message &, bool> Fn >
 class ClientCallback: public AbstractClient {
@@ -110,10 +105,6 @@ public:
         _fn(*this, message, pm);
     }
 
-    virtual void on_close_group(ChannelID ) noexcept override {}
-    virtual void on_clear_path(ChannelID , ChannelID ) noexcept override {}
-    virtual void on_add_to_group(ChannelID , ChannelID ) noexcept override {}
-    virtual void on_group_empty(ChannelID ) noexcept override {}
 
 protected:
     Fn _fn;

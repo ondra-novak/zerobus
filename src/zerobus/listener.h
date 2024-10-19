@@ -27,52 +27,58 @@ public:
     virtual void on_message(const Message &message, bool pm) noexcept= 0;
 
 
-    ///clear path when receiver is no longer listening
+    ///Sent when there is no route to destination
     /**
      * @param sender who sent the message
      * @param receiver target of message
      *
-     * One bridge instance can call other bridge instance to forward clear_path message
-     * propagating the event from receiver to sender (follows the path)
+     * The bridge forwards this event towards the `sender`. The `receive` contains ID of
+     * receiver of failed message. For ordinary listener, the sender contains ID of this
+     * listener, and receiver contains channel name previously send message, if it was
+     * a direct message. There is no specification whether this message can appear
+     * when message was sent to a channel or a group
      *
-     * If this interface used as end point client, the function is called whenever the
-     * message cannot be delivered to the receiver, because it is probably no longer available
+     * @note if the receiver was at the same node, this message doesn't appear. The
+     * function send_message simply returns false. This message appear only when
+     * message cannot be delivered after the send_message returned true
      */
-    virtual void on_clear_path(ChannelID sender, ChannelID receiver) noexcept  = 0;
+    virtual void on_no_route(ChannelID sender, ChannelID receiver) noexcept  = 0;
 
     ///add group
     /**
-     * Called by bus when add_to_group is called while following path to the target_id
+     * Called when this listener was added to a group. If this listener is a bridge, this
+     * event must be forwarded to the other side. Then the bridge calls add_to_group
+     * on the other side.
+     *
+     * If this listener is an ordinary listener, this event notifies successfully add to
+     * a group.
+     *
      * @param group_name name of the group
-     * @param target_id target id
-     *
-     * This function also means that the bridge was subscribed to the group
-     *
-     * The bridge should call add_to_group on target network. If the path is not possible, it
-     * should unsubscribe the bridge from the channel.
-     *
-     * If this interface is used for end point client, the function is called when
-     * the client is added to a group. In this case, the group_name contains
-     * name of the group and target_id contains id of this client
+     * @param target_id target id. For ordinary listener, there is ID of this listener
      */
     virtual void on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept = 0;
 
     ///close group
     /**
-     * Called by bus when close_group was called on given group
+     * Called when group has been closed. The bridge forwards the event and calls
+     * close_group() on the other side. The ordinary listener just receives notification
+     * that group has been closed;
+     *
      * @param group_name
      *
-     * If this interface is used ro end point client, the function is called when
-     * the group has been closed and the client was removed from the group
      */
     virtual void on_close_group(ChannelID group_name) noexcept= 0;
 
     ///called when last member of group left the group, so group is empty now
     /**
      * Members can leave group by calling unsubscribe with group name or
-     * by unsubscribe_all. If this happen with last member, this event is called.
+     * by unsubscribe_all. If this happen with a last member, this event is called.
      * Because there cannot be groups without members, this also means, that group
      * has been erased.
+     *
+     * The bridge forwards this event to other side, where it should unsubscribe the
+     * group. An ordinary listener just receives notification, that his group has
+     * no members.
      *
      * @param group_name name of group
      */

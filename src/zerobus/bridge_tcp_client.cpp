@@ -37,6 +37,7 @@ void BridgeTCPClient::bind(std::shared_ptr<INetContext> ctx, std::string address
     BridgeTCPCommon::bind(ctx, ctx->peer_connect(get_address_from_url(address)));
     _address = address;
     register_monitor(this);
+    send(NewSession{});
    _ctx->ready_to_send(_aux, this);
 
 }
@@ -63,6 +64,7 @@ void BridgeTCPClient::close() {
 void BridgeTCPClient::lost_connection() {
     try {
         std::lock_guard _(_mx);
+        _send_reset_on_connect = true;
         this->_output_allowed = false;
         _ctx->reconnect(_aux, get_address_from_url(_address));
         _output_cursor = 0; //last output incomplete message will be send again
@@ -131,13 +133,13 @@ void BridgeTCPClient::receive_complete(std::string_view data) noexcept {
         _input_data.clear();
         if (check_ws_response(whole_hdr)) {
             _handshake = false;
+            if (_send_reset_on_connect) send(ChannelReset{});
             _ctx->ready_to_send(_aux, this);
             if (rest.empty()) {
                 read_from_connection();
             } else {
                 BridgeTCPCommon::receive_complete(rest);
             }
-            send(ChannelReset{});
         } else {
             lost_connection();
         }

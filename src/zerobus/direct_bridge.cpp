@@ -48,7 +48,7 @@ void DirectBridge::Bridge::send(const Message &msg) noexcept {
     _owner.on_send(*this, msg);
 }
 
-void DirectBridge::Bridge::send(const GroupReset &msg) noexcept {
+void DirectBridge::Bridge::send(const NewSession &msg) noexcept {
     _owner.on_send(*this, msg);
 }
 void DirectBridge::Bridge::send(const UpdateSerial &msg) noexcept {
@@ -70,8 +70,8 @@ void DirectBridge::on_send(const Bridge &source, const Bridge::ChannelReset &r) 
 void DirectBridge::connect() {
     if (!_connected) {
         _connected = true;
-        on_send(_b1, Bridge::ChannelReset{});
-        on_send(_b2, Bridge::ChannelReset{});
+        on_send(_b1, Bridge::NewSession{1});
+        on_send(_b2, Bridge::NewSession{1});
         _b1.on_channels_update();
         _b2.on_channels_update();
     }
@@ -87,14 +87,14 @@ void DirectBridge::Bridge::send(const CloseGroup &msg) noexcept {
     _owner.on_send(*this, msg);
 }
 
-void DirectBridge::Bridge::send(const ClearPath &msg) noexcept {
+void DirectBridge::Bridge::send(const NoRoute &msg) noexcept {
     _owner.on_send(*this, msg);
 }
 void DirectBridge::on_send(const Bridge &source, const Bridge::GroupEmpty &msg) {
     select_other(source).receive(msg);
 }
 
-void DirectBridge::on_send(const Bridge &source, const Bridge::GroupReset &msg)
+void DirectBridge::on_send(const Bridge &source, const Bridge::NewSession &msg)
 {
     select_other(source).receive(msg);
 }
@@ -103,7 +103,7 @@ void DirectBridge::on_send(const Bridge &source, const Bridge::CloseGroup &g) {
     select_other(source).receive(g);
 }
 
-void DirectBridge::on_send(const Bridge &source,const Bridge::ClearPath &p) {
+void DirectBridge::on_send(const Bridge &source,const Bridge::NoRoute &p) {
     select_other(source).receive(p);
 }
 void DirectBridge::on_send(const Bridge &source,const Bridge::UpdateSerial &p) {

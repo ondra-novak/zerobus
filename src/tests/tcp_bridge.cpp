@@ -133,7 +133,10 @@ void detect_cycle_test() {
 
     cycle_flag.wait(false);
 
-    cn.send_message("reverse", "ahoj svete");
+    while (!cn.send_message("reverse", "ahoj svete")) {
+        //because cycle, the channel can be momentary inaccessible
+        channel_wait_for(slave1, "reverse", std::chrono::hours(2));
+    }
     auto r = result.get_future().get();
     CHECK_EQUAL(r, "etevs joha");
 

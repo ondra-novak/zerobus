@@ -9,60 +9,78 @@ namespace ws {
 
 bool Parser::push_data(std::string_view data) {
     std::size_t sz = data.size();
-    for (std::size_t i = 0; i < sz; i++) {
+    std::size_t i = 0;
+    bool fin = false;
+    while (i < sz && !fin) {
         char c = data[i];
         switch (_state) {
             case State::first_byte:
                 _fin = (c & 0x80) != 0;
                 _type = c & 0xF;
-                _state = State::payload_len;
+                _state = State::second_byte;        //first byte follows second byte
                 break;
-            case State::payload_len:
+            case State::second_byte:
                 _masked = (c & 0x80) != 0;
                 c &= 0x7F;
-                if (c == 127) _state = State::payload_len7;
-                else if (c == 126) _state = State::payload_len1;
-                else {
+                if (c == 127) {
+                    _state = State::payload_len;
+                    _state_len = 8;                 //follows 8 bytes of length
+                } else if (c == 126) {
+                    _state = State::payload_len;
+                    _state_len = 2;                 //follows 2 bytes of length
+                } else if (_masked){
                     _payload_len = c;
                     _state = State::masking;
+                    _state_len = 4;                 //follows 4 bytes of masking
+                } else  if (c) {
+                    _state_len = c;
+                    _state = State::payload;        //follows c bytes of payload
+                } else {
+                    fin = true;         //empty frame - finalize
                 }
                 break;
-            case State::payload_len0:
-            case State::payload_len1:
-            case State::payload_len2:
-            case State::payload_len3:
-            case State::payload_len4:
-            case State::payload_len5:
-            case State::payload_len6:
-            case State::payload_len7:
-                _payload_len = (_payload_len<<8) + static_cast<unsigned char>(c);
-                _state = static_cast<State>(static_cast<std::underlying_type_t<State> >(_state)+1);
+            case State::payload_len:
+                //decode payload length
+                _payload_len = (_payload_len << 8) + static_cast<unsigned char>(c);
+                if (--_state_len == 0) { //read all bytes
+                     if (_masked) {
+                         _state = State::masking;
+                         _state_len = 4;        //follows masking
+                     } else if (_payload_len) { //non-empty frame
+                         _state_len = _payload_len;
+                         _state = State::payload;   //read payload
+                     } else {
+                         fin = true;            //empty frame, finalize
+                     }
+                }
                 break;
             case State::masking:
-                _state = _masked?State::masking1:State::payload;
-                --i; //retry this byte
-                break;
-            case State::masking1:
-            case State::masking2:
-            case State::masking3:
-            case State::masking4:
-                _masking[static_cast<int>(_state) - static_cast<int>(State::masking1)] = c;
-                _state = static_cast<State>(static_cast<std::underlying_type_t<State> >(_state)+1);
-                break;
-            case State::payload_begin:
-                _state = _payload_len?State::payload:State::complete;
-                --i;
+                _masking[4-_state_len] = c;     //read masking
+                if (--_state_len == 0) {        //all bytes?
+                    if (_payload_len) {
+                        _state_len = _payload_len;
+                        _state = State::payload;    //read payload
+                        _mask_cntr = 0;
+                    } else {
+                        fin = true;             //empty frame finalize
+                    }
+                }
                 break;
             case State::payload:
-                _cur_message.push_back(c ^ _masking[_cur_message.size() & 0x3]);
-                _state = _cur_message.size() == _payload_len?State::complete:State::payload;
+                _cur_message.push_back(c ^ _masking[_mask_cntr]);   //read payload
+                _mask_cntr = (_mask_cntr + 1) & 0x3;
+                if (--_state_len == 0) {        //if read all
+                    fin = true;                 //finalize
+                }
                 break;
-            case State::complete:
-                _unused_data = data.substr(i);
-                return finalize();
-        }
+            case State::complete:           //in this state, nothing is read
+                _unused_data = data;        //all data are unused
+                return true;                //frame is complete
+        };
+        ++i;
     }
-    if (_state >= State::payload_begin &&  _cur_message.size() == _payload_len) {
+    if (fin) {
+        _unused_data = data.substr(i);
         return finalize();
     }
     return false;
@@ -70,10 +88,11 @@ bool Parser::push_data(std::string_view data) {
 
 void Parser::reset_state() {
     _state = State::first_byte;
-    for (int i = 0; i < 4; ++i) _masking[i] = 0;
+    std::fill(std::begin(_masking), std::end(_masking), 0);
     _fin = false;
     _masked = false;
     _payload_len = 0;
+    _state_len = 0;
     _unused_data = {};
 }
 
@@ -113,6 +132,7 @@ Message Parser::get_message() const {
 
 
 bool Parser::finalize() {
+    _state = State::complete;
     switch (_type) {
         case opcodeContFrame: break;
         case opcodeConnClose: _final_type = Type::connClose; break;

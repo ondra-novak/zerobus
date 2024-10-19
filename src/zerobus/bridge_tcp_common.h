@@ -70,10 +70,10 @@ protected:
     virtual void send(const CloseGroup &) noexcept override;
     virtual void send(const Message &msg) noexcept override;
     virtual void send(const ChannelUpdate &msg) noexcept override;
-    virtual void send(const ClearPath &) noexcept override;
+    virtual void send(const NoRoute &) noexcept override;
     virtual void send(const AddToGroup &) noexcept override;
     virtual void send(const GroupEmpty &) noexcept override;
-    virtual void send(const GroupReset &) noexcept override;
+    virtual void send(const NewSession &) noexcept override;
     virtual void send(const UpdateSerial &) noexcept override;
     void read_from_connection();
 

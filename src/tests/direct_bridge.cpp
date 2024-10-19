@@ -67,9 +67,9 @@ protected:
                           r.op == AbstractBridge::Operation::erase?"ERASE":"REPLACE", chlist.view());
         DirectBridge::on_send(source, std::move(r));
     }
-    virtual void on_send(const Bridge &source, const Bridge::ClearPath &r) override {
+    virtual void on_send(const Bridge &source, const Bridge::NoRoute &r) override {
         std::lock_guard _(*this);
-        log(source, "CLEAR_PATH: ",r.sender," -> ",r.receiver);
+        log(source, "NO_ROUTE: ",r.sender," -> ",r.receiver);
         DirectBridge::on_send(source, std::move(r));
     }
     virtual void cycle_detection(const DirectBridge::Bridge &source, bool state) noexcept override{
@@ -95,6 +95,11 @@ protected:
     virtual void on_send(const Bridge &source, const Bridge::UpdateSerial &g) override {
         std::lock_guard _(*this);
         log(source, "UPDATE_SERIAL: ",g.serial);
+        DirectBridge::on_send(source, std::move(g));
+    }
+    virtual void on_send(const Bridge &source, const Bridge::NewSession &g) override {
+        std::lock_guard _(*this);
+        log(source, "NEW SESSION: ",g.version);
         DirectBridge::on_send(source, std::move(g));
     }
 };

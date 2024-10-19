@@ -14,7 +14,7 @@ enum class MessageType: std::uint8_t {
         ///send from other side that they unsubscribed all channels
         channels_reset = 0xFB,
         ///clear return path
-        clear_path = 0xFA,
+        no_route = 0xFA,
         ///add to group
         add_to_group = 0xF9,
         ///close group
@@ -22,7 +22,7 @@ enum class MessageType: std::uint8_t {
         ///close group
         group_empty = 0xF7,
         ///close all groups (lost context)
-        group_reset = 0xF6,
+        new_session = 0xF6,
         update_serial = 0xF5,
 };
 
@@ -56,10 +56,10 @@ Deserialization::Result Deserialization::operator ()(std::string_view msgtext) {
             return Msg::ChannelUpdate{Msg::ChannelList(_channels),
                 ops[static_cast<int>(t) - static_cast<int>(MessageType::channels_erase)]};
         }
-        case MessageType::clear_path: {
+        case MessageType::no_route: {
             auto sender = read_string(msgtext);
             auto receiver = read_string(msgtext);
-            return Msg::ClearPath{sender,receiver};
+            return Msg::NoRoute{sender,receiver};
         }
         case MessageType::add_to_group:{
             auto group = read_string(msgtext);
@@ -77,8 +77,9 @@ Deserialization::Result Deserialization::operator ()(std::string_view msgtext) {
             auto group = read_string(msgtext);
             return Msg::GroupEmpty{group};
         }
-        case MessageType::group_reset: {
-            return Msg::GroupReset{};
+        case MessageType::new_session: {
+            auto version = read_uint(msgtext);
+            return Msg::NewSession{version};
         }
         case MessageType::update_serial: {
             auto serial = read_string(msgtext);
@@ -134,8 +135,8 @@ std::string_view Serialization::operator ()(const Msg::AddToGroup &msg) {
     return finish_write();
 }
 
-std::string_view Serialization::operator ()(const Msg::ClearPath &msg) {
-    compose_message(start_write(), MessageType::clear_path,
+std::string_view Serialization::operator ()(const Msg::NoRoute &msg) {
+    compose_message(start_write(), MessageType::no_route,
             msg.sender, msg.receiver);
     return finish_write();
 }
@@ -182,8 +183,8 @@ std::string_view Serialization::operator ()(const Msg::GroupEmpty &msg) {
     compose_message(start_write(), MessageType::group_empty, msg.group);
     return finish_write();
 }
-std::string_view Serialization::operator ()(const Msg::GroupReset &) {
-    compose_message(start_write(), MessageType::group_reset);
+std::string_view Serialization::operator ()(const Msg::NewSession &msg) {
+    compose_message(start_write(), MessageType::new_session, msg.version );
     return finish_write();
 }
 

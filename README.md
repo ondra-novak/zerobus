@@ -387,6 +387,32 @@ Contains:
 
 (see `serialization rules` below)
 
+### Message type 0xF6 -  New session
+
+Specifies that other side established a new session, so current side must unsubscribe
+from all channels and groups. It also means channel reset
+
+```
+(node1) ---- group reset ----> (node2)
+                                  +---calls unsubscribe_all
+```
+
+Contains 
+ - version: uint  (currently always 1)
+
+### Message type 0xF5 - Serial ID
+
+Sent by master node to set neighbor serial ID of the network. Master node is
+node with lowest ID (lexicographically). If received ID is higher, it is discarded.
+If received node is lower, it is remembered and rebroadcasted to other nodes
+except source node. Every network must have one path to master node. Multiple paths
+are detected as cycle and such path should be disabled.
+
+Contains:
+- serial_id : string
+
+(see `serialization rules` below)
+
 ### Serialization rules
 
 #### serialization UINT

@@ -199,14 +199,15 @@ void LocalBus::channel_is_empty(ChannelID id) {
 
 bool LocalBus::set_serial(IListener *lsn, SerialID serialId) {
     std::lock_guard _(*this);
-    if (serialId.empty()) return true;
     SerialID cur_id = _serial_source?_cur_serial:_this_serial;
-    if (serialId == cur_id) {
+    if (cur_id == serialId) {
         return lsn == _serial_source;
     }
-    if (cur_id > serialId) {
-        _serial_source = lsn;
+    if (serialId < cur_id) {
         _cur_serial = serialId;
+        _serial_source = lsn;
+    } else {
+        _channels_change = true;
     }
     return true;
 }
@@ -651,14 +652,14 @@ bool LocalBus::clear_return_path(IListener *lsn, ChannelID sender, ChannelID rec
         _back_path.store_path(receiver, nullptr);
         auto lsn3 = _back_path.find_path(sender);
         if (lsn3) {
-            lsn3->on_clear_path(sender, receiver);
+            lsn3->on_no_route(sender, receiver);
         }
         return true;
     }
     {
         auto iter = _mailboxes_by_name.find(sender);
         if (iter != _mailboxes_by_name.end()) {
-            iter->second->get_owner()->on_clear_path(sender, receiver);
+            iter->second->get_owner()->on_no_route(sender, receiver);
         }
     }
 

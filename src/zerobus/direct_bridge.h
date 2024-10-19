@@ -42,10 +42,10 @@ protected:
         virtual void send(const ChannelUpdate &msg) noexcept override;
         virtual void send(const ChannelReset &) noexcept override;
         virtual void send(const CloseGroup &msg) noexcept override;
-        virtual void send(const ClearPath &msg) noexcept override;
+        virtual void send(const NoRoute &msg) noexcept override;
         virtual void send(const AddToGroup &) noexcept override;
         virtual void send(const GroupEmpty&) noexcept override;
-        virtual void send(const GroupReset&) noexcept override;
+        virtual void send(const NewSession&) noexcept override;
         virtual void send(const UpdateSerial&) noexcept override;
 
         virtual void cycle_detection(bool state) noexcept override;
@@ -68,10 +68,10 @@ protected:
     virtual void on_send(const Bridge &source, const Message &msg);
     virtual void on_send(const Bridge &source, const Bridge::ChannelReset &msg);
     virtual void on_send(const Bridge &source, const Bridge::CloseGroup &msg);
-    virtual void on_send(const Bridge &source, const Bridge::ClearPath &msg);
+    virtual void on_send(const Bridge &source, const Bridge::NoRoute &msg);
     virtual void on_send(const Bridge &source, const Bridge::AddToGroup &msg);
     virtual void on_send(const Bridge &source, const Bridge::GroupEmpty &msg);
-    virtual void on_send(const Bridge &source, const Bridge::GroupReset &msg);
+    virtual void on_send(const Bridge &source, const Bridge::NewSession &msg);
     virtual void on_send(const Bridge &source, const Bridge::UpdateSerial &msg);
     virtual void cycle_detection(const Bridge &, bool ) noexcept {}
 

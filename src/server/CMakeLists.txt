@@ -1,24 +1,18 @@
 
-set(JS_FILE ${CMAKE_SOURCE_DIR}/src/javascript/client.js)
-set(HTML_FILE ${CMAKE_SOURCE_DIR}/src/javascript/index.html)
-set(HEADER_FILE ${CMAKE_BINARY_DIR}/includes/embedded_js.h)
+ADD_CUSTOM_COMMAND(
+    OUTPUT ${CMAKE_BINARY_DIR}/includes/embedded_js.h
+    COMMAND ${CMAKE_COMMAND} -DOUT=${CMAKE_BINARY_DIR}/includes/embedded_js.h -P ${CMAKE_SOURCE_DIR}/src/javascript/to_header.cmake
+    DEPENDS ${CMAKE_SOURCE_DIR}/src/javascript/client.js 
+            ${CMAKE_SOURCE_DIR}/src/javascript/index.html
+)
 
-# Nastav cesty k souborům
-set(HEADER_TEMPLATE embedded_js.h.in)
-set(GENERATED_HEADER ${CMAKE_BINARY_DIR}/includes/embedded_js.h)
+SET_SOURCE_FILES_PROPERTIES(${CMAKE_BINARY_DIR}/includes/embedded_js.h PROPERTIES GENERATED TRUE)
 
-# Čtení obsahu JS souboru a vložení do šablony
-file(READ ${JS_FILE} JS_CONTENT)
-string(SUBSTRING "${JS_CONTENT}" 0  16000 JS_CONTENT1)
-string(SUBSTRING "${JS_CONTENT}" 16000 -1 JS_CONTENT2)
-file(READ ${HTML_FILE} HTML_CONTENT)
-
-# Nahrazení @JS_CONTENT@ ve šabloně skutečným obsahem JS souboru
-configure_file(${HEADER_TEMPLATE} ${GENERATED_HEADER} @ONLY)
-
+add_custom_target(zerobus_embedded_js DEPENDS ${CMAKE_BINARY_DIR}/includes/embedded_js.h)
 
 
 
 add_executable(zerobus_server server.cpp)
+add_dependencies(zerobus_server zerobus_embedded_js)
 target_include_directories(zerobus_server PRIVATE ${CMAKE_BINARY_DIR}/includes)
 target_link_libraries(zerobus_server zerobus ${STANDARD_LIBRARIES} )

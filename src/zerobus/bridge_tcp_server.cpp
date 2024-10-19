@@ -105,8 +105,7 @@ BridgeTCPServer::Peer::~Peer() {
 }
 
 void BridgeTCPServer::Peer::initial_handshake() {
-    Peer::send(Msg::ChannelReset{});
-    Peer::send(Msg::GroupReset{});
+    Peer::send(Msg::NewSession{});
     Peer::send_mine_channels();
     _owner.on_peer_connect(*this);
 }
@@ -296,6 +295,7 @@ void BridgeTCPServer::Peer::reconnect(ConnHandle aux) {
     _aux = aux;
     _input_data.clear();
     read_from_connection();
+    send(ChannelReset{});
     _ctx->ready_to_send(_aux, this);
 
 }

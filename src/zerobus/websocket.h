@@ -153,27 +153,19 @@ public:
 
 
 protected:
-    //contains next state
-    enum class State: std::uint8_t {
+    enum class State {
         first_byte,
+        second_byte,
         payload_len,
-        payload_len7,
-        payload_len6,
-        payload_len5,
-        payload_len4,
-        payload_len3,
-        payload_len2,
-        payload_len1,
-        payload_len0,
         masking,
-        masking1,
-        masking2,
-        masking3,
-        masking4,
-        payload_begin,
         payload,
         complete
     };
+
+    std::size_t _state_len = 0;
+    std::size_t _payload_len = 0;
+    int _mask_cntr = 0;
+
 
     std::vector<char> &_cur_message;
     bool _need_fragmented = false;
@@ -182,7 +174,6 @@ protected:
 
     State _state = State::first_byte;
     unsigned char _type = 0;
-    std::uint64_t _payload_len = 0;
     char _masking[4] = {};
     std::string_view _unused_data;
 

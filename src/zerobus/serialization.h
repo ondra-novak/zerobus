@@ -26,11 +26,11 @@ public:
             Message,
             Msg::ChannelUpdate,
             Msg::ChannelReset,
-            Msg::ClearPath,
+            Msg::NoRoute,
             Msg::AddToGroup,
             Msg::CloseGroup,
             Msg::GroupEmpty,
-            Msg::GroupReset,
+            Msg::NewSession,
             Msg::UpdateSerial>;
 
     Result operator()(std::string_view msgtext);
@@ -56,10 +56,10 @@ public:
     std::string_view operator()(const Msg::ChannelUpdate &msg);
     std::string_view operator()(const Msg::ChannelReset &msg);
     std::string_view operator()(const Msg::AddToGroup &msg);
-    std::string_view operator()(const Msg::ClearPath &msg);
+    std::string_view operator()(const Msg::NoRoute &msg);
     std::string_view operator()(const Msg::CloseGroup &msg);
     std::string_view operator()(const Msg::GroupEmpty &msg);
-    std::string_view operator()(const Msg::GroupReset &msg);
+    std::string_view operator()(const Msg::NewSession &msg);
     std::string_view operator()(const Msg::UpdateSerial &msg);
 
     template<typename ... Args>

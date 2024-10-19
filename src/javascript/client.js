@@ -18,11 +18,11 @@ const zerobus = (function(){
         channels_add: 0xFD,           // list of channels
         channels_erase: 0xFC,         // list of channels
         channels_reset: 0xFB,         // send from other side that they unsubscribed all channels
-        clear_path: 0xFA,             // clear return path
+        no_route: 0xFA,             // clear return path
         add_to_group: 0xF9,
         close_group: 0xF8,
         group_empty: 0xF7,
-        group_reset: 0xF6,
+        new_session: 0xF6,
         update_serial: 0xF5,
     };
 
@@ -231,7 +231,7 @@ const zerobus = (function(){
         #monitors = new Set();
         #notify = false;
         #serial = {
-            my:generateUID(),
+            my:generateUID(""),
             current:null,
             source:null
         }
@@ -363,7 +363,7 @@ const zerobus = (function(){
         }
 
         register_monitor(mon) {
-            this.#check_listener(mon);
+            if (typeof mon != "function") throw TypeError("Monitor must be function");
             this.#monitors.add(mon);
         }
 
@@ -516,7 +516,7 @@ const zerobus = (function(){
             this.send_mine_channels();
         }
 
-        receive_clear_path(sender, receiver) {
+        receive_no_route(sender, receiver) {
             this._bus.clear_return_path(this,sender,receiver);
         }
         receive_add_to_group(group, target) {
@@ -619,6 +619,7 @@ const zerobus = (function(){
         constructor(bus, url) {
             super(bus)
             this.#ws = new WebSocketReconn(url,this.#on_message.bind(this));
+            this.register_monitor();
         }
 
         #on_message(event) {
@@ -635,9 +636,9 @@ const zerobus = (function(){
                 case MessageType.add_to_group:this.#parse_add_to_group(iter);break;
                 case MessageType.close_group:this.#parse_close_group(iter);break;
                 case MessageType.channels_reset: this.receive_reset();break;
-                case MessageType.clear_path: this.#parse_clear_path(iter);break;
+                case MessageType.no_route: this.#parse_no_route(iter);break;
                 case MessageType.group_empty: this.#parse_group_empty(iter);break;
-                case MessageType.group_reset: this._bus.close_all_groups(this);break;
+                case MessageType.new_session: this.#parse_new_session(iter);break; 
                 case MessageType.update_serial: this.#parse_update_serial(iter);break;
 
             }
@@ -660,14 +661,17 @@ const zerobus = (function(){
             const sender = dec.decode(decode_binary_string(iter));
             const channel = dec.decode(decode_binary_string(iter));
             const content = decode_binary_string(iter);
-            this._bus.dispatch_message(this, new Message(sender,channel, content, cid), true);
+            const b = this._bus.dispatch_message(this, new Message(sender,channel, content, cid), true);
+            if (!b) {
+                this.on_no_route(sender, channel);
+            }
         }
 
-        #parse_clear_path(iter) {
+        #parse_no_route(iter) {
             const dec = new TextDecoder();
             const sender = dec.decode(decode_binary_string(iter));
             const receiver  = dec.decode(decode_binary_string(iter));
-            this.receive_clear_path(sender, receiver);
+            this.receive_no_route(sender, receiver);
         }
 
         #parse_add_to_group(iter) {
@@ -695,6 +699,14 @@ const zerobus = (function(){
             const serial = dec.decode(decode_binary_string(iter));
             this.receive_update_serial(serial);
         }
+        
+        #parse_new_session(iter) {
+            const ver = decode_uint(iter);
+            this.version = ver;
+            this._bus.unsubscribe_all_channels(this,true);
+            this.receive_reset();          
+        }
+
 
         send_reset() {
             this.#binb.push(MessageType.channels_reset);
@@ -721,7 +733,7 @@ const zerobus = (function(){
             this.#ws.send(this.#binb.get_data_and_clear());
         }
         on_no_route(sender, receiver) {
-            this.#binb.push(MessageType.clear_path);
+            this.#binb.push(MessageType.no_route);
             encode_string(this.#binb,sender);
             encode_string(this.#binb,receiver);
             this.#ws.send(this.#binb.get_data_and_clear());

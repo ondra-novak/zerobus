@@ -282,7 +282,7 @@ void BridgeTCPCommon::send(const ChannelUpdate &m) noexcept {
     output_message(_ser(m));
 }
 
-void BridgeTCPCommon::send(const ClearPath &m) noexcept {
+void BridgeTCPCommon::send(const NoRoute &m) noexcept {
     output_message(_ser(m));
 }
 
@@ -293,7 +293,7 @@ void BridgeTCPCommon::send(const AddToGroup &m) noexcept {
 void BridgeTCPCommon::send(const GroupEmpty &m) noexcept {
     output_message(_ser(m));
 }
-void BridgeTCPCommon::send(const GroupReset &m) noexcept{
+void BridgeTCPCommon::send(const NewSession &m) noexcept{
     output_message(_ser(m));
 }
 

@@ -45,17 +45,18 @@ struct ChannelReset {
         return out;
     }
 };
-struct GroupReset {
-    friend std::ostream &operator<<(std::ostream &out, const GroupReset &) {
-        out << "Group Reset";
+struct NewSession {
+    unsigned long version = 1.0;
+    friend std::ostream &operator<<(std::ostream &out, const NewSession &s) {
+        out << "New session ver:" << s.version ;
         return out;
     }
 };
-struct ClearPath {
+struct NoRoute {
     ChannelID sender;
     ChannelID receiver;
-    friend std::ostream &operator<<(std::ostream &out, const ClearPath &ch) {
-        out << "Clear path:" << ch.sender << "," << ch.receiver;
+    friend std::ostream &operator<<(std::ostream &out, const NoRoute &ch) {
+        out << "No route:" << ch.sender << "," << ch.receiver;
         return out;
     }
 };
@@ -96,11 +97,11 @@ public:
     using ChannelList = Msg::ChannelList;
     using ChannelUpdate = Msg::ChannelUpdate;
     using ChannelReset =  Msg::ChannelReset;
-    using ClearPath = Msg::ClearPath;
+    using NoRoute = Msg::NoRoute;
     using CloseGroup = Msg::CloseGroup;
     using AddToGroup = Msg::AddToGroup;
     using GroupEmpty = Msg::GroupEmpty;
-    using GroupReset = Msg::GroupReset;
+    using NewSession = Msg::NewSession;
     using UpdateSerial = Msg::UpdateSerial;
 
     AbstractBridge(Bus bus);
@@ -143,7 +144,7 @@ public:
 
 
     ///apply their clear path command
-    void receive(const ClearPath &cp);
+    void receive(const NoRoute &cp);
     void receive(const UpdateSerial &msg);
 
     void receive(const CloseGroup &msg) ;
@@ -151,7 +152,7 @@ public:
 
     void receive(const Message &msg);
     void receive(const GroupEmpty &msg);
-    void receive(const GroupReset &msg);
+    void receive(const NewSession &msg);
 
 
 
@@ -175,7 +176,7 @@ public:
 
     virtual void on_close_group(zerobus::ChannelID group_name) noexcept
             override;
-    virtual void on_clear_path(zerobus::ChannelID sender,
+    virtual void on_no_route(zerobus::ChannelID sender,
             zerobus::ChannelID receiver) noexcept override;
     virtual void on_add_to_group(zerobus::ChannelID group_name,
             zerobus::ChannelID target_id) noexcept override;
@@ -198,14 +199,16 @@ protected:
     virtual void send(const ChannelReset &) noexcept = 0;
     virtual void send(const CloseGroup &) noexcept = 0;
     virtual void send(const AddToGroup &) noexcept = 0;
-    virtual void send(const ClearPath &) noexcept = 0;
+    virtual void send(const NoRoute &) noexcept = 0;
     virtual void send(const GroupEmpty &) noexcept = 0;
-    virtual void send(const GroupReset &) noexcept = 0;
+    virtual void send(const NewSession &) noexcept = 0;
     virtual void send(const UpdateSerial &) noexcept = 0;
 
 
     ///diagnostic override called when cycle detection state changed;
     virtual void cycle_detection(bool ) noexcept;
+
+    unsigned int get_version() const {return _version;}
 protected:
 
     std::shared_ptr<IBridgeAPI> _ptr;
@@ -217,7 +220,8 @@ protected:
     std::atomic<Filter *> _filter = {};
     std::atomic<unsigned int> _send_mine_channels_lock = {0};
     bool _cycle_detected = false;
-    std::size_t srl_hash = 0;
+    std::size_t _srl_hash = 0;
+    unsigned int _version = 0;
 
     static ChannelList persist_channel_list(const ChannelList &source, std::vector<ChannelID> &channels, std::vector<char> &characters);
 
