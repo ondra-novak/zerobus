@@ -20,8 +20,48 @@ public:
     BridgePipe &operator=(const BridgePipe &) = delete;
 
 
+    ///connect bridge to standard input and output
+    /**
+     * @param bus instance of bus
+     * @param ctx network context
+     * @return bridge instance
+     */
     static BridgePipe connect_stdinout(Bus bus, std::shared_ptr<INetContext> ctx);
+
+    ///connect bridge to standard input and output
+    /**
+     * @param bus instance of bus
+     * @return bridge instance
+     */
     static BridgePipe connect_stdinout(Bus bus);
+
+
+    ///spawn child process and connect to child's standard input and output
+    /**
+     * @param bus bus instance of bus
+     * @param ctx network context
+     * @param command_line command line
+     * @param tkn stop token - optional, triggering stop token cause termination of the process
+     * @param exit_action optional function called when process exits
+     * @return bridge instance
+     */
+    static BridgePipe connect_process(Bus bus, std::shared_ptr<INetContext> ctx,
+            std::string_view command_line,
+            std::stop_token tkn = {},
+            std::function<void(int)> exit_action = {});
+
+    ///spawn child process and connect to child's standard input and output
+    /**
+     * @param bus bus instance of bus
+     * @param command_line command line
+     * @param tkn stop token - optional, triggering stop token cause termination of the process
+     * @param exit_action optional function called when process exits
+     * @return bridge instance
+     */
+    static BridgePipe connect_process(Bus bus,
+            std::string_view command_line,
+            std::stop_token tkn = {},
+            std::function<void(int)> exit_action = {});
 
 
 

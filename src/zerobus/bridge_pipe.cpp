@@ -51,6 +51,20 @@ BridgePipe BridgePipe::connect_stdinout(Bus bus) {
     return connect_stdinout(std::move(bus), make_network_context());
 }
 
+BridgePipe BridgePipe::connect_process(Bus bus, std::shared_ptr<INetContext> ctx,
+        std::string_view command_line, std::stop_token tkn,
+        std::function<void(int)> exit_action) {
+
+    auto h = spawn_process(ctx, command_line, std::move(tkn), std::move(exit_action));
+    return BridgePipe(std::move(bus), std::move(ctx), h.read, h.write);
+
+}
+
+BridgePipe BridgePipe::connect_process(Bus bus, std::string_view command_line,
+        std::stop_token tkn, std::function<void(int)> exit_action) {
+    return connect_process(std::move(bus), make_network_context(1), command_line, std::move(tkn), std::move(exit_action));
+}
+
 std::string_view BridgePipe::parse_messages(const std::string_view &data) {
     std::string_view out = data;
     while (Deserialization::can_read_uint(out)) {

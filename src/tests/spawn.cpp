@@ -23,16 +23,15 @@ void bridge_simple(std::string process_path) {
 
     std::string cmdline = "\"" + process_path + "\" child";
 
+    std::atomic<bool> exit_wait = {false};
     auto ctx = make_network_context();
     std::stop_source stpreq;
-    std::atomic<bool> exit_wait = {false};
-    auto pp = spawn_process(ctx, cmdline, stpreq.get_token(), [&](int st){
+
+    BridgePipe b2 = BridgePipe::connect_process(slave, cmdline, stpreq.get_token(), [&](int st){
         std::cout << "Child exited with code: " << st << std::endl;
         exit_wait = true;
         exit_wait.notify_all();
     });
-
-    BridgePipe b2(slave, ctx, pp.read, pp.write);
 
     std::promise<std::string> result;
 
@@ -56,10 +55,7 @@ void bridge_simple(std::string process_path) {
 
 void start_child () {
     auto master = Bus::create();
-    auto ctx = make_network_context(1);
-    auto h_read = ctx->connect(SpecialConnection::stdin);
-    auto h_write = ctx->connect(SpecialConnection::stdout);
-    BridgePipe b1(master, ctx, h_read, h_write);
+    BridgePipe b1 = BridgePipe::connect_stdinout(master);
 
     auto sn = ClientCallback(master, [&](AbstractClient &c, const Message &msg, bool){
         std::string s ( msg.get_content());

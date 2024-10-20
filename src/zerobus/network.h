@@ -288,6 +288,15 @@ auto make_server(std::shared_ptr<INetContext> ctx, std::string address_port, CB 
 }
 
 ///spawn process and create pipe connection with stdin and stdout
+/**
+ * @param ctx network context shared pointer
+ * @param command_line command line. It must contain program name and arguments.
+ *                    Double quotes are supported.
+ * @param tkn (optional) stop token. Allows to stop process when requested.
+ * @param exit_action (optional) specify action called when process exited.
+ * @return pair of connection handles for read and write. You probably want to
+ * construct BridgePipe
+ */
 PipePair spawn_process(std::shared_ptr<INetContext> ctx,
                         std::string_view command_line,
                         std::stop_token tkn = {},
