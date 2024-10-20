@@ -46,7 +46,7 @@ struct ChannelReset {
     }
 };
 struct NewSession {
-    unsigned long version = 1.0;
+    unsigned long version = 1;
     friend std::ostream &operator<<(std::ostream &out, const NewSession &s) {
         out << "New session ver:" << s.version ;
         return out;
@@ -171,6 +171,7 @@ public:
      * or replace, you should somehow ensure, that filter is not used after removal.
      */
     void set_filter(std::unique_ptr<Filter> &flt);
+    void set_filter(std::unique_ptr<Filter> &&flt);
 
     Bus get_bus() const {return Bus(_ptr);}
 
@@ -228,7 +229,6 @@ protected:
     virtual void on_message(const Message &message, bool pm) noexcept override;
 
     void process_mine_channels(ChannelList lst, bool reset) noexcept;
-
 
     void check_rules(Filter *flt);
 

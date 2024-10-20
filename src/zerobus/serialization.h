@@ -41,6 +41,9 @@ public: //static helpers
     ///Read string
     static std::string_view read_string(std::string_view &msgtext);
 
+    ///determines, whether msgtext is sufficient long to read uint
+    static bool can_read_uint(const std::string_view &msgtext);
+
 
 protected:
     std::vector<ChannelID> _channels;

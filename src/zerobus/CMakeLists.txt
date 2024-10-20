@@ -5,6 +5,7 @@ local_bus.cpp
 bridge_tcp_client.cpp
 bridge_tcp_common.cpp
 bridge_tcp_server.cpp
+bridge_pipe.cpp
 direct_bridge.cpp
 websocket.cpp
 serialization.cpp

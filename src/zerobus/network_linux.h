@@ -22,7 +22,9 @@ public:
 
     explicit NetContext(ErrorCallback ecb);
     NetContext();
-    virtual ConnHandle peer_connect(std::string address) override;
+    virtual ConnHandle connect(std::string address) override;
+    virtual ConnHandle connect(SpecialConnection type, const void *arg = nullptr) override;
+    virtual PipePair create_pipe() override;
     virtual void reconnect(ConnHandle ident, std::string address_port) override;
     ///start receiving data
     virtual void receive(ConnHandle ident, std::span<char> buffer, IPeer *peer) override;
@@ -72,6 +74,7 @@ protected:
         IServer *_accept_cb = {};
         IPeerServerCommon *_timeout_cb = {};
         int _cb_call_cntr = {};
+        bool _socket_is_pipe = false;
 
         ///invoke one of callbacks
         /**

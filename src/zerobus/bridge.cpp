@@ -76,8 +76,6 @@ void AbstractBridge::send_mine_channels(bool reset) noexcept {
     }
     //repeat send_mine_channels if requested otherwise unlock
     while (rep);
-
-
 }
 
 void AbstractBridge::receive(const ChannelUpdate &chan_up) {
@@ -109,8 +107,12 @@ void AbstractBridge::receive(const Message &msg) {
         auto flt = _filter.load();
         if (flt) {
             auto r = flt->on_incoming(ch);
-            if (!r) return;  //block message to public channel if filtered
             check_rules(flt);
+            if (!r) {
+                //unsubscribe filtered channel
+                ChannelID ch = msg.get_channel();
+                send(ChannelUpdate{{&ch,1}, Operation::erase});
+            }
         }
     }
     if (!_ptr->dispatch_message(this, msg, true)) {
@@ -126,11 +128,20 @@ void AbstractBridge::set_filter(std::unique_ptr<Filter> &flt) {
     flt.reset(r);
 }
 
+void AbstractBridge::set_filter(std::unique_ptr<Filter> &&flt) {
+    set_filter(flt);
+}
+
 void AbstractBridge::receive(const NoRoute &cp) {
     _ptr->clear_return_path(this, cp.sender, cp.receiver);
 }
 
 void AbstractBridge::on_group_empty(ChannelID group_name) noexcept {
+    auto flt = _filter.load();
+    if (flt) {
+        flt->on_incoming_close_group(group_name);
+        check_rules(flt);
+    }
     send(Msg::GroupEmpty{group_name});
 }
 
@@ -149,12 +160,19 @@ void AbstractBridge::receive(const UpdateSerial &msg) {
 }
 
 void AbstractBridge::on_message(const Message &message, bool pm) noexcept {
-    if (!pm && _cycle_detected) return; //block message if cycle detected;
-    auto flt = _filter.load();
-    if (flt) {
-        //block message if it is not personal message (response) or not allowed channel
-        if (!pm && !flt->on_outgoing(message.get_channel())) return;
-        check_rules(flt);
+    if (!pm) {
+        if (_cycle_detected) return; //block message if cycle detected;
+        auto flt = _filter.load();
+        if (flt) {
+            bool r = flt->on_outgoing(message.get_channel());
+            check_rules(flt);
+            if (!r) {
+                //we cannot pass message to a channel
+                //so unsubscribe this channel
+                _ptr->unsubscribe(this, message.get_channel());
+                return;
+            }
+        }
     }
     send(message);
 }
@@ -206,8 +224,10 @@ void AbstractBridge::receive(const AddToGroup &msg) {
 
 void AbstractBridge::on_close_group(ChannelID group_name) noexcept {
     auto flt = _filter.load();
-    if (flt && !flt->on_outgoing_close_group(group_name)) return;
-    send(CloseGroup{group_name});
+    if (!flt || flt->on_outgoing_close_group(group_name)) {
+        send(CloseGroup{group_name});
+    }
+    check_rules(flt);
 }
 
 void AbstractBridge::on_no_route(ChannelID sender, ChannelID receiver) noexcept {
@@ -218,6 +238,8 @@ void AbstractBridge::on_add_to_group(ChannelID group_name, ChannelID target_id) 
     auto flt = _filter.load();
     if (!flt || flt->on_outgoing_add_to_group(group_name, target_id)) {
         send(AddToGroup{group_name, target_id});
+    } else {
+        _ptr->unsubscribe(this, group_name);
     }
     check_rules(flt);
 }
@@ -230,6 +252,11 @@ AbstractBridge::~AbstractBridge() {
 }
 
 void AbstractBridge::receive(const GroupEmpty &msg) {
+    auto flt = _filter.load();
+    if (flt) {
+        flt->on_outgoing_close_group(msg.group);
+        check_rules(flt);
+    }
     _ptr->unsubscribe(this, msg.group);
 }
 void AbstractBridge::receive(const NewSession &msg) {
@@ -255,7 +282,19 @@ void AbstractBridge::install_cycle_detection_report(std::function<void(AbstractB
 }
 
 void AbstractBridge::check_rules(Filter *flt) {
-    if (flt && flt->commit_rule_changed()) send_mine_channels(false);
+    if (flt && flt->commit_rule_changed()) {
+        IBus::ChannelListStorage tmp;
+        ChannelList chans = _ptr->get_subscribed_channels(this, tmp);
+        for (const auto &x: chans) {
+            if (!flt->on_outgoing(x))  {
+                _ptr->unsubscribe(this, x);
+            }
+        }
+        send_mine_channels(false);
+    }
 }
+
+
+
 
 }

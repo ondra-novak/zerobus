@@ -188,4 +188,10 @@ std::string_view Serialization::operator ()(const Msg::NewSession &msg) {
     return finish_write();
 }
 
+bool Deserialization::can_read_uint(const std::string_view &msgtext) {
+    if (msgtext.empty()) return false;
+    std::size_t sz = ((static_cast<unsigned char>(msgtext[0]) >> 5) & 0x7)+1;
+    return msgtext.size() >= sz;
+}
+
 }

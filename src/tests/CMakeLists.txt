@@ -4,6 +4,8 @@ set(testFiles compile.cpp
              local_bus.cpp
             direct_bridge.cpp
             tcp_bridge.cpp
+            pipe_bridge.cpp
+            spawn.cpp
 )
 
                 

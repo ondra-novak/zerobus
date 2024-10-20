@@ -344,6 +344,95 @@ void clear_path_group_test() {
     CHECK(!r1);
 }
 
+class AuthFilter: public Filter {
+public:
+
+    virtual bool on_incoming(ChannelID id) {
+        return authorized || id == "auth";
+    }
+    virtual bool on_outgoing(ChannelID) {
+        return authorized;  //don't send messages to unauthorized peers
+    }
+    virtual bool on_outgoing_add_to_group(ChannelID group_name, ChannelID) {
+        if (group_name == "authorized_peers") {
+            authorized = true;
+            set_rule_changed();
+        }
+        return authorized;
+    }
+    virtual bool on_outgoing_close_group(ChannelID group_name) {
+        if (group_name == "authorized_peers") {
+            authorized = false;
+            set_rule_changed();
+        }
+        return true;
+    }
+
+protected:
+    bool authorized = false;
+};
+
+void authorize() {
+    auto master = Bus::create();
+    auto slave1 = Bus::create();
+    VerboseBridge br1(slave1, master);
+    br1.getBridge2().set_filter(std::make_unique<AuthFilter>());
+    std::string result;
+
+    auto sn = ClientCallback(master, [&](AbstractClient &c, const Message &msg, bool){
+        std::string s ( msg.get_content());
+        std::reverse(s.begin(), s.end());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
+    });
+    auto an = ClientCallback(master, [&](AbstractClient &c, const Message &msg, bool){
+        //example of auth;
+        if (msg.get_content() == "let me in") {
+            c.add_to_group("authorized_peers", msg.get_sender());
+        }
+    });
+    auto gn = ClientCallback(master, [&](AbstractClient &c, const Message &msg, bool){
+        //example of auth;
+        if (msg.get_content() == "") {
+            c.add_to_group("gr", msg.get_sender());
+        }
+    });
+    auto cn= ClientCallback(slave1, [&](AbstractClient &, const Message &msg, bool){
+        result=std::string(msg.get_content());
+    });
+
+    master.subscribe(&sn, "reverse");
+    master.subscribe(&an, "auth");
+    master.subscribe(&gn, "sub");
+
+    CHECK(!slave1.is_channel("reverse"));
+    CHECK(slave1.is_channel("auth"));
+    cn.send_message("auth","let me in");
+    CHECK(slave1.is_channel("reverse"));
+    cn.send_message("reverse", "ahoj svete");
+    CHECK_EQUAL(result, "etevs joha");
+
+    master.close_group(&an, "authorized_peers");
+    CHECK(!slave1.is_channel("reverse"));
+    CHECK(slave1.is_channel("auth"));
+
+
+    cn.send_message("auth","let me in");
+    cn.send_message("sub","");
+    bool b = gn.send_message("gr","1");
+    CHECK(b);
+    CHECK_EQUAL(result, "1");
+    b = gn.send_message("gr","2");
+    CHECK(b);
+    CHECK_EQUAL(result, "2");
+    slave1.unsubscribe(&cn, "authorized_peers");
+    b = gn.send_message("gr","3");
+    CHECK(!b);
+
+
+
+
+}
+
 int main() {
     direct_bridge_simple();
     direct_bridge_cycle();
@@ -352,6 +441,7 @@ int main() {
     filter_channels();
     groups();
     clear_path_group_test();
+    authorize();
 }
 
 

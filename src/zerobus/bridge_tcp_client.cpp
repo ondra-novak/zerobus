@@ -34,7 +34,7 @@ BridgeTCPClient::~BridgeTCPClient() {
 }
 
 void BridgeTCPClient::bind(std::shared_ptr<INetContext> ctx, std::string address) {
-    BridgeTCPCommon::bind(ctx, ctx->peer_connect(get_address_from_url(address)));
+    BridgeTCPCommon::bind(ctx, ctx->connect(get_address_from_url(address)));
     _address = address;
     register_monitor(this);
     send(NewSession{});

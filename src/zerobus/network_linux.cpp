@@ -6,8 +6,17 @@
 #include <stdexcept>
 #include <sys/eventfd.h>
 #include <sys/socket.h>
+#include <sys/signalfd.h>
 #include <sys/un.h>
 #include <netdb.h>
+#include <fcntl.h>
+#include <map>
+#include <signal.h>
+#include <spawn.h>
+#include <sys/wait.h>
+
+extern char **environ;
+
 
 namespace zerobus {
 
@@ -168,15 +177,27 @@ std::size_t NetContext::send(ConnHandle ident, std::string_view data) {
     auto ctx = socket_by_ident(ident);
     if (!ctx) return 0;
     if (data.empty()) {
-        ::shutdown(ctx->_socket, SHUT_WR);
+        if (ctx->_socket_is_pipe) {
+            if (ctx->_socket >= 0) {
+                _epoll.del(ctx->_socket);
+                ::close(ctx->_socket);
+                ctx->_socket = -1;
+            }
+        } else {
+            ::shutdown(ctx->_socket, SHUT_WR);
+        }
         return 0;
     } else {
-        int s = ::send(ctx->_socket, data.data(), data.size(), MSG_DONTWAIT);
+        int s;
+        if (ctx->_socket_is_pipe) {
+            s = ::write(ctx->_socket, data.data(), data.size());
+        } else {
+            s = ::send(ctx->_socket, data.data(), data.size(), MSG_DONTWAIT);
+        }
         if (s < 0) {
             int e = errno;
-            if (e == EWOULDBLOCK || e == EPIPE || e == ECONNRESET) {
-                s = 0;
-            } else {
+            s = 0;
+            if (e != EWOULDBLOCK && e != EPIPE && e != ECONNRESET) {
                 report_error(std::system_error(e, std::system_category()), "send");
             }
         }
@@ -283,8 +304,10 @@ void NetContext::destroy(ConnHandle ident) {
     auto ctx = socket_by_ident(ident);
     if (!ctx) return;
     _cond.wait(lk, [&]{return ctx->_cb_call_cntr == 0;}); //wait for finishing all callbacks
-    _epoll.del(ctx->_socket);
-    ::close(ctx->_socket);
+    if (ctx->_socket>=0) {
+        _epoll.del(ctx->_socket);
+        ::close(ctx->_socket);
+    }
     _tmset.erase({ctx->_tmtp, ident});
     free_socket_lk(ident);
 }
@@ -340,7 +363,7 @@ static int connect_peer(std::string address_port) {
 }
 
 
-ConnHandle NetContext::peer_connect(std::string address_port)  {
+ConnHandle NetContext::connect(std::string address_port)  {
 
     int sockfd = connect_peer(address_port);
     std::lock_guard _(_mx);
@@ -355,8 +378,10 @@ ConnHandle NetContext::peer_connect(std::string address_port)  {
      auto ctx = socket_by_ident(ident);
      if (!ctx) return;
      auto newfd = connect_peer(std::move(address_port));
-     _epoll.del(ctx->_socket);
-     ::close(ctx->_socket);
+     if (ctx->_socket >= 0) {
+         _epoll.del(ctx->_socket);
+         ::close(ctx->_socket);
+     }
      ctx->_socket = newfd;
      _epoll.add(ctx->_socket, 0, ident);
      ctx->_flags = 0;
@@ -444,7 +469,12 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRe
             }
         }
         if (ctx->_recv_cb) {
-            int r = recv(ctx->_socket, ctx->_recv_buffer.data(), ctx->_recv_buffer.size(), MSG_DONTWAIT);
+            int r;
+            if (ctx->_socket_is_pipe) {
+                r = ::read(ctx->_socket, ctx->_recv_buffer.data(), ctx->_recv_buffer.size());
+            } else {
+                r = ::recv(ctx->_socket, ctx->_recv_buffer.data(), ctx->_recv_buffer.size(), MSG_DONTWAIT);
+            }
             if (r < 0) {
                 report_error(std::system_error(errno, std::system_category()), "receive");
                  r = 0; //any error - close connection
@@ -471,6 +501,57 @@ void NetContext::enqueue(std::function<void()> fn) {
     if (_cur_timer_thread >= 0) {
         eventfd_write(_cur_timer_thread, 1);
     }
+}
+
+static int dup_fd(int fd) {
+    int r =  fcntl(fd,F_DUPFD_CLOEXEC, 0);
+    if (r < 0) throw std::system_error(errno, std::system_category());
+    return r;
+}
+
+ConnHandle NetContext::connect(SpecialConnection type, const void *arg) {
+    std::lock_guard _(_mx);
+    SocketInfo *ctx =alloc_socket_lk();
+    switch (type) {
+        default:
+        case SpecialConnection::null: break;
+        case SpecialConnection::descriptor:
+            ctx->_socket = dup_fd(*reinterpret_cast<const int *>(arg));
+            ctx->_socket_is_pipe = true;
+            break;
+        case SpecialConnection::socket:
+            ctx->_socket = dup_fd(*reinterpret_cast<const int *>(arg));
+            break;
+        case SpecialConnection::stdin:
+            ctx->_socket = dup_fd(0);
+            ctx->_socket_is_pipe = true;
+            break;
+        case SpecialConnection::stdout:
+            ctx->_socket = dup_fd(1);
+            ctx->_socket_is_pipe = true;
+            break;
+        case SpecialConnection::stderr:
+            ctx->_socket = dup_fd(2);
+            ctx->_socket_is_pipe = true;
+            break;
+    }
+    _epoll.add(ctx->_socket, 0, ctx->_ident);
+    return ctx->_ident;
+}
+
+PipePair NetContext::create_pipe() {
+    int fds[2];
+    ConnHandle conhndl[2];
+    int p = pipe2(fds,O_CLOEXEC|O_NONBLOCK);
+    if (p < 0) throw std::system_error(errno, std::system_category());
+    for (int i = 0; i < 2; ++i) {
+        auto ctx = alloc_socket_lk();
+        ctx->_socket = fds[i];
+        ctx->_socket_is_pipe = true;
+        _epoll.add(ctx->_socket, 0, ctx->_ident);
+        conhndl[i] = ctx->_ident;
+    }
+    return {conhndl[0], conhndl[1]};
 }
 
 void NetContext::apply_flags_lk(SocketInfo *ctx) noexcept {
@@ -519,6 +600,235 @@ void NetContext::report_error(E exception, std::string_view action, std::source_
 
 
 
+class ProcessMonitorPeer: public IPeer {
+public:
+
+    struct TermProcess {
+        int pid;
+        void operator()() {::kill(pid, SIGTERM);}
+    };
+
+
+    struct ProcessInfo {
+        std::function<void(int)> _on_exit_action;
+        std::stop_callback<TermProcess> _stop_cb;
+    };
+
+
+    struct InitProcessInfo {
+        int _pid;
+        std::function<void(int)> _on_exit_action;
+        std::stop_token _tkn;
+        operator ProcessInfo()  {
+            return {
+                std::move(_on_exit_action),
+                std::stop_callback<TermProcess>(_tkn, TermProcess{_pid})
+            };
+        }
+    };
+
+    ProcessMonitorPeer(std::shared_ptr<INetContext> ctx)
+        :_ctx(std::move(ctx)) {
+        sigset_t ss;
+        sigemptyset(&ss);
+        sigaddset(&ss, SIGCHLD);
+        sigprocmask(SIG_BLOCK, &ss, NULL);
+        int fd = signalfd(-1, &ss, SFD_CLOEXEC|SFD_NONBLOCK);
+        if (fd == -1) std::system_error(errno, std::system_category());
+        _sigfd = _ctx->connect(SpecialConnection::descriptor, &fd);
+        ::close(fd);
+        _ctx->receive(_sigfd, {reinterpret_cast<char *>(&_buffer),sizeof(_buffer)}, this);
+    }
+
+    ~ProcessMonitorPeer() {
+        _ctx->destroy(_sigfd);
+    }
+
+    virtual void receive_complete(std::string_view) noexcept override {
+        std::shared_ptr<ProcessMonitorPeer> me;
+        std::unique_lock lk(_mx);
+        int status;
+        _fns.clear();
+        auto iter = _pmap.begin();
+        while (iter != _pmap.end()) {
+            if (waitpid(iter->first, &status, WNOHANG) > 0) {
+                if (iter->second._on_exit_action) {
+                    _fns.emplace_back(std::move(iter->second._on_exit_action), status);
+                }
+                iter = _pmap.erase(iter);
+            } else {
+                ++iter;
+            }
+        }
+        lk.unlock();
+        for (auto &f: _fns) {
+            f.first(f.second);
+        }
+        _fns.clear();
+        _ctx->receive(_sigfd, {reinterpret_cast<char *>(&_buffer),sizeof(_buffer)}, this);
+        if (_pmap.empty()) {
+            me = std::move(_me);
+        }
+    }
+    virtual void clear_to_send() noexcept override {}
+    virtual void on_timeout() noexcept override {}
+
+    static void spawn(
+            std::shared_ptr<ProcessMonitorPeer> me,
+            std::stop_token tkn,
+            std::function<void(int)> exit_action,
+            const char* program,
+            char* const argv[],
+            int read_fd,
+            int write_fd) {
+
+        posix_spawn_file_actions_t actions;
+        posix_spawn_file_actions_init(&actions);
+        posix_spawn_file_actions_adddup2(&actions, read_fd, STDIN_FILENO);
+        posix_spawn_file_actions_adddup2(&actions, write_fd, STDOUT_FILENO);
+        posix_spawn_file_actions_addclose(&actions, read_fd);
+        posix_spawn_file_actions_addclose(&actions, write_fd);
+
+        std::lock_guard _(me->_mx);
+
+        pid_t pid;
+        int status = posix_spawn(&pid, program, &actions, nullptr, argv, environ);
+        posix_spawn_file_actions_destroy(&actions);
+
+        if (status != 0) {
+            throw std::system_error(status, std::system_category());
+        }
+
+        me->_pmap.emplace(pid, InitProcessInfo{pid, std::move(exit_action), std::move(tkn)});
+        me->_me = me;
+    }
+
+protected:
+
+    std::mutex _mx;
+    std::shared_ptr<INetContext> _ctx;
+    std::shared_ptr<ProcessMonitorPeer> _me;
+    ConnHandle _sigfd;
+    signalfd_siginfo _buffer;
+    std::unordered_map<int, ProcessInfo> _pmap;
+    std::vector<std::pair<std::function<void(int)>, int > > _fns;
+};
+
+
+
+static std::mutex pmonpeer_mx;
+static std::weak_ptr<ProcessMonitorPeer> pmonpeer;
+
+std::pair<std::vector<char *>, std::vector<char> > parse_command_line(std::string_view cmdline) {
+    std::vector<char *> pointers;
+    std::vector<char> data;
+    data.resize(cmdline.size()+2);
+    char *iter = &data[0];
+    bool add_arg = true;
+    bool spec = false;
+    bool dbl = false;
+    bool esc = false;
+
+    for (auto c: cmdline) {
+        if (esc) {
+            *iter = c;
+            ++iter;
+            esc = false;
+        } else if (c == '\\') {
+            esc = true;
+        } else if (spec) {
+            if (c == '"') {
+                spec = false;
+                dbl = true;
+            } else {
+                *iter = c;
+                ++iter;
+            }
+        } else {
+            if (isspace(c)) {
+                add_arg = true;dbl = false;
+                continue;
+            }
+            if (add_arg) {
+                *iter = '\0';
+                ++iter;
+                pointers.push_back(iter);
+                add_arg = false;
+                dbl = false;
+            }
+            if (c == '"') {
+                spec = true;
+                if (dbl) {
+                    *iter = '"';
+                    ++iter;
+                }
+            } else {
+                *iter = c;
+                ++iter;
+                dbl = false;
+            }
+        }
+    }
+    *iter = '\0';
+    pointers.push_back(nullptr);
+    return {
+        std::move(pointers),
+        std::move(data)
+    };
+
+}
+
+
+PipePair spawn_process(std::shared_ptr<INetContext> ctx,
+                        std::string_view command_line,
+                        std::stop_token tkn ,
+                        std::function<void(int)> exit_action) {
+
+    std::lock_guard _(pmonpeer_mx);
+    auto pmon = pmonpeer.lock();
+    if (!pmon) {
+        pmon = std::make_shared<ProcessMonitorPeer>(ctx);
+        pmonpeer = pmon;
+    }
+
+    int p1[2];
+    int p2[2];
+    int r = pipe2(p1, O_CLOEXEC| O_NONBLOCK);
+    if (r < 0) {
+        throw std::system_error(errno, std::system_category());
+    }
+    r = pipe2(p2, O_CLOEXEC| O_NONBLOCK);
+    if (r < 0) {
+        int e = errno;
+        close(p1[0]);
+        close(p1[1]);
+        throw std::system_error(e, std::system_category());
+    }
+
+    auto re = ctx->connect(SpecialConnection::descriptor, p1);
+    auto we = ctx->connect(SpecialConnection::descriptor, p2+1);
+    close(p1[0]);
+    close(p2[1]);
+    auto cmdline = parse_command_line(command_line);
+    try {
+        ProcessMonitorPeer::spawn(pmon, std::move(tkn), std::move(exit_action),
+                cmdline.first[0], cmdline.first.data(),
+                p2[0], p1[1]);
+    } catch (...) {
+        close(p2[0]);
+        close(p1[1]);
+        throw;
+    }
+    close(p2[0]);
+    close(p1[1]);
+    return {re,we};
+
+
 
 
 }
+
+
+
+}
+

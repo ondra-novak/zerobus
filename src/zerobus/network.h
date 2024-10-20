@@ -6,6 +6,7 @@
 #include <chrono>
 #include <functional>
 #include <source_location>
+#include <stop_token>
 
 namespace zerobus {
 
@@ -17,6 +18,27 @@ class IServer;
 
 ///Identification of connection (server socket)
 using ConnHandle = unsigned int;
+
+enum class SpecialConnection {
+    /** not actual connection - you can use for on_timer feature */
+    null,
+    ///connect stdin
+    stdin,
+    ///connect stdout
+    stdout,
+    ///connect stderr
+    stderr,
+    ///associate a file descriptor (named pipe)
+    descriptor,
+    ///associate an already initialized socket
+    socket
+};
+
+
+struct PipePair {
+    ConnHandle read;
+    ConnHandle write;
+};
 
 class INetContext {
 public:
@@ -34,7 +56,7 @@ public:
      @note you should create IPeer for the result
      *
      */
-    virtual ConnHandle peer_connect(std::string address_port) = 0;
+    virtual ConnHandle connect(std::string address_port) = 0;
 
     ///creates server
     /**
@@ -46,6 +68,31 @@ public:
      * @note you should create IServer for the result
      */
     virtual ConnHandle create_server(std::string address_port) = 0;
+
+    ///create pipe
+    /**
+    * @return initialized pipe. Note the pipe is single direction. So you can only read
+    * the read-end and only write the write-end
+    */
+    virtual PipePair create_pipe() = 0;
+
+
+    ///Make special connection
+    /**
+     * @param type type of special connection
+     * @param arg an argument for type `descriptor` or `socket`.
+     * Because descriptor is OS specific object. For Linux platform,
+     * there is pointer to int as posix file descriptor. For Windows, the
+     * function accepts pointer to HANDLE. If type `socket` the it is accepted
+     * int for linux or SOCKET for windows
+     *
+     * @return connection handle
+     *
+     * @note the function actually duplicates the descriptor
+     *
+     */
+    virtual ConnHandle connect(SpecialConnection type, const void *arg = nullptr) = 0;
+
 
     ///closes connection and connects it again to address
     /**
@@ -239,5 +286,11 @@ auto make_server(std::shared_ptr<INetContext> ctx, std::string address_port, CB 
     auto aux = ctx->create_server(std::move(address_port));
     return ServerCallback<AdjCB>(std::move(ctx), aux, std::forward<CB>(cb));
 }
+
+///spawn process and create pipe connection with stdin and stdout
+PipePair spawn_process(std::shared_ptr<INetContext> ctx,
+                        std::string_view command_line,
+                        std::stop_token tkn = {},
+                        std::function<void(int)> exit_action = {});
 
 }
