@@ -52,28 +52,31 @@ struct Message {
 ///Some constants defined for websockets
 struct Base {
 public:
-	static const unsigned int opcodeContFrame = 0;
-	static const unsigned int opcodeTextFrame = 1;
-	static const unsigned int opcodeBinaryFrame = 2;
-	static const unsigned int opcodeConnClose = 8;
-	static const unsigned int opcodePing = 9;
-	static const unsigned int opcodePong = 10;
+	static constexpr unsigned int opcodeContFrame = 0;
+	static constexpr unsigned int opcodeTextFrame = 1;
+	static constexpr unsigned int opcodeBinaryFrame = 2;
+	static constexpr unsigned int opcodeConnClose = 8;
+	static constexpr unsigned int opcodePing = 9;
+	static constexpr unsigned int opcodePong = 10;
 
-	static const std::uint16_t closeNormal = 1000;
-	static const std::uint16_t closeGoingAway = 1001;
-	static const std::uint16_t closeProtocolError = 1002;
-	static const std::uint16_t closeUnsupportedData = 1003;
-	static const std::uint16_t closeNoStatus = 1005;
-	static const std::uint16_t closeAbnormal = 1006;
-	static const std::uint16_t closeInvalidPayload = 1007;
-	static const std::uint16_t closePolicyViolation = 1008;
-	static const std::uint16_t closeMessageTooBig = 1009;
-	static const std::uint16_t closeMandatoryExtension = 1010;
-	static const std::uint16_t closeInternalServerError = 1011;
-	static const std::uint16_t closeTLSHandshake = 1015;
+	static constexpr std::uint16_t closeNormal = 1000;
+	static constexpr std::uint16_t closeGoingAway = 1001;
+	static constexpr std::uint16_t closeProtocolError = 1002;
+	static constexpr std::uint16_t closeUnsupportedData = 1003;
+	static constexpr std::uint16_t closeNoStatus = 1005;
+	static constexpr std::uint16_t closeAbnormal = 1006;
+	static constexpr std::uint16_t closeInvalidPayload = 1007;
+	static constexpr std::uint16_t closePolicyViolation = 1008;
+	static constexpr std::uint16_t closeMessageTooBig = 1009;
+	static constexpr std::uint16_t closeMandatoryExtension = 1010;
+	static constexpr std::uint16_t closeInternalServerError = 1011;
+	static constexpr std::uint16_t closeTLSHandshake = 1015;
 
 };
 
+#ifndef CONSTEXPR_TESTABLE
+#define CONSTEXPR_TESTABLE
+#endif
 
 class Parser: public Base {
 public:
@@ -84,7 +87,7 @@ public:
      * useful, if the reader requires to stream messages. Default is false,
      * when fragmented message is received, it is completed and returned as whole
      */
-    Parser(std::vector<char> &buffer, bool need_fragmented = false)
+    CONSTEXPR_TESTABLE Parser(std::vector<char> &buffer, bool need_fragmented = false)
         :_cur_message(buffer)
         ,_need_fragmented(need_fragmented) {}
 
@@ -97,10 +100,10 @@ public:
      * interface to retrieve information about the message. To parse
      * next message, you need to call reset()
      */
-    bool push_data(std::string_view data);
+    CONSTEXPR_TESTABLE bool push_data(std::string_view data);
 
     ///Reset the internal state, discard current message
-    void reset();
+    CONSTEXPR_TESTABLE void reset();
 
     ///Retrieve parsed message
     /**
@@ -108,14 +111,14 @@ public:
      *
      * @note Message must be completed. If called while message is not yet complete result is UB.
      */
-    Message get_message() const;
+    CONSTEXPR_TESTABLE Message get_message() const;
 
     ///Retrieves true, if the message is complete
     /**
      * @retval false message is not complete yet, need more data
      * @retval true message is complete
      */
-    bool is_complete() const {
+    CONSTEXPR_TESTABLE bool is_complete() const {
         return _state == State::complete;
     }
 
@@ -126,7 +129,7 @@ public:
      * empty string
      * @return unused data
      */
-    std::string_view get_unused_data() const {
+    CONSTEXPR_TESTABLE std::string_view get_unused_data() const {
         return _unused_data;
     }
 
@@ -144,7 +147,7 @@ public:
      * return push_data(tmp);
      * @endcode
      */
-    bool reset_parse_next() {
+    CONSTEXPR_TESTABLE bool reset_parse_next() {
         auto tmp = get_unused_data();
         reset();
         return push_data(tmp);
@@ -179,10 +182,10 @@ protected:
 
     Type _final_type = Type::unknown;
 
-    bool finalize();
+    CONSTEXPR_TESTABLE  bool finalize();
 
 
-    void reset_state();
+    CONSTEXPR_TESTABLE  void reset_state();
 };
 
 ///Builder builds Websocket frames

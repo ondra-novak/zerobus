@@ -7,7 +7,7 @@ namespace zerobus {
 
 namespace ws {
 
-bool Parser::push_data(std::string_view data) {
+CONSTEXPR_TESTABLE bool Parser::push_data(std::string_view data) {
     std::size_t sz = data.size();
     std::size_t i = 0;
     bool fin = false;
@@ -86,7 +86,7 @@ bool Parser::push_data(std::string_view data) {
     return false;
 }
 
-void Parser::reset_state() {
+CONSTEXPR_TESTABLE void Parser::reset_state() {
     _state = State::first_byte;
     std::fill(std::begin(_masking), std::end(_masking), 0);
     _fin = false;
@@ -96,12 +96,12 @@ void Parser::reset_state() {
     _unused_data = {};
 }
 
-void Parser::reset() {
+CONSTEXPR_TESTABLE void Parser::reset() {
     reset_state();
     _cur_message.clear();
 }
 
-Message Parser::get_message() const {
+CONSTEXPR_TESTABLE Message Parser::get_message() const {
     if (_final_type == Type::connClose) {
         std::uint16_t code = 0;
         std::string_view message;
@@ -131,7 +131,7 @@ Message Parser::get_message() const {
 
 
 
-bool Parser::finalize() {
+CONSTEXPR_TESTABLE bool Parser::finalize() {
     _state = State::complete;
     switch (_type) {
         case opcodeContFrame: break;

@@ -6,9 +6,10 @@ set(testFiles compile.cpp
             tcp_bridge.cpp
             pipe_bridge.cpp
             spawn.cpp
+            websocket.cpp
 )
 
-                
+
 
 foreach (testFile ${testFiles})
     string(REGEX MATCH "([^\/]+$)" filename ${testFile})
