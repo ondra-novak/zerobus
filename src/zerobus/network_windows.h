@@ -22,7 +22,7 @@ public:
     NetContextWin(const NetContextWin &) = delete;
     NetContextWin &operator=(const NetContextWin &) = delete;
 
-    virtual ConnHandle peer_connect(std::string address) override;
+    virtual ConnHandle connect(std::string address) override;
     virtual void reconnect(ConnHandle ident, std::string address_port) override;
     virtual void receive(ConnHandle ident, std::span<char> buffer, IPeer *peer) override;
     virtual std::size_t send(ConnHandle ident, std::string_view data) override;
@@ -35,6 +35,8 @@ public:
     virtual void set_timeout(ConnHandle ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) override;
     virtual void clear_timeout(ConnHandle ident) override;
     virtual void enqueue(std::function<void()> fn) override;
+    virtual ConnHandle connect(SpecialConnection type, const void *arg = nullptr) override;
+    virtual PipePair create_pipe() override;
 
 protected:
 
@@ -48,7 +50,10 @@ protected:
 
     struct SocketInfo {
         ConnHandle _ident = static_cast<ConnHandle>(-1);    //this connection handle
-        SOCKET _socket = INVALID_SOCKET;                    //associated socket
+        union {
+            SOCKET _socket = INVALID_SOCKET;                    //associated socket
+            HANDLE _pipe_handle;
+        };
         std::span<char> _recv_buffer;                       //reference to receiving buffer
         std::chrono::system_clock::time_point _tmtp = {};   //current scheduled timeout - function set_timeout()
         IPeer *_recv_cb = {};                               //callback object for recv
@@ -65,15 +70,9 @@ protected:
         OVERLAPPED _recv_ovr = {};                              //OVERLAPPED for recv or accept
         int _af;                                            //AF socket family of current socket (need for accept)
         SOCKET _accept_socket  = INVALID_SOCKET;            //current accept socket for server
-
-        ///invoke one of callbacks
-        /**
-         * @param lk global lock
-         * @param cond condition variable (activated when waiting on exit)
-         * @param fn a callback function
-         */
-        template<typename Fn>
-        void invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn);
+        bool _is_handle = false;
+        bool _destroy_on_cancel_read = false;
+        bool _destroy_on_cancel_write = false;
     };
     using SocketList = std::vector<std::unique_ptr<SocketInfo> >;
 
@@ -100,6 +99,10 @@ protected:
     void process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandle h,  DWORD transfered, OVERLAPPED *ovr, DWORD error);
     template<typename E> void report_error(E exception, std::string_view action, std::source_location loc = std::source_location::current());
     void report_last_error(std::string_view action, std::source_location loc = std::source_location::current());
+
+    template<typename Fn>
+    void invoke_cb_lk(std::unique_lock<std::mutex> &lk, ConnHandle id, Fn &&fn);
+    SocketInfo *wait_for_finish_cbs_lk(std::unique_lock<std::mutex> &lk, ConnHandle id);
 };
 
 class NetThreadedContext: public NetContextWin {

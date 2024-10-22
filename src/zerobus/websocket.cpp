@@ -88,7 +88,7 @@ CONSTEXPR_TESTABLE bool Parser::push_data(std::string_view data) {
 
 CONSTEXPR_TESTABLE void Parser::reset_state() {
     _state = State::first_byte;
-    std::fill(std::begin(_masking), std::end(_masking), 0);
+    std::fill(std::begin(_masking), std::end(_masking), static_cast<char>(0));
     _fin = false;
     _masked = false;
     _payload_len = 0;

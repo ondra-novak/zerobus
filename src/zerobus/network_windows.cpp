@@ -1,6 +1,7 @@
 #include "network_windows.h"
 #include <MSWSock.h>
 #include <ws2tcpip.h>
+#include <assert.h>
 
 #pragma comment(lib, "Ws2_32.lib")
 
@@ -321,6 +322,7 @@ SOCKET NetContextWin::connect_peer(std::string address_port, DWORD key, OVERLAPP
 
 void NetContextWin::free_socket_lk(ConnHandle id) {
     SocketInfo *nfo = _sockets[id].get();
+    assert(nfo->_cb_call_cntr == 0);
     std::destroy_at(nfo);
     std::construct_at(nfo);
     nfo->_ident = _first_free_socket_ident;
@@ -335,7 +337,7 @@ NetContextWin::SocketInfo *NetContextWin::socket_by_ident(ConnHandle id) {
 }
 
 
-ConnHandle NetContextWin::peer_connect(std::string address_port)  {
+ConnHandle NetContextWin::connect(std::string address_port)  {
     std::lock_guard _(_mx);
     auto ctx = alloc_socket_lk();
     try {
@@ -371,11 +373,11 @@ ConnHandle NetContextWin::peer_connect(std::string address_port)  {
             octx->_ident = oldh;
             nctx->_timeout_cb = octx->_timeout_cb;
             nctx->_tmtp = octx->_tmtp;
+            nctx->_cb_call_cntr = octx->_cb_call_cntr;
+            octx->_cb_call_cntr = 0;
         }
     }
-     enqueue([this,oldh]{
-        destroy(oldh);
-     });
+    destroy(oldh);
  }
 
 
@@ -415,7 +417,7 @@ void NetContextWin::run_worker(std::stop_token tkn)  {
                 SocketInfo *nfo = socket_by_ident(id);
                 if (nfo && nfo->_timeout_cb) {
                     auto cb = std::exchange(nfo->_timeout_cb, nullptr);
-                    nfo->invoke_cb(lk, _cond, [&]{cb->on_timeout();});
+                    invoke_cb_lk(lk, id, [&]{cb->on_timeout();});
                 }
             }
         } else {
@@ -465,35 +467,65 @@ void NetContextWin::process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandl
     auto ctx = socket_by_ident(h);
     if (!ctx) return;    
     if (ovr == &ctx->_send_ovr) {   //POLLOUT
-        if (ctx->_connecting)  {  //CONNECT            
+        if (ctx->_destroy_on_cancel_write) {
+            ctx->_destroy_on_cancel_write = false;
+            if (!ctx->_destroy_on_cancel_read) {
+                free_socket_lk(h);
+            }
+            return;
+        }
+        if (ctx->_connecting)  {  //CONNECT      
             ctx->_connecting = false;
             if (error) report_error(Win32Error(error), "connect");
             ctx->_error = error != 0;
             ctx->_clear_to_send = true;
             auto srv = std::exchange(ctx->_send_cb, nullptr);
-            ctx->invoke_cb(lk, _cond, [&]{if (srv) srv->clear_to_send();});
+            invoke_cb_lk(lk, h, [&]{if (srv) srv->clear_to_send();});
         } else {    //SEND
             if (error == 0 && transfered < ctx->_to_send) {
                 auto e = std::move(ctx->_aux_buffer+transfered, ctx->_aux_buffer+ctx->_to_send, ctx->_aux_buffer);
                 ctx->_to_send = static_cast<DWORD>(std::distance(ctx->_aux_buffer, e));
-                WSABUF bf = {ctx->_to_send, ctx->_aux_buffer};                
-                int r = WSASend(ctx->_socket, &bf, 1, NULL, 0, &ctx->_send_ovr, NULL);
-                if (r != 0) {
-                    error = WSAGetLastError();
-                    if (error == WSA_IO_PENDING) {
-                        error = 0;
-                    } else {
-                        report_error(Win32Error(error), "send");
+                ZeroMemory(&ctx->_send_ovr, sizeof(OVERLAPPED));
+                if (ctx->_is_handle) {
+                    DWORD wrt;
+                    BOOL r = WriteFile(ctx->_pipe_handle, ctx->_aux_buffer, ctx->_to_send, &wrt, &ctx->_send_ovr);
+                    if (!r) {
+                        error = GetLastError();
+                        if (error == ERROR_IO_PENDING) {
+                            error = 0;
+                        } else {
+                            report_error(Win32Error(error), "send");
+                        }
+                    }
+                } else {
+                    WSABUF bf = {ctx->_to_send, ctx->_aux_buffer};                
+                    int r = WSASend(ctx->_socket, &bf, 1, NULL, 0, &ctx->_send_ovr, NULL);
+                    if (r != 0) {
+                        error = WSAGetLastError();
+                        if (error == WSA_IO_PENDING) {
+                            error = 0;
+                        } else {
+                            report_error(Win32Error(error), "send");
+                        }
                     }
                 }
+            } else {
+                ctx->_to_send = 0;
+                ctx->_clear_to_send = true;
+                ctx->_error = error != 0;
+                auto peer = std::exchange(ctx->_send_cb, nullptr);
+                if (peer) invoke_cb_lk(lk, h, [&]{peer->clear_to_send();});
             }
-            ctx->_clear_to_send = true;
-            ctx->_error = error != 0;
-            auto peer = std::exchange(ctx->_send_cb, nullptr);
-            if (peer) ctx->invoke_cb(lk, _cond, [&]{peer->clear_to_send();});
         } 
     }
     if (ovr == &ctx->_recv_ovr) {   //POLLIN
+        if (ctx->_destroy_on_cancel_read) {
+            ctx->_destroy_on_cancel_read = false;
+            if (!ctx->_destroy_on_cancel_write) {
+                free_socket_lk(h);
+            }
+            return;
+        }
         if (ctx->_accept_socket != INVALID_SOCKET) {
             auto srv = std::exchange(ctx->_accept_cb, nullptr);
             if (error == 0) {
@@ -509,7 +541,7 @@ void NetContextWin::process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandl
                 setSocketNonBlocking(nfo->_socket);
                 nfo->_clear_to_send = true;
                 CreateIoCompletionPort(reinterpret_cast<HANDLE>(nfo->_socket), _completion_port, nfo->_ident+key_offset, 0);
-                ctx->invoke_cb(lk, _cond, [&]{if (srv) srv->on_accept(nfo->_ident, adrname);});                                
+                invoke_cb_lk(lk, h, [&]{if (srv) srv->on_accept(nfo->_ident, adrname);});                                
             } else {
                 report_error(Win32Error(error), "accept");
             }
@@ -519,7 +551,7 @@ void NetContextWin::process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandl
                 transfered = 0;            
             }
             auto srv = std::exchange(ctx->_recv_cb, nullptr);
-            ctx->invoke_cb(lk, _cond, [&]{if (srv) srv->receive_complete({ctx->_recv_buffer.data(),transfered});});
+            invoke_cb_lk(lk, h, [&]{if (srv) srv->receive_complete({ctx->_recv_buffer.data(),transfered});});
         }
     }
 
@@ -538,14 +570,27 @@ void NetContextWin::receive(ConnHandle ident, std::span<char> buffer, IPeer *pee
         return;
     }
 
-    WSABUF buf = {static_cast<DWORD>(buffer.size()), buffer.data()};
-    DWORD flags = 0;
-    int rc= WSARecv(ctx->_socket, &buf, 1, NULL, &flags, &ctx->_recv_ovr, NULL);
-    if (rc == SOCKET_ERROR) {
-        auto err = GetLastError();
-        if (err != WSA_IO_PENDING) {
-            ctx->_error = true;
-            PostQueuedCompletionStatus(_completion_port,0,ident + key_offset, &ctx->_recv_ovr);            
+    if (ctx->_is_handle) {
+
+        BOOL b = ReadFile(ctx->_pipe_handle, buffer.data(), static_cast<DWORD>(buffer.size()), NULL, &ctx->_recv_ovr);
+        if (!b) {
+            auto err = GetLastError();
+            if (err != ERROR_IO_PENDING) {
+                ctx->_error = true;
+                PostQueuedCompletionStatus(_completion_port,0,ident + key_offset, &ctx->_recv_ovr);            
+            }
+        }
+
+    } else  {
+        WSABUF buf = {static_cast<DWORD>(buffer.size()), buffer.data()};
+        DWORD flags = 0;
+        int rc= WSARecv(ctx->_socket, &buf, 1, NULL, &flags, &ctx->_recv_ovr, NULL);
+        if (rc == SOCKET_ERROR) {
+            auto err = GetLastError();
+            if (err != WSA_IO_PENDING) {
+                ctx->_error = true;
+                PostQueuedCompletionStatus(_completion_port,0,ident + key_offset, &ctx->_recv_ovr);            
+            }
         }
     }
 }
@@ -555,8 +600,24 @@ std::size_t NetContextWin::send(ConnHandle ident, std::string_view data) {
     auto ctx = socket_by_ident(ident);
     if (!ctx || !ctx->_clear_to_send || ctx->_error) return 0;
 
-    WSABUF buf = {static_cast<ULONG>(data.size()), const_cast<char *>(data.data())};
     DWORD rcv = 0;
+    if (ctx->_is_handle) {
+        ZeroMemory(&ctx->_send_ovr, sizeof(OVERLAPPED));
+        data = data.substr(0, sizeof(ctx->_aux_buffer));
+        std::copy(data.begin(), data.end(), ctx->_aux_buffer);
+        ctx->_to_send = static_cast<DWORD>(data.size());
+        BOOL b = WriteFile(ctx->_pipe_handle, ctx->_aux_buffer, ctx->_to_send, NULL, &ctx->_send_ovr);
+        if (!b)  {
+            auto err = GetLastError();
+            if (err != ERROR_IO_PENDING) {
+                report_error(std::system_error(static_cast<int>(err), Win32ErrorCategory()), "send");
+                return 0;
+            }
+        }        
+        return data.size();
+    }
+    
+    WSABUF buf = {static_cast<ULONG>(data.size()), const_cast<char *>(data.data())};
     int rc = WSASend(ctx->_socket, &buf, 1, &rcv,0,NULL,NULL);
     if (rc == SOCKET_ERROR) {
         auto err = WSAGetLastError();
@@ -568,22 +629,31 @@ std::size_t NetContextWin::send(ConnHandle ident, std::string_view data) {
     }
     data = data.substr(rcv);
     if (data.empty()) return rcv;  //all send - we are good
-
     data = data.substr(0,sizeof(ctx->_aux_buffer)); //store data in aux buffer (just small portion)
-    buf.buf = const_cast<char *>(data.data());
-    buf.len = static_cast<ULONG>(data.size());
     ZeroMemory(&ctx->_send_ovr, sizeof(OVERLAPPED));
-    rc = WSASend(ctx->_socket, &buf, 1, NULL, 0, &ctx->_send_ovr, NULL);    //send data in overlapped mode to generate clear_to_send signal
-    if (rc == SOCKET_ERROR) {
-        auto err = WSAGetLastError();
-        if (WSA_IO_PENDING != WSAGetLastError()) {
-            report_error(std::system_error(static_cast<int>(err), Win32ErrorCategory()), "send");
-            return 0;
+    if (ctx->_is_handle) {
+        BOOL b = WriteFile(ctx->_pipe_handle, data.data(), static_cast<DWORD>(data.size()), NULL, &ctx->_send_ovr);
+        if (!b)  {
+            auto err = WSAGetLastError();
+            if (ERROR_IO_PENDING != WSAGetLastError()) {
+                report_error(std::system_error(static_cast<int>(err), Win32ErrorCategory()), "send");
+                return 0;
+            }
+        }        
+    } else {
+        buf = {static_cast<ULONG>(data.size()), const_cast<char *>(data.data())};
+        rc = WSASend(ctx->_socket, &buf, 1, NULL, 0, &ctx->_send_ovr, NULL);    //send data in overlapped mode to generate clear_to_send signal
+        if (rc == SOCKET_ERROR) {
+            auto err = WSAGetLastError();
+            if (WSA_IO_PENDING != WSAGetLastError()) {
+                report_error(std::system_error(static_cast<int>(err), Win32ErrorCategory()), "send");
+                return 0;
+            }
         }
     }
 
     ctx->_clear_to_send = false; //currently clear to send is false
-    return rcv + buf.len; 
+    return rcv + data.size(); 
 }
 
 void NetContextWin::ready_to_send(ConnHandle ident, IPeer *peer) {
@@ -624,13 +694,15 @@ void NetContextWin::accept(ConnHandle ident, IServer *server) {
 }
 
 template<typename Fn>
-void NetContextWin::SocketInfo::invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn) {
-    ++_cb_call_cntr;
+void NetContextWin::invoke_cb_lk(std::unique_lock<std::mutex> &lk, ConnHandle id, Fn &&fn) {
+    auto ctx = socket_by_ident(id);
+    ++ctx->_cb_call_cntr;
     lk.unlock();
     fn();
     lk.lock();
-    if (--_cb_call_cntr == 0) {
-        cond.notify_all();
+    ctx = socket_by_ident(id);
+    if (--ctx->_cb_call_cntr == 0) {
+        _cond.notify_all();
     }
 }
 
@@ -640,15 +712,29 @@ std::jthread NetContextWin::run_thread() {
     });
 }
 
+NetContextWin::SocketInfo *NetContextWin::wait_for_finish_cbs_lk(std::unique_lock<std::mutex> &lk, ConnHandle id) {
+    SocketInfo *nfo = {};
+    _cond.wait(lk, [&]{
+        nfo = socket_by_ident(id);
+        return nfo == nullptr || nfo->_cb_call_cntr == 0;
+    });
+    return nfo;
+}
+
 void NetContextWin::destroy(ConnHandle ident) {
-    std::unique_lock lk(_mx);
-    auto ctx = socket_by_ident(ident);
+    std::unique_lock lk(_mx);    
+    auto ctx = wait_for_finish_cbs_lk(lk, ident);
     if (!ctx) return;
-    _cond.wait(lk, [&]{return ctx->_cb_call_cntr == 0;}); //wait for finishing all callbacks
-    closesocket(ctx->_socket);
+    if (!ctx->_clear_to_send || ctx->_connecting) ctx->_destroy_on_cancel_write = true;
+    if (ctx->_accept_socket != INVALID_SOCKET || !ctx->_recv_buffer.empty()) ctx->_destroy_on_cancel_read = true;
+    if (ctx->_is_handle) CloseHandle(ctx->_pipe_handle); else closesocket(ctx->_socket);
     if (ctx->_accept_cb) closesocket(ctx->_accept_socket);
+    ctx->_accept_cb = nullptr;
+    ctx->_recv_cb = nullptr;
+    ctx->_send_cb = nullptr;
+    ctx->_timeout_cb = nullptr;
     _tmset.erase({ctx->_tmtp, ident});
-    free_socket_lk(ident);
+    if (!ctx->_destroy_on_cancel_read && !ctx->_destroy_on_cancel_write) free_socket_lk(ident);
 }
 
 void NetContextWin::run(std::stop_token tkn) {
@@ -684,6 +770,126 @@ void NetContextWin::enqueue(std::function<void()> fn)
     _actions.push_back(std::move(fn));
     PostQueuedCompletionStatus(_completion_port,0,key_wakeup,nullptr);
 }
+
+ConnHandle NetContextWin::connect(SpecialConnection type, const void *arg)
+{
+    auto ctx = alloc_socket_lk();
+    HANDLE h;
+    switch (type) {
+        default:
+        case SpecialConnection::null:  break;
+        case SpecialConnection::descriptor: DuplicateHandle(
+            GetCurrentProcess(),*reinterpret_cast<const HANDLE *>(arg),GetCurrentProcess(),
+            &ctx->_pipe_handle,0,FALSE,DUPLICATE_SAME_ACCESS);
+            CreateIoCompletionPort(ctx->_pipe_handle, _completion_port, ctx->_ident+key_offset, 0);
+            ctx->_is_handle = true;
+            break;
+        case SpecialConnection::socket: 
+            ctx->_socket = *reinterpret_cast<const SOCKET *>(arg);
+            CreateIoCompletionPort(reinterpret_cast<HANDLE>(ctx->_pipe_handle), _completion_port, ctx->_ident+key_offset, 0);
+            break;
+        case SpecialConnection::stdinput:
+            h = GetStdHandle(STD_INPUT_HANDLE);
+            return connect(SpecialConnection::descriptor, &h);
+        case SpecialConnection::stdoutput:
+            h = GetStdHandle(STD_OUTPUT_HANDLE);
+            return connect(SpecialConnection::descriptor, &h);
+        case SpecialConnection::stderror:
+            h = GetStdHandle(STD_ERROR_HANDLE);
+            return connect(SpecialConnection::descriptor, &h);        
+    
+    }
+    ctx->_clear_to_send = true;
+   return ctx->_ident;
+}
+
+
+static volatile long PipeSerialNumber;
+
+BOOL CreatePipeEx(
+    OUT LPHANDLE lpReadPipe,
+    OUT LPHANDLE lpWritePipe,
+    IN LPSECURITY_ATTRIBUTES lpPipeAttributes,
+    IN DWORD nSize,
+    DWORD dwReadMode,
+    DWORD dwWriteMode
+    ) {
+  HANDLE ReadPipeHandle, WritePipeHandle;
+  DWORD dwError;
+  wchar_t PipeNameBuffer[ MAX_PATH ];
+
+  //
+  // Only one valid OpenMode flag - FILE_FLAG_OVERLAPPED
+  //
+
+  if ((dwReadMode | dwWriteMode) & (~FILE_FLAG_OVERLAPPED)) {
+    SetLastError(ERROR_INVALID_PARAMETER);
+    return FALSE;
+  }
+
+  //
+  //  Set the default timeout to 120 seconds
+  //
+
+  if (nSize == 0) {
+    nSize = 4096;
+  }
+
+  wsprintfW( PipeNameBuffer,
+           L"\\\\.\\Pipe\\AnonPipe.%08x.%08x",
+           GetCurrentProcessId(),
+           InterlockedIncrement(&PipeSerialNumber)
+         );
+
+  ReadPipeHandle = CreateNamedPipeW(
+                       PipeNameBuffer,
+                       PIPE_ACCESS_INBOUND | dwReadMode,
+                       PIPE_TYPE_BYTE | PIPE_WAIT,
+                       1,             // Number of pipes
+                       nSize,         // Out buffer size
+                       nSize,         // In buffer size
+                       120 * 1000,    // Timeout in ms
+                       lpPipeAttributes
+                       );
+
+  if (! ReadPipeHandle) {
+    return FALSE;
+  }
+
+  WritePipeHandle = CreateFileW(
+                      PipeNameBuffer,
+                      GENERIC_WRITE,
+                      0,                         // No sharing
+                      lpPipeAttributes,
+                      OPEN_EXISTING,
+                      FILE_ATTRIBUTE_NORMAL | dwWriteMode,
+                      NULL                       // Template file
+                    );
+
+  if (INVALID_HANDLE_VALUE == WritePipeHandle) {
+    dwError = GetLastError();
+    CloseHandle( ReadPipeHandle );
+    SetLastError(dwError);
+    return FALSE;
+  }
+
+  *lpReadPipe = ReadPipeHandle;
+  *lpWritePipe = WritePipeHandle;
+  return( TRUE );
+}
+
+PipePair NetContextWin::create_pipe()
+{
+    HANDLE read_end;
+    HANDLE write_end;
+    if (!CreatePipeEx(&read_end, &write_end, NULL, 0, FILE_FLAG_OVERLAPPED, FILE_FLAG_OVERLAPPED)) report_last_error("CreatePipe");
+    auto cread = connect(SpecialConnection::descriptor,&read_end);
+    auto cwrite = connect(SpecialConnection::descriptor,&write_end);
+    CloseHandle(read_end);
+    CloseHandle(write_end);
+    return {cread, cwrite};
+}
+
 
 template <typename E>
 inline void NetContextWin::report_error(E exception, std::string_view action, std::source_location loc)
@@ -726,5 +932,163 @@ static std::string GetErrorMessage(int _Errval) {
 
 const char *Win32ErrorCategory::name() const noexcept {return "Win32 Error";}
 std::string Win32ErrorCategory::message(int _Errval) const {return GetErrorMessage(_Errval);}
+
+
+class ProcessMonitor: public IPeer {
+public:
+    ProcessMonitor(HANDLE hProcess,
+                   DWORD pid, 
+                   std::stop_token tkn, 
+                   std::function<void(int)> exitfn, 
+                   std::shared_ptr<INetContext> ctx, 
+                   ConnHandle aux_pipe)
+        :_hProcess(hProcess)
+        ,_pid(pid)
+        ,_ctx(std::move(ctx))
+        ,_exitfn(std::move(exitfn))
+        ,_aux_pipe(aux_pipe)
+        ,_stopcb(tkn,StopCb {this}) {
+            if (_ctx) {
+                _ctx->receive(_aux_pipe, {_dummy_buff, sizeof(_dummy_buff)}, this);
+            }
+        }
+
+    virtual void clear_to_send() noexcept {}
+    virtual void on_timeout() noexcept {}
+    virtual void receive_complete(std::string_view) noexcept {
+
+        if (WaitForSingleObject(_hProcess, 2000) == WAIT_TIMEOUT) {
+            TerminateProcess(_hProcess, 255);
+        }
+        DWORD exitCode;
+        GetExitCodeProcess(_hProcess, &exitCode);
+
+        if (_exitfn) {
+            _exitfn(static_cast<int>(exitCode));
+        }
+        delete this;
+    }
+
+
+    ~ProcessMonitor() {        
+        if (_ctx) _ctx->destroy(_aux_pipe);
+        CloseHandle (_hProcess);
+    }
+
+protected:
+
+    struct StopCb {
+        ProcessMonitor *_owner;
+        void operator()() const{
+            _owner->on_stop();
+        }
+
+    };
+
+    HANDLE _hProcess;
+    DWORD _pid;
+    std::function<void(int)> _exitfn;
+    std::shared_ptr<INetContext> _ctx;
+    ConnHandle _aux_pipe;
+    std::stop_callback<StopCb> _stopcb;
+    char _dummy_buff[4];
+
+    void on_stop() {
+        GenerateConsoleCtrlEvent(CTRL_BREAK_EVENT, _pid);
+        if (!_ctx) delete this;
+    }
+
+    
+};
+
+
+
+PipePair spawn_process(std::shared_ptr<INetContext> ctx,
+                        std::string_view command_line,
+                        std::stop_token tkn ,
+                        std::function<void(int)> exit_action) {
+
+    HANDLE myIn =INVALID_HANDLE_VALUE, theirOut = INVALID_HANDLE_VALUE;
+    HANDLE myOut = INVALID_HANDLE_VALUE, theirIn = INVALID_HANDLE_VALUE;
+    HANDLE monIn = INVALID_HANDLE_VALUE, monOut = INVALID_HANDLE_VALUE;
+    std::optional<ConnHandle> mon_handle;
+    
+    try {
+        if (!CreatePipeEx(&myIn, &theirOut,NULL, 0, FILE_FLAG_OVERLAPPED,FILE_FLAG_OVERLAPPED)) throw Win32Error();
+        if (!CreatePipeEx(&theirIn, &myOut,NULL, 0, FILE_FLAG_OVERLAPPED,FILE_FLAG_OVERLAPPED)) throw Win32Error();
+        if (exit_action) {
+            if (!CreatePipeEx(&monIn, &monOut,NULL, 0, FILE_FLAG_OVERLAPPED,FILE_FLAG_OVERLAPPED)) throw Win32Error();
+            mon_handle = ctx->connect(SpecialConnection::descriptor, &monIn);
+            CloseHandle(monIn); monIn = INVALID_HANDLE_VALUE;
+            if (!DuplicateHandle(GetCurrentProcess(), monOut, GetCurrentProcess(), &monOut, 0,TRUE, DUPLICATE_SAME_ACCESS|DUPLICATE_CLOSE_SOURCE))
+                throw Win32Error();
+            
+        }
+
+        std::wstring cmdline;
+        cmdline.resize(MultiByteToWideChar(CP_UTF8, 0, command_line.data(), static_cast<DWORD>(command_line.size()), 0,0)+1);
+        MultiByteToWideChar(CP_UTF8, 0, command_line.data(), static_cast<DWORD>(command_line.size()), cmdline.data(),static_cast<DWORD>(cmdline.size()));
+
+        PROCESS_INFORMATION pi = {};
+        STARTUPINFOW si = {};
+        si.cb = sizeof(si);
+
+        if (!DuplicateHandle(GetCurrentProcess(), theirIn, GetCurrentProcess(), &theirIn, 0,TRUE, DUPLICATE_SAME_ACCESS|DUPLICATE_CLOSE_SOURCE)) {
+            throw Win32Error();
+        }
+        if (!DuplicateHandle(GetCurrentProcess(), theirOut, GetCurrentProcess(), &theirOut, 0,TRUE, DUPLICATE_SAME_ACCESS|DUPLICATE_CLOSE_SOURCE)) {
+            throw Win32Error();
+        }
+        si.hStdInput = theirIn;
+        si.hStdOutput = theirOut;
+        si.hStdError = GetStdHandle(STD_ERROR_HANDLE);
+        si.dwFlags = STARTF_USESTDHANDLES;
+
+        BOOL b = CreateProcessW(NULL, cmdline.data(), NULL, NULL, TRUE, CREATE_NEW_PROCESS_GROUP|CREATE_SUSPENDED, NULL, NULL, &si, &pi);
+        if (!b) throw Win32Error();
+        if (tkn.stop_possible()) {
+            if (mon_handle) {
+                new ProcessMonitor(pi.hProcess, pi.dwProcessId, tkn,std::move(exit_action), ctx, *mon_handle);
+                mon_handle.reset();
+                CloseHandle(monOut);
+            } else {
+                new ProcessMonitor(pi.hProcess, pi.dwProcessId, tkn, {}, {}, {});
+            }
+        } else if (mon_handle) {
+            new ProcessMonitor(pi.hProcess, pi.dwProcessId, tkn, std::move(exit_action), ctx, *mon_handle);
+            mon_handle.reset();
+            CloseHandle(monOut);
+        } else {
+            CloseHandle(pi.hProcess);
+        }
+        
+        ResumeThread(pi.hThread);
+        CloseHandle(pi.hThread);
+
+        PipePair out = {};
+        out.read = ctx->connect(SpecialConnection::descriptor, &myIn);
+        out.write = ctx->connect(SpecialConnection::descriptor, &myOut);
+
+        CloseHandle(theirIn);
+        CloseHandle(theirOut);
+        CloseHandle(myIn);
+        CloseHandle(myOut);
+
+        return out;
+
+    }catch (...){
+        if (myIn && myIn != INVALID_HANDLE_VALUE) CloseHandle(myIn);
+        if (myOut && myOut != INVALID_HANDLE_VALUE) CloseHandle(myOut);
+        if (theirIn && theirIn != INVALID_HANDLE_VALUE) CloseHandle(theirIn);
+        if (theirOut && theirOut != INVALID_HANDLE_VALUE) CloseHandle(theirOut);
+        if (monIn && monIn != INVALID_HANDLE_VALUE) CloseHandle(monIn);
+        if (monOut && monOut != INVALID_HANDLE_VALUE) CloseHandle(monOut);
+        if (mon_handle) ctx->destroy(*mon_handle);
+        throw;
+    }
+
+
+}
+
 
 }

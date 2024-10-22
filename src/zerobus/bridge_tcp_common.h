@@ -40,8 +40,8 @@ protected:
     virtual void output_message(std::string_view message) ;
     virtual void on_timeout() noexcept override;
 
-    virtual void lost_connection() = 0;
-    virtual void close() = 0;
+    virtual void lost_connection() {}
+    virtual void close() {}
 
     void destroy();
 

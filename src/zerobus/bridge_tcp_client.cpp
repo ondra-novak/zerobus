@@ -31,6 +31,7 @@ BridgeTCPClient::~BridgeTCPClient() {
         block_hwm(lk);
     }
     destroy();
+    _destructor_called = true;
 }
 
 void BridgeTCPClient::bind(std::shared_ptr<INetContext> ctx, std::string address) {

@@ -3,6 +3,7 @@
 #include "bridge.h"
 #include <iterator>
 #include <variant>
+#include <iostream>
 
 namespace zerobus {
 

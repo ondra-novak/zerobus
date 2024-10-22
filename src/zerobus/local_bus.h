@@ -9,6 +9,7 @@
 #include <map>
 #include <memory_resource>
 #include <deque>
+#include <shared_mutex>
 
 namespace zerobus {
 

@@ -89,4 +89,5 @@ int main(int argc, char **argv) {
     } else {
         bridge_simple(argv[0]);
     }
+    return 0;
 }

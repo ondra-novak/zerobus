@@ -3,6 +3,7 @@
 #include <memory>
 #include <cstdint>
 #include <string_view>
+#include <iostream>
 
 namespace zerobus {
 

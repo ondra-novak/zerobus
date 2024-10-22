@@ -23,11 +23,11 @@ enum class SpecialConnection {
     /** not actual connection - you can use for on_timer feature */
     null,
     ///connect stdin
-    stdin,
+    stdinput,
     ///connect stdout
-    stdout,
+    stdoutput,
     ///connect stderr
-    stderr,
+    stderror,
     ///associate a file descriptor (named pipe)
     descriptor,
     ///associate an already initialized socket
@@ -88,7 +88,13 @@ public:
      *
      * @return connection handle
      *
-     * @note the function actually duplicates the descriptor
+     * @note the function actually duplicates the descriptor after use
+     * 
+     * @note on Windows platform, Socket cannot be duplicated. Do not close the socket after use.
+     * 
+     * @note on Windows platform, HANDLE (as descriptor) must be created with FILE_FLAG_OVERLAPPED 
+     * and must be suitable for IOCP. HANDLE is internally duplicated, so you can close handle 
+     * after use
      *
      */
     virtual ConnHandle connect(SpecialConnection type, const void *arg = nullptr) = 0;

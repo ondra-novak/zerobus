@@ -1,7 +1,7 @@
 #pragma once
 #include "bus.h"
 #include "monitor.h"
-
+#include <span>
 #include <exception>
 
 namespace zerobus {

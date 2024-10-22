@@ -79,7 +79,7 @@ Deserialization::Result Deserialization::operator ()(std::string_view msgtext) {
         }
         case MessageType::new_session: {
             auto version = read_uint(msgtext);
-            return Msg::NewSession{version};
+            return Msg::NewSession{static_cast<unsigned long>(version)};
         }
         case MessageType::update_serial: {
             auto serial = read_string(msgtext);

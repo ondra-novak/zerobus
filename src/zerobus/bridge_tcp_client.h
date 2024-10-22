@@ -59,6 +59,7 @@ protected:
 
     bool _timeout_reconnect = false;
     bool _send_reset_on_connect = false;
+    bool _destructor_called = false;
 
     bool send_handshake();
 

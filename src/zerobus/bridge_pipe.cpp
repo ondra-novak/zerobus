@@ -42,8 +42,8 @@ void BridgePipe::send(const Message &msg) noexcept  {send_gen(msg);}
 void BridgePipe::send(const UpdateSerial &msg) noexcept  {send_gen(msg);}
 
 BridgePipe BridgePipe::connect_stdinout(Bus bus, std::shared_ptr<INetContext> ctx) {
-    ConnHandle rd = ctx->connect(SpecialConnection::stdin);
-    ConnHandle wr = ctx->connect(SpecialConnection::stdout);
+    ConnHandle rd = ctx->connect(SpecialConnection::stdinput);
+    ConnHandle wr = ctx->connect(SpecialConnection::stdoutput);
     return BridgePipe(std::move(bus), std::move(ctx), rd, wr);
 }
 
