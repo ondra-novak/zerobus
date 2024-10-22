@@ -2,6 +2,11 @@
 
 Send messages between parts of the system, wherever they are. They can be in the same process, in another process or on another network. The basic communication between components are communication channels. Each node in the system can listen to any number of channels and can also send messages to any number of channels. In addition, you can also send direct messages between nodes or create multicast groups
 
+## Supported platform
+
+- Linux (GCC-14, CLANG-18) - uses linux sockets, epoll, posix_spawn
+- Windows (MSC 17.9) - uses WSA Sockets, IOCP, named pipes and CreateProcess (console)
+
 
 ## Basic usage
 
@@ -518,4 +523,18 @@ auto context = make_network_context(iothreads_count);
 auto bridge = BridgePipe::connect_process(bus, context, command_line, stop_token, [&](int status){/*callback*/});
 ```
 
+
+### Pipe bridge protocol
+
+The protocol for pipe bridge is similar as for TCP, only websocket frames are not used. 
+Each message starts by length encoded as unsigned string. After it follows the message
+itself. 
+
+```
+<len><message><len><message>....
+```
+
+(so each message is transfered as binary string)
+
+The format of the message is the same as described above
 
