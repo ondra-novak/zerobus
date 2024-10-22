@@ -522,15 +522,15 @@ ConnHandle NetContext::connect(SpecialConnection type, const void *arg) {
         case SpecialConnection::socket:
             ctx->_socket = dup_fd(*reinterpret_cast<const int *>(arg));
             break;
-        case SpecialConnection::stdin:
+        case SpecialConnection::stdinput:
             ctx->_socket = dup_fd(0);
             ctx->_socket_is_pipe = true;
             break;
-        case SpecialConnection::stdout:
+        case SpecialConnection::stdoutput:
             ctx->_socket = dup_fd(1);
             ctx->_socket_is_pipe = true;
             break;
-        case SpecialConnection::stderr:
+        case SpecialConnection::stderror:
             ctx->_socket = dup_fd(2);
             ctx->_socket_is_pipe = true;
             break;

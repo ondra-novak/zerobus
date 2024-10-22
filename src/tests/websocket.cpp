@@ -1,4 +1,4 @@
-#define CONSTEXPR_TESTABLE constexpr
+#include "constexpr_check.h"
 #include "../zerobus/websocket.cpp"
 
 struct WebSocketTestFrame {
@@ -81,17 +81,30 @@ constexpr void generate_frame(const WebSocketTestFrame &frame, std::vector<char>
 }
 
 
-constexpr void check_payload(std::string_view data) {
+
+constexpr bool check_payload_b(std::string_view data) {
     for (std::size_t i = 0; i < data.size(); ++i) {
         if (data[i] != (static_cast<char>(i & 0xFF))) {
-            char test_failed_at_pos[1];
-            test_failed_at_pos[i] = 1;
-            throw "test failed";
+            return false;
         }
     }
+    return true;
 }
 
-constexpr void test_frame(const WebSocketTestFrame &frame, zerobus::ws::Parser &p) {
+
+
+
+enum class TestResult {
+    ok = 0,
+    frame_must_be_complete,
+    frame_type_mismatch,
+    payload_decode_error,
+    extra_mismatch
+};
+
+template<> constexpr auto assert_failed<TestResult::ok> = true;
+
+constexpr TestResult test_frame(const WebSocketTestFrame &frame, zerobus::ws::Parser &p) {
     std::vector<char> fdata;
     generate_frame(frame, fdata);
     append_some_extra(fdata);
@@ -102,54 +115,36 @@ constexpr void test_frame(const WebSocketTestFrame &frame, zerobus::ws::Parser &
         if (p.push_data(m)) break;
     }
     if (!p.is_complete()) {
-        throw "message must be complete";
+        return TestResult::frame_must_be_complete;
     }
     auto msg = p.get_message();
     if (msg.type != frame.t) {
-        if (msg.type == zerobus::ws::Type::unknown) {
-            throw "Unknown type returned";
-        }
-        char bad_type[1];
-        bad_type[static_cast<int>(msg.type)] = 1; //    (type offset);
-        throw "test failed";
+        return TestResult::frame_type_mismatch;
     }
-    if (msg.payload.size() != msg.payload.size()) throw "bad payload";
-    check_payload(msg.payload);
+    if (msg.payload.size() != msg.payload.size()) return TestResult::payload_decode_error;
+    if (!check_payload_b(msg.payload))return TestResult::payload_decode_error;
     auto u = p.get_unused_data();
-    check_payload(u);
+    if (!check_payload_b(u))return TestResult::extra_mismatch;
     p.reset();
+    return TestResult::ok;
 }
 
-constexpr bool run_test() {
-
-    std::vector<char> buffer;
-    zerobus::ws::Parser p(buffer);
-
-    test_frame(test_frames[0], p);
-    test_frame(test_frames[1], p);
-    test_frame(test_frames[2], p);
-    test_frame(test_frames[3], p);
-    test_frame(test_frames[4], p);
-    test_frame(test_frames[5], p);
-    test_frame(test_frames[6], p);
-    test_frame(test_frames[7], p);
-    test_frame(test_frames[8], p);
-    test_frame(test_frames[9], p);
-    test_frame(test_frames[10], p);
-    test_frame(test_frames[11], p);
-    test_frame(test_frames[12], p);
-    test_frame(test_frames[13], p);
 
 
+template<int N>
+struct TestCase_Frame {
 
+    constexpr TestResult operator()() const {
+        std::vector<char> buffer;
+        zerobus::ws::Parser p(buffer);
+        return test_frame(test_frames[N], p);
+    }
+};
 
+static_assert(run_tests<TestCase_Frame, countof(test_frames)>);
 
-    return true;
-}
-
-constexpr bool test_result = run_test();
 
 int main() {
-    return !test_result; //not actual test - all done during complile time
+    return 0;   //compile only
 }
 
