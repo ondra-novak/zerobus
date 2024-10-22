@@ -39,7 +39,7 @@ public:
      * to keep this object while you processing the result
      * @return list of channels. List is always ordered (std::less<std::string>)
      */
-    virtual ChannelList get_active_channels(IListener *listener, ChannelListStorage &storage) const = 0;
+    virtual ChannelList get_active_channels(const IListener *listener, ChannelListStorage &storage) const = 0;
     ///Unsubscribe all channels subscribed to this listener
     /**
      *

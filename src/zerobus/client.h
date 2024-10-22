@@ -64,21 +64,63 @@ public:
         return _bus.get_random_channel_name(prefix);
     }
 
+    ///Test whether Id is existing channel
+    /**
+     * @param id channel
+     * @retval true existing channel
+     * @retval false channel doesn't exists
+     * 
+     * @note This function works on groups as well
+     * 
+     * @note This function cannot be used with private channel
+     */
     bool is_channel(ChannelID id) const {
         return _bus.is_channel(id);
     }
 
+    ///Add a new member to group
+    /** 
+     * @param group_name name of new group
+     * @param sender_id name of private channel of a new member, 
+     * which must be retrieved from a request message by function get_sender()
+     * @retval true member added
+     * @retval false cannot add member. The group is probably exists and 
+     *   has different owner, or it is channel
+     */
     bool add_to_group(ChannelID group_name, ChannelID sender_id) {
         return _bus.add_to_group(this, group_name, sender_id);
     }
 
+    ///Close group
+    /**
+     * @param group_name name of group to close
+     * @note you can only close a group you owns. 
+     */
     void close_group(ChannelID group_name) {
         _bus.close_group(this, group_name);
     }
 
+    ///Close all groups opened by this client
     void close_all_group() {
         _bus.close_all_groups(this);
     }
+
+    ///Retrieves current subscribed channels and groups
+    /**
+     * @param storage a storage object. It is intended to store channel data
+     * and hold locks during processing the result. You should reset or
+     * destroy the object, once you are done with result (otherwise it
+     * can hold some resources)
+     * 
+     * You can reuse existing object from previous call to speed up
+     * operation a lite. However don't forget to call clear() 
+     * after usage/
+     * 
+     * @return Returns list of subscribred channels
+     */
+    Bus::ChannelList get_subscribed_channels(Bus::ChannelListStorage &storage) const {
+        return _bus.get_subscribed_channels(this, storage);
+     }
 
 public:
     //Overrides
@@ -89,7 +131,7 @@ public:
     virtual void on_add_to_group(ChannelID , ChannelID ) noexcept override {}
 
 protected:
-    Bus _bus;
+    Bus _bus;    
 };
 
 

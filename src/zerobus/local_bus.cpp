@@ -489,7 +489,7 @@ void LocalBus::unregister_monitor(const IMonitor *mon) {
 }
 
 
-LocalBus::ChannelList LocalBus::get_active_channels(IListener *listener,ChannelListStorage &storage) const {
+LocalBus::ChannelList LocalBus::get_active_channels(const IListener *listener,ChannelListStorage &storage) const {
     std::lock_guard _(*this);
     storage.clear();
     for (const auto &[k,v]: _channels) {
@@ -501,7 +501,7 @@ LocalBus::ChannelList LocalBus::get_active_channels(IListener *listener,ChannelL
     return storage.get_channels();
 }
 
-LocalBus::ChannelList LocalBus::get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const {
+LocalBus::ChannelList LocalBus::get_subscribed_channels(const IListener *listener, ChannelListStorage &storage) const {
     std::lock_guard _(*this);
     storage.clear();
     for (const auto &[k,v]: _channels) {
@@ -521,7 +521,7 @@ void LocalBus::MbxDef::disable() {
     _disabled = true;
 }
 
-void LocalBus::MbxDef::broadcast(IListener *, const Message &msg) const {
+void LocalBus::MbxDef::broadcast(const IListener *, const Message &msg) const {
     if (_disabled) return ;
     _owner->on_message(msg, true);
 }
@@ -536,7 +536,7 @@ LocalBus::ChanDef::~ChanDef() {
 }
 
 
-void LocalBus::ChanDef::broadcast(IListener *lsn, const Message &msg) const {
+void LocalBus::ChanDef::broadcast(const IListener *lsn, const Message &msg) const {
     std::shared_lock _(_mx);
     for (const auto &l: _listeners) {
         if (l != lsn) l->on_message(msg, false);
@@ -565,13 +565,13 @@ bool LocalBus::ChanDef::remove_listener(IListener *lsn) {
 
 }
 
-bool LocalBus::ChanDef::has(IListener *lsn) const {
+bool LocalBus::ChanDef::has(const IListener *lsn) const {
     std::shared_lock _(_mx);
     auto iter = std::lower_bound(_listeners.begin(), _listeners.end(), lsn);
     return (iter != _listeners.end() && *iter  == lsn);
 }
 
-bool LocalBus::ChanDef::can_export(IListener *lsn) const {
+bool LocalBus::ChanDef::can_export(const IListener *lsn) const {
     std::shared_lock _(_mx);
     if (_owner) return false; //group is not exportable
     if (_listeners.empty()) return false;   //don't export empty channels

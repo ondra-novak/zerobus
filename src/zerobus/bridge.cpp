@@ -110,8 +110,8 @@ void AbstractBridge::receive(const Message &msg) {
             check_rules(flt);
             if (!r) {
                 //unsubscribe filtered channel
-                ChannelID ch = msg.get_channel();
-                send(ChannelUpdate{{&ch,1}, Operation::erase});
+                ChannelID chid = msg.get_channel();
+                send(ChannelUpdate{{&chid,1}, Operation::erase});
             }
         }
     }

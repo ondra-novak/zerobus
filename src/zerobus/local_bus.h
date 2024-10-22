@@ -33,8 +33,8 @@ public:
     virtual void unsubscribe_all(IListener *listener) override;
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) override;
     virtual bool dispatch_message(IListener *listener, const Message &msg, bool subscribe_return_path) override;
-    virtual ChannelList get_active_channels(IListener *listener, ChannelListStorage &storage) const override;
-    virtual ChannelList get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const override;
+    virtual ChannelList get_active_channels(const IListener *listener, ChannelListStorage &storage) const override;
+    virtual ChannelList get_subscribed_channels(const IListener *listener, ChannelListStorage &storage) const override;
     virtual void register_monitor(IMonitor *mon) override;
     virtual void unregister_monitor(const IMonitor *mon) override;
     virtual bool is_channel(ChannelID id) const override;
@@ -66,7 +66,7 @@ protected:
     class ITargetDef {
     public:
         virtual ~ITargetDef() = default;
-        virtual void broadcast(IListener *lsn, const Message &msg) const = 0;
+        virtual void broadcast(const IListener *lsn, const Message &msg) const = 0;
 
     };
 
@@ -104,7 +104,7 @@ protected:
         ///remove listener
         bool remove_listener(IListener *lsn);
         ///determines whether channel can be exported seen from perspective or listener
-        bool can_export(IListener *lsn) const;
+        bool can_export(const IListener *lsn) const;
         ///retrieve id
         ChannelID get_id() const;
 
@@ -112,9 +112,9 @@ protected:
 
         void set_owner(IListener *owner) {_owner = owner;}
 
-        virtual void broadcast(IListener *lsn, const Message &msg) const override;
+        virtual void broadcast(const IListener *lsn, const Message &msg) const override;
 
-        bool has(IListener *lsn) const;
+        bool has(const IListener *lsn) const;
     protected:
         mstring _name;  //a channel name
         IListener *_owner = {}; //owner of group;
@@ -138,7 +138,7 @@ protected:
     class MbxDef: public ITargetDef {
     public:
         MbxDef(IListener *lsn, mstring id);
-        virtual void broadcast(IListener *lsn, const Message &msg) const override;
+        virtual void broadcast(const IListener *lsn, const Message &msg) const override;
         std::string_view get_id() const {return _id;}
         IListener *get_owner() const {return _owner;}
         void disable();

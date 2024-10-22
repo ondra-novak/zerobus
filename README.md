@@ -345,9 +345,11 @@ This message has no extra arguments
    |                    |
 ```
 
-### Message type 0xFA - Clear Path
+### Message type 0xFA - No route
 
 Sent from recepient's node when recipient is no longer available (has been destroyed)
+This message causes deletion of return path to the recepient while following
+path to the sender
 
 Contains:
 - sender id: string
@@ -393,8 +395,8 @@ Specifies that other side established a new session, so current side must unsubs
 from all channels and groups. It also means channel reset
 
 ```
-(node1) ---- group reset ----> (node2)
-                                  +---calls unsubscribe_all
+(node1) ---- new session ----> (node2)
+                                  +---calls unsubscribe_all_channels( /* and groups */ )
 ```
 
 Contains 
@@ -418,14 +420,16 @@ Contains:
 #### serialization UINT
 
 ```
-+-------------------------------+-------------------------------+
-| L | L | L | N | N | N | N | N | N | N | N | N | N | N | N | N |
-+-------------------------------+-------------------------------+
++-------------------------------+-------------//------------------+
+| L | L | L | N | N | N | N | N | N | N | N |     | N | N | N | N |
++-------------------------------+-------------//------------------+
 ```
 L - count of additional bytes
 N - UINT number - big-endian
 
 Example: 12345h -> 41 23 45
+
+Max transferable number is 0x1FFFFFFFFFFFFFFF = 2305843009213693951
 
 #### serialization STRING
 
@@ -469,4 +473,49 @@ public:
     virtual bool on_outgoing_close_group(ChannelID group_name);
 
 };
+```
+
+## Pipe bridge
+
+Pipe bridge allows to connect two processes by pipe. Typical usage is to
+spawn a new process and connect by bridge through stdin/stdout
+
+
+```
+//in parent process
+auto bridge = BridgePipe::connect_process(bus, command_line);
+```
+
+```
+//in child process
+auto bridge = BridgePipe::connect_stdinout(bus)
+
+```
+
+You can futher control created processes by additional arguments to connect_process. You can
+for example supply a stop token, which causes child process termination once stop
+is requested
+
+```
+//in parent process
+auto bridge = BridgePipe::connect_process(bus, command_line, stop_token);
+```
+
+Additionaly you can define a callback function which is called once the process exits
+
+
+```
+//in parent process
+auto bridge = BridgePipe::connect_process(bus, command_line, stop_token, [&](int status){/*callback*/});
+```
+
+If you connect multiple processes, it is good idea to create shared network context to 
+control how many I/O  threads are used for asynchronous operations
+
+```
+//in parent process
+auto context = make_network_context(iothreads_count);
+auto bridge = BridgePipe::connect_process(bus, context, command_line, stop_token, [&](int status){/*callback*/});
+```
+
 

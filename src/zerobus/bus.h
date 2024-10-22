@@ -55,7 +55,7 @@ public:
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
     virtual std::string get_random_channel_name(std::string_view prefix) const = 0;
     virtual bool is_channel(ChannelID id) const = 0;
-    virtual ChannelList get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const = 0;
+    virtual ChannelList get_subscribed_channels(const IListener *listener, ChannelListStorage &storage) const = 0;
 
 };
 
@@ -196,7 +196,7 @@ public:
      * to keep this object while you processing the result
      * @return list of channels. List is always ordered (std::less<std::string>)
      */
-     ChannelList get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const {
+     ChannelList get_subscribed_channels(const IListener *listener, ChannelListStorage &storage) const {
          return _ptr->get_subscribed_channels(listener, storage);
      }
 
