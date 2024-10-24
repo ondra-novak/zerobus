@@ -40,6 +40,31 @@ struct PipePair {
     ConnHandle write;
 };
 
+class SimpleAction { // @suppress("Miss copy constructor or assignment operator")
+public:
+    static constexpr std::size_t _max_lambda_size = sizeof(void *) * 7;
+    template<std::invocable<> Fn>
+    SimpleAction(Fn &&fn) {
+        using TFn = std::decay_t<Fn>;
+        static_assert(sizeof(TFn) <= _max_lambda_size && std::is_trivially_copy_constructible_v<TFn>);
+        TFn *tfn = reinterpret_cast<TFn *>(_space);
+        std::construct_at(tfn, std::forward<Fn>(fn));
+        _run_fn = [](SimpleAction *me) {
+            TFn *tfn = reinterpret_cast<TFn *>(me->_space);
+            (*tfn)();
+        };
+    }
+
+    void operator()() {
+        _run_fn(this);
+    }
+
+protected:
+    void (* _run_fn)(SimpleAction *) = {};
+    char _space[_max_lambda_size] = {};
+
+};
+
 class INetContext {
 public:
 
@@ -89,11 +114,11 @@ public:
      * @return connection handle
      *
      * @note the function actually duplicates the descriptor after use
-     * 
+     *
      * @note on Windows platform, Socket cannot be duplicated. Do not close the socket after use.
-     * 
-     * @note on Windows platform, HANDLE (as descriptor) must be created with FILE_FLAG_OVERLAPPED 
-     * and must be suitable for IOCP. HANDLE is internally duplicated, so you can close handle 
+     *
+     * @note on Windows platform, HANDLE (as descriptor) must be created with FILE_FLAG_OVERLAPPED
+     * and must be suitable for IOCP. HANDLE is internally duplicated, so you can close handle
      * after use
      *
      */
@@ -168,14 +193,19 @@ public:
      */
     virtual void destroy(ConnHandle connection) = 0;
 
-
     ///Enqueue an operation to dispatcher's thread
     /** Enqueued operation is not considered as callback call, so it
      * is good context to perform destructions
      *
-     * @param fn function to enqueue
+     * @param fn function to enqueue.
+     *
+     * @note the function must contain minimal closure which also needs to
+     * be trivially copy constructible.
+     *
+     * On other hand, if called from a handler, it guarantee that callback function
+     * will be called, so you  don't need any "guards"
      */
-    virtual void enqueue(std::function<void()> fn) = 0;
+    virtual void enqueue(SimpleAction fn) = 0;
 
 
     ///sets timeout at given time
@@ -189,6 +219,13 @@ public:
 
     ///Clear existing timeout
     virtual void clear_timeout(ConnHandle connection) = 0;
+
+    ///Determines, whether current execution is made in a callback
+    /**
+     * @retval true we are currently in callback, we cannot destroy the connection
+     * @retval false we are outside of a callback
+     */
+    virtual bool in_calback() const = 0;
 };
 
 class IPeerServerCommon {

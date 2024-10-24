@@ -1,4 +1,5 @@
 #include "bridge_tcp_server.h"
+#include "http_utils.h"
 
 #include "bridge.h"
 #include <charconv>
@@ -215,7 +216,7 @@ BridgeTCPServer::Peer::ParseResult BridgeTCPServer::Peer::parse_websocket_header
     bool version = false;
     std::string_view wskey;
 
-    auto first_line = parse_header(data, [&](auto key, auto value){
+    auto first_line = parse_http_header(data, [&](auto key, auto value){
         if (icmp(key, "upgrade")) {
             if (icmp(value, "websocket")) upgrade = true;
         } else if (icmp(key, "connection")) {
@@ -252,7 +253,7 @@ bool BridgeTCPServer::Peer::websocket_handshake(const std::string_view &data, co
         auto srv = _owner._http_server.load();
         if (srv) {
             _destroyed = true;
-            srv->on_request(_aux, std::move(_owner._ctx), data, extra);
+            srv->on_request(_aux, _owner._ctx, data, extra);
             return false;
         }
         resp << "HTTP/1.1 400 Bad request\r\n"

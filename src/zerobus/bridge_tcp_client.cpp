@@ -1,4 +1,5 @@
 #include "bridge_tcp_client.h"
+#include "http_utils.h"
 
 namespace zerobus {
 
@@ -153,7 +154,7 @@ bool BridgeTCPClient::check_ws_response(std::string_view hdr) {
     bool upgrade = false;
     bool connection = false;
     bool accept = false;
-    auto first_line = parse_header(hdr, [&](std::string_view key, std::string_view value){
+    auto first_line = parse_http_header(hdr, [&](std::string_view key, std::string_view value){
         if (icmp(key, "upgrade")) {
             if (icmp(value, "websocket")) upgrade = true;
         } else if (icmp(key, "connection")) {

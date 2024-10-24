@@ -96,25 +96,7 @@ protected:
 
     void output_message(const ws::Message &msg);
 
-    static std::string_view split(std::string_view &data, std::string_view sep);
-    static std::string_view trim(std::string_view data);
-    static char fast_tolower(char c);
-    static bool icmp(const std::string_view &a, const std::string_view &b);
 
-
-    template<std::invocable<std::string_view, std::string_view> CB>
-    std::string_view parse_header(std::string_view hdr, CB &&cb) {
-        auto first_line = split(hdr, "\r\n");
-        while (!hdr.empty()) {
-            auto value = split(hdr, "\r\n");
-            auto key = split(value,":");
-            key = trim(key);
-            value = trim(value);
-            cb(key, value);
-        }
-        return first_line;
-
-    }
 
     void deserialize_message(const std::string_view &msg);
     Deserialization _deser;

@@ -53,7 +53,8 @@ public:
     virtual void clear_timeout(ConnHandle ident) override;
 
 
-    virtual void enqueue(std::function<void()> fn) override;
+    virtual void enqueue(SimpleAction fn) override;
+    virtual bool in_calback() const override;
 protected:
 
     using MyEPoll = EPoll<ConnHandle>;
@@ -98,7 +99,7 @@ protected:
     std::condition_variable _cond;
 
     std::atomic<int> _cur_timer_thread = -1;
-    std::vector<std::function<void()> > _actions;
+    std::vector<SimpleAction > _actions;
 
 
     void run_worker(std::stop_token tkn, int efd) ;

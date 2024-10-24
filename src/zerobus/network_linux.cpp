@@ -107,7 +107,7 @@ void NetContext::run_worker(std::stop_token tkn, int efd)  {
         eventfd_write(efd, 1);
     });
 
-    std::vector<std::function<void()> > actions;
+    std::vector<SimpleAction> actions;
 
     _epoll.add(efd, EPOLLIN, -1);
 
@@ -434,12 +434,16 @@ void NetContext::clear_timeout(ConnHandle ident) {
 
 }
 
+static thread_local int current_callback_cntr = 0;
+
 template<typename Fn>
 void NetContext::SocketInfo::invoke_cb(std::unique_lock<std::mutex> &lk, std::condition_variable &cond, Fn &&fn) {
     ++_cb_call_cntr;
+    ++current_callback_cntr;
     lk.unlock();
     fn();
     lk.lock();
+    --current_callback_cntr;
     if (--_cb_call_cntr == 0) {
         cond.notify_all();
     }
@@ -495,7 +499,7 @@ void NetContext::process_event_lk(std::unique_lock<std::mutex> &lk, const WaitRe
 
 
 
-void NetContext::enqueue(std::function<void()> fn) {
+void NetContext::enqueue(SimpleAction fn) {
     std::lock_guard _(_mx);
     _actions.push_back(std::move(fn));
     if (_cur_timer_thread >= 0) {
@@ -598,6 +602,9 @@ void NetContext::report_error(E exception, std::string_view action, std::source_
     }
 }
 
+bool NetContext::in_calback() const {
+    return current_callback_cntr != 0;
+}
 
 
 class ProcessMonitorPeer: public IPeer {
@@ -823,10 +830,9 @@ PipePair spawn_process(std::shared_ptr<INetContext> ctx,
     close(p1[1]);
     return {re,we};
 
-
-
-
 }
+
+
 
 
 

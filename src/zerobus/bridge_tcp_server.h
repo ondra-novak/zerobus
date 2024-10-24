@@ -216,7 +216,7 @@ std::unique_ptr<IHttpServer> BridgeTCPServer::set_http_server_fn(Fn &&fn) {
     protected:
         std::decay_t<Fn> _fn;
     };
-    auto ptr = std::make_unique<Impl>(std::forward<Fn>(fn));
+    auto ptr = std::unique_ptr<IHttpServer>(new Impl(std::forward<Fn>(fn)));
     set_http_server(ptr);
     return ptr;
 }

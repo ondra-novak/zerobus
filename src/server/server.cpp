@@ -5,12 +5,52 @@
 #include <zerobus/client.h>
 #include <zerobus/bridge_tcp_client.h>
 #include <zerobus/bridge_tcp_server.h>
+#include <zerobus/http_utils.h>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 #include <thread>
 
 using namespace zerobus;
+
+coroutine load_page(ConnHandle conn, std::shared_ptr<INetContext> context, std::string_view hdr_data, std::string_view) {
+    auto stream = Stream::create(conn, std::move(context));
+    auto first_line = parse_http_header(hdr_data, [](const auto &...){});
+    HttpRequestLine req = parse_http_request_line(first_line);
+    int code = 404;
+    std::string_view message = "Not found";
+    std::string_view ctx = "text/html;charset=utf-8";
+    std::string_view body = "<h1>404 Not found</h1>";
+
+    if (icmp(req.method,"GET")) {
+        if (!req.path.empty()) {
+            auto path = req.path.substr(1);
+            if (path.empty()) {
+                code = 200;
+                message = "Ok";
+                body = client_embedded_html;
+            } else if (path == "client.js") {
+                code = 200;
+                message = "Ok";
+                body = client_embedded_js;
+                ctx = "text/javascript";
+            }
+        }
+    } else {
+        code = 405;
+        message = "Method not allowed\r\nAllow: GET";
+        body = "<h1>405 Method not allowed<h1>";
+    }
+    std::ostringstream out;
+    out << req.version << " " << code << " " << message << "\r\n"
+            "Content-Type: " << ctx << "\r\n"
+            "Server: zerobus\r\n"
+            "Content-Length: " << body.size()  <<"\r\n"
+            "Connection: close\r\n"
+            "\r\n" << body;
+
+    co_await stream->write(out.view());
+}
 
 
 /*
@@ -57,6 +97,9 @@ int main() {
     ping.subscribe("ping");
     timer.subscribe("timer");
     BridgeTCPServer server(bus, "localhost:"+std::to_string(port));
+    server.set_http_server_fn([](auto ... args){
+        load_page(args...);
+    });
   //  server.set_custom_page_callback(load_page);
     std::cout << "Opened at port:" << port << std::endl;
     std::cout << "Press enter to exit:";

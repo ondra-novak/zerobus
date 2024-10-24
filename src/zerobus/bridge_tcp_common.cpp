@@ -1,4 +1,5 @@
 #include "bridge_tcp_common.h"
+#include "http_utils.h"
 
 #include <condition_variable>
 #include <random>
@@ -205,38 +206,8 @@ void BridgeTCPCommon::flush_buffer() {
 }
 
 
-std::string_view BridgeTCPCommon::split(std::string_view &data, std::string_view sep) {
-    std::string_view r;
-    auto pos = data.find(sep);
-    if (pos == data.npos) {
-        r = data;
-        data = {};
-    } else {
-        r = data.substr(0,pos);
-        data = data.substr(pos+sep.size());
-    }
-    return r;
-}
 
-std::string_view BridgeTCPCommon::trim(std::string_view data) {
-    while (!data.empty() && isspace(data.front())) data = data.substr(1);
-    while (!data.empty() && isspace(data.back())) data = data.substr(0, data.size()-1);
-    return data;
-}
 
-char BridgeTCPCommon::fast_tolower(char c) {
-    if (c >= 'A' && c <= 'Z') return c - 'A' + 'a';
-    else return c;
-}
-
-bool BridgeTCPCommon::icmp(const std::string_view &a, const std::string_view &b) {
-    if (a.size() != b.size()) return false;
-    std::size_t cnt = a.size();
-    for (std::size_t i = 0; i < cnt; ++i) {
-        if (fast_tolower(a[i]) != fast_tolower(b[i])) return false;
-    }
-    return true;
-}
 
 std::string BridgeTCPCommon::get_address_from_url(std::string_view url) {
     if (url.substr(0, 5) != "ws://") return std::string(url);
