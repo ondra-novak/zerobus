@@ -8,10 +8,25 @@ namespace zerobus {
 
 
 
-
+///Helps to manipulate with opened connection
+/**
+ * For asynchronous reading, you can use coroutines. There is simple coroutine
+ * declared named `coroutine` intended for such task. However you should
+ * use better implementation for advance usage.
+ */
 class Stream : public IPeer {
 public:
 
+    ///To create stream, you need to call this function
+    /** The stream is always created as shared_ptr object
+     *
+     * @param conn connection handle
+     * @param ctx network context
+     *
+     * To obtain connection handle, use INetContext::connect or INetContext::create_server
+     *
+     * @return connected stream
+     */
     static std::shared_ptr<Stream> create(ConnHandle conn, std::shared_ptr<INetContext> ctx) {
         auto ptr = new Stream(conn, *ctx);
         return std::shared_ptr<Stream>(ptr,[ctx](Stream *ptr){
@@ -37,6 +52,23 @@ public:
     using Duration = Clock::duration;
 
 
+    ///awaitable object - to support coroutine's co_await
+    /**
+     * @tparam RetVal return value (from co_await)
+     *
+     * @note actually you can use this object outside of coroutine. This
+     * object is returned from the read() or write(). You can use
+     * operator >> to specify a callback function which accepts just
+     * return value as an argument
+     *
+     * @code
+     * stream.read() >> [=](std::string_view data) { ... }
+     * @endcode
+     *
+     * Note that any buffers held during asynchronous operation must not be destroyed
+     *
+     *
+     */
     template<typename RetVal>
     class Awaitable {
     public:
@@ -49,15 +81,46 @@ public:
         Awaitable(const Awaitable &owner) = default;
         Awaitable &operator=(const Awaitable &owner) = delete;
 
+
+        ///support for coroutine co_await
+        /** Don't call directly. If you must to call it directly, always
+         * continue in call pattern. For example, you can call
+         * await_ready() and depend on result, you must call await_suspend()
+         * or await_resume().
+         *
+         * @retval true asynchronous operation is ready. Call await_resume to
+         * retrieve result
+         * @retval false asynchronous operation is not ready. Call await_suspend()
+         * to register coroutine to resume later
+         */
         bool await_ready() noexcept {
             return _owner.await_ready<RetVal>(_data);
         }
+        ///register suspended coroutine
+        /**
+         * @param h suspended coroutine to be registered for async operation
+         * You must call await_ready() prior this call
+         */
         void await_suspend(std::coroutine_handle<> h) noexcept {
             _owner.register_coro<RetVal>(h);
         }
+
+        ///retrieve result of finished operation
+        /** This function must be called once coroutine is resumed. This is autatically
+         * handled by co_await operator.
+         * @return return value
+         */
         RetVal await_resume() noexcept {
             return _owner.get_data<RetVal>();
         }
+
+        ///register a callback function to retrieve result of asynchronous operation
+        /**
+         * @param fn function to be called once asynchronous operation is complete
+         * @note if operation is already complete, the function is immediately
+         * called in context of current thread. Otherwise the function is called
+         * in thread where operation is completed
+         */
         template<std::invocable<RetVal> Fn>
         void operator>>(Fn &&fn) {
             if (await_ready()) {
