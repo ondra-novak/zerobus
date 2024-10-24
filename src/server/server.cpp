@@ -13,7 +13,7 @@
 using namespace zerobus;
 
 
-
+/*
 BridgeTCPServer::CustomPage load_page(std::string_view path) {
     if (!path.empty()) {
         path = path.substr(1);
@@ -28,7 +28,7 @@ BridgeTCPServer::CustomPage load_page(std::string_view path) {
     return {403, "Forbidden", "text/plain",""};
 }
 
-
+*/
 int main() {
     unsigned int port = 12121;
 
@@ -57,7 +57,7 @@ int main() {
     ping.subscribe("ping");
     timer.subscribe("timer");
     BridgeTCPServer server(bus, "localhost:"+std::to_string(port));
-    server.set_custom_page_callback(load_page);
+  //  server.set_custom_page_callback(load_page);
     std::cout << "Opened at port:" << port << std::endl;
     std::cout << "Press enter to exit:";
     std::cin.get();

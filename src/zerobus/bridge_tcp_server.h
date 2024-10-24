@@ -2,6 +2,7 @@
 #include "bus.h"
 #include "monitor.h"
 #include "websocket.h"
+#include "http_server.h"
 
 #include "bridge_tcp_common.h"
 
@@ -47,19 +48,40 @@ public:
     void bind(std::shared_ptr<INetContext> ctx, std::string address_port);
 
 
-    struct CustomPage {
-        int status_code;
-        std::string status_message;
-        std::string content_type;
-        std::variant<std::string_view, const char *, std::string> content;
-    };
-
-    ///sets callback which is called when non-websocket request is received
-    /**
-     * It can only server simple GET requests
-     * @param cb callback. The callback receive uri-path and it should return CustomPage structure
+    ///sets http server
+    /** This allows to process non-websocket requests by some http server.
+     *
+     * @param srv instance to http server, which processes the non-websocket
+     * requests. The pointer is owned by this object and automatically destroyed
+     *
+     * @note The function is MT safe if called for very first time. If you use
+     * this function to switch the server, the old instance is stored to the
+     * variable srv. You should consider that the instance can be still in use.
      */
-    void set_custom_page_callback(std::function<CustomPage(std::string_view)> cb);
+    void set_http_server(std::unique_ptr<IHttpServer> &srv);
+    ///sets http server
+    /** This allows to process non-websocket requests by some http server.
+     *
+     * @param srv instance to http server, which processes the non-websocket
+     * requests. The pointer is owned by this object and automatically destroyed
+     *
+     * @note The function is MT safe if called for very first time. If you use
+     * this function to switch the server, the old instance is stored to the
+     * variable srv. You should consider that the instance can be still in use.
+     */
+    void set_http_server(std::unique_ptr<IHttpServer> &&srv) {
+        return set_http_server(srv);
+    }
+
+    ///set http server as function called for every non-websocket request
+    /**
+     *
+     * @param fn function to be called
+     * @return pointer for previous handler
+     * @see set_http_server, IHttpServer
+     */
+    template<std::invocable<ConnHandle,std::shared_ptr<INetContext> ,std::string_view , std::string_view> Fn>
+    std::unique_ptr<IHttpServer> set_http_server_fn(Fn &&fn);
 
     ///server doesn't send pings automatically - this function enforces ping on all peers
     /**
@@ -138,7 +160,7 @@ protected:
             std::string_view sessionid;
         };
 
-        bool websocket_handshake(std::string_view &data);
+        bool websocket_handshake(const std::string_view &data, const std::string_view &extra);
         ParseResult parse_websocket_header(std::string_view data);
         void start_peer();
 
@@ -161,7 +183,7 @@ protected:
     bool _send_mine_channels_flag = false;
     bool _lost_peers_flag = false;
     bool _bound = false;
-    std::function<CustomPage(std::string_view)> _custom_page;
+    std::atomic<IHttpServer *> _http_server = {};
 
 
     void lost_connection();
@@ -181,5 +203,22 @@ protected:
     struct AuthCBDeleter;
 };
 
+template<std::invocable<ConnHandle, std::shared_ptr<INetContext>, std::string_view, std::string_view> Fn>
+std::unique_ptr<IHttpServer> BridgeTCPServer::set_http_server_fn(Fn &&fn) {
+    class Impl: public IHttpServer {
+    public:
+        Impl(Fn &&f):_fn(std::forward<Fn>(f)) {}
+        virtual void on_request( ConnHandle handle,
+                std::shared_ptr<INetContext> ctx,
+                std::string_view header, std::string_view body_data) noexcept override {
+            _fn(handle, std::move(ctx), header, body_data);
+        }
+    protected:
+        std::decay_t<Fn> _fn;
+    };
+    auto ptr = std::make_unique<Impl>(std::forward<Fn>(fn));
+    set_http_server(ptr);
+    return ptr;
+}
 
 }

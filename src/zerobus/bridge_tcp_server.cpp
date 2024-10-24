@@ -7,13 +7,7 @@ namespace zerobus {
 
 BridgeTCPServer::BridgeTCPServer(Bus bus)
 :_bus(std::move(bus))
-,_custom_page([this](std::string_view uri)->CustomPage {
-    if (uri == _path) {
-        return {400,"Bad request", "text/plain", std::string_view("Please, use websocket connection")};
-    } else {
-        return {404,"Not found", "text/html", std::string_view("<html><body><h1>404 Not found</h1></body></html>")};
-    }
-}) {
+{
 
 
 }
@@ -47,6 +41,7 @@ BridgeTCPServer::~BridgeTCPServer() {
     lk.unlock();
     p.clear();
     _ctx->destroy(_aux);
+    delete _http_server.exchange(nullptr);
 }
 
 
@@ -146,10 +141,6 @@ void BridgeTCPServer::call_with_peer(unsigned int id, Fn &&fn) {
 
 
 
-void BridgeTCPServer::set_custom_page_callback(
-        std::function<CustomPage(std::string_view)> cb) {
-    _custom_page = std::move(cb);
-}
 
 void BridgeTCPServer::send_ping() {
     std::lock_guard _(_mx);
@@ -191,14 +182,21 @@ void BridgeTCPServer::Peer::receive_complete(std::string_view data) noexcept {
         std::string_view t(_input_data.data(),_input_data.size());
         auto p = t.find("\r\n\r\n");
         if (p != t.npos) {
-            if (websocket_handshake(t)) {
+            std::string_view header_data = t.substr(0,p);
+            std::string_view extra = t.substr(p+4);
+            if (websocket_handshake(header_data, extra)) {
                 if (!_session_id.empty() && _owner.handover(this, _aux, _session_id)) {
                     close();
                     return;
                 }
                 _input_data.clear();
-                read_from_connection();
-                start_peer();
+                if (!extra.empty()) {
+                    start_peer();
+                    BridgeTCPCommon::receive_complete(extra);
+                } else {
+                    read_from_connection();
+                    start_peer();
+                }
             } else {
                 close();
             }
@@ -247,30 +245,22 @@ BridgeTCPServer::Peer::ParseResult BridgeTCPServer::Peer::parse_websocket_header
 }
 
 
-bool BridgeTCPServer::Peer::websocket_handshake(std::string_view &data) {
+bool BridgeTCPServer::Peer::websocket_handshake(const std::string_view &data, const std::string_view &extra) {
     auto rs = parse_websocket_header(data);
     std::ostringstream resp;
     if (rs.key.empty()) {
-        if (icmp(rs.method, "GET")) {
-            auto cp = _owner._custom_page(rs.uri);
-
-            std::string_view content = std::visit([](const auto &x)->std::string_view{return x;}, cp.content);
-
-            resp << "HTTP/1.1 "<<cp.status_code << " " << cp.status_message << "\r\n"
-                    "Server: zerobus\r\n"
-                    "Connection: close\r\n"
-                    "Content-Type: " << cp.content_type << "\r\n"
-                    "Content-Length: " << content.size() << "\r\n"
-                    "\r\n" << content;
-
-        } else {
-            resp << "HTTP/1.1 405 Method not allowed\r\n"
-                    "Allow: GET\r\n"
-                    "Server: zerobus\r\n"
-                    "Connection: close\r\n"
-                    "Content-Length: 0\r\n"
-                    "\r\n";
+        auto srv = _owner._http_server.load();
+        if (srv) {
+            _destroyed = true;
+            srv->on_request(_aux, std::move(_owner._ctx), data, extra);
+            return false;
         }
+        resp << "HTTP/1.1 400 Bad request\r\n"
+                "Server: zerobus\r\n"
+                "Connection: close\r\n"
+                "Context-Type: text/plain\r\n"
+                "\r\n"
+                "Use websocket protocol";
     } else {
         resp << "HTTP/1.1 101 Switching Protocols\r\n"
                 "Upgrade: websocket\r\n"
@@ -328,6 +318,11 @@ bool BridgeTCPServer::handover(Peer *peer, ConnHandle handle, std::string_view s
         return true;
     }
     return false;
+}
+
+void BridgeTCPServer::set_http_server(std::unique_ptr<IHttpServer> &srv) {
+    auto ptr = _http_server.exchange(srv.release());
+    srv.reset(ptr);
 }
 
 }
