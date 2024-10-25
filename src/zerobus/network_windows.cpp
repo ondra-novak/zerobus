@@ -8,6 +8,8 @@
 
 namespace zerobus {
 
+static thread_local unsigned int callback_call_counter = 0;
+
 class MsWSock {
 public:
     MsWSock() {
@@ -388,7 +390,7 @@ void NetContextWin::run_worker(std::stop_token tkn)  {
         PostQueuedCompletionStatus(_completion_port,0,key_exit,NULL);
     });
 
-    std::vector<std::function<void()> > actions;
+    std::vector<SimpleAction> actions;
 
     while (!tkn.stop_requested()) {
         DWORD timeout = INFINITE;
@@ -551,7 +553,9 @@ void NetContextWin::process_event_lk(std::unique_lock<std::mutex> &lk, ConnHandl
                 transfered = 0;            
             }
             auto srv = std::exchange(ctx->_recv_cb, nullptr);
-            invoke_cb_lk(lk, h, [&]{if (srv) srv->receive_complete({ctx->_recv_buffer.data(),transfered});});
+            std::string_view buff = {ctx->_recv_buffer.data(),transfered};
+            ctx->_recv_buffer = {};
+            invoke_cb_lk(lk, h, [&]{if (srv) srv->receive_complete(buff);});
         }
     }
 
@@ -602,6 +606,11 @@ std::size_t NetContextWin::send(ConnHandle ident, std::string_view data) {
 
     DWORD rcv = 0;
     if (ctx->_is_handle) {
+        if (data.empty()) {
+            CloseHandle(ctx->_pipe_handle);
+            ctx->_pipe_handle = INVALID_HANDLE_VALUE;
+            return 0;
+        }
         ZeroMemory(&ctx->_send_ovr, sizeof(OVERLAPPED));
         data = data.substr(0, sizeof(ctx->_aux_buffer));
         std::copy(data.begin(), data.end(), ctx->_aux_buffer);
@@ -616,7 +625,11 @@ std::size_t NetContextWin::send(ConnHandle ident, std::string_view data) {
         }        
         return data.size();
     }
-    
+
+    if (data.empty()) {
+        shutdown(ctx->_socket, SD_SEND);
+        return 0;
+    }
     WSABUF buf = {static_cast<ULONG>(data.size()), const_cast<char *>(data.data())};
     int rc = WSASend(ctx->_socket, &buf, 1, &rcv,0,NULL,NULL);
     if (rc == SOCKET_ERROR) {
@@ -697,14 +710,21 @@ template<typename Fn>
 void NetContextWin::invoke_cb_lk(std::unique_lock<std::mutex> &lk, ConnHandle id, Fn &&fn) {
     auto ctx = socket_by_ident(id);
     ++ctx->_cb_call_cntr;
+    ++callback_call_counter;
     lk.unlock();
     fn();
     lk.lock();
+    --callback_call_counter;
     ctx = socket_by_ident(id);
     if (--ctx->_cb_call_cntr == 0) {
         _cond.notify_all();
     }
 }
+
+bool NetContextWin::in_calback() const {
+    return callback_call_counter>0;
+}
+
 
 std::jthread NetContextWin::run_thread() {
     return std::jthread([this](auto tkn){
@@ -764,7 +784,7 @@ void NetContextWin::clear_timeout(ConnHandle ident) {
 
 }
 
-void NetContextWin::enqueue(std::function<void()> fn)
+void NetContextWin::enqueue(SimpleAction fn)
 {
     std::lock_guard _(_mx);
     _actions.push_back(std::move(fn));

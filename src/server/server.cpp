@@ -50,6 +50,9 @@ coroutine load_page(ConnHandle conn, std::shared_ptr<INetContext> context, std::
             "\r\n" << body;
 
     co_await stream->write(out.view());
+    co_await stream->write("");
+    stream->set_read_timeout(std::chrono::seconds(1));
+    co_await stream->read();
 }
 
 

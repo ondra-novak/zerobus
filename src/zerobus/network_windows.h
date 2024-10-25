@@ -34,9 +34,10 @@ public:
     void run(std::stop_token tkn);
     virtual void set_timeout(ConnHandle ident, std::chrono::system_clock::time_point tp, IPeerServerCommon *p) override;
     virtual void clear_timeout(ConnHandle ident) override;
-    virtual void enqueue(std::function<void()> fn) override;
+    virtual void enqueue(SimpleAction fn) override;
     virtual ConnHandle connect(SpecialConnection type, const void *arg = nullptr) override;
     virtual PipePair create_pipe() override;
+    virtual bool in_calback() const override;
 
 protected:
 
@@ -86,7 +87,7 @@ protected:
     TimeoutSet _tmset;
     std::condition_variable _cond;
     bool _need_timeout_thread = false;
-    std::vector<std::function<void()> > _actions;
+    std::vector<SimpleAction> _actions;
 
 
     SocketInfo *alloc_socket_lk();

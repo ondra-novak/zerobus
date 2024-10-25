@@ -232,7 +232,6 @@ protected:
     Stream(ConnHandle conn, INetContext &ctx)
         :_conn(conn), _ctx(ctx) {
         _ctx.ready_to_send(_conn,this);
-        begin_receive();
     }
 
 
@@ -255,6 +254,7 @@ protected:
     bool _reading = false;
     bool _read_timeouted = false;
     bool _canceled_read = false;
+    bool _shutdown_write = false;
 
     template<typename Awaiter>
     struct CBFrame { // @suppress("Miss copy constructor or assignment operator")
@@ -292,6 +292,8 @@ protected:
             _mx.lock();
             if (_broken) return true;
             _to_write = data;
+            if (data.empty()) 
+                _shutdown_write = true;
             if (_clear_to_send) {
                 return flush_write();
             }
@@ -327,8 +329,9 @@ protected:
     template<typename RetVal>
     RetVal get_data() {
         if constexpr(std::is_same_v<RetVal, bool>) {
-            return !_broken;
+            bool b = !_broken;
             _mx.unlock();
+            return b;
         } else if constexpr(std::is_same_v<RetVal, std::string_view>) {
             auto r = std::exchange(_cur_data, {});
             _mx.unlock();
@@ -347,6 +350,7 @@ protected:
             _to_write = {};
             return true;
         }
+        _shutdown_write = false;
         _to_write = _to_write.substr(sz);
         _clear_to_send = false;
         _ctx.ready_to_send(_conn, this);
@@ -355,15 +359,12 @@ protected:
 
     virtual void clear_to_send() noexcept override {
         _mx.lock();
-        if (!_to_write.empty()) {
-            if (!flush_write()) {
-                _mx.unlock();
-                return;
-            }
-            else {
-                _clear_to_send = true;
-            }
+        if (!_to_write.empty() || _shutdown_write) {
+            flush_write();
+            _mx.unlock();
+            return;
         }
+        _clear_to_send = true;
         std::coroutine_handle<> h = std::exchange(_wt_write, {});
         if (h) h.resume(); //unlock done in await_resume
         else _mx.unlock();
