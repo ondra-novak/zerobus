@@ -671,7 +671,7 @@ void LocalBus::BackPathStorage::remove_listener(IListener *l) {
     while (ptr != reinterpret_cast<BackPathItem *>(&_last)) {
         auto x = ptr;
         ptr = ptr->next;
-        if (ptr->l == l) {
+        if (x->l == l) {
             x->remove();
             _entries.erase(std::string_view(x->id.begin(), x->id.end()));
         }
