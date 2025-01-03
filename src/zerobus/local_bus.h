@@ -128,7 +128,7 @@ protected:
         mvector<char> id = {};
         IListener *l = {};
 
-        void promote(BackPathItem * &root);
+        void promote(BackPathItem  &root);
         void remove();
     };
 
@@ -177,7 +177,7 @@ protected:
 
     protected:
         BackPathMap _entries;                 //map of back path routing
-        BackPathItem *_root = {};
+        BackPathItem _root = {};
         BackPathItem *_last = {};
 
     };

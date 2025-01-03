@@ -596,7 +596,7 @@ bool LocalBus::is_channel(ChannelID id) const {
 LocalBus::BackPathStorage::BackPathStorage(std::pmr::memory_resource &res)
 :_entries(BackPathMap::allocator_type(&res))
 {
-    _root = reinterpret_cast<BackPathItem *>(&_last);
+    _root.next = reinterpret_cast<BackPathItem *>(&_last);
 }
 
 
@@ -605,14 +605,12 @@ void LocalBus::BackPathItem::remove() {
     if (next) next->prev = prev;
 
 }
-void LocalBus::BackPathItem::promote(BackPathItem * &root) {
-    if (root != this) {
-        remove();
-        prev = nullptr;
-        next = root;
-        root->prev = this;
-        root = this;
-    }
+void LocalBus::BackPathItem::promote(BackPathItem  &root) {
+    remove();
+    next = root.next;
+    prev = &root;
+    root.next = this;
+    next->prev = this;
 }
 
 void LocalBus::BackPathStorage::store_path(const ChannelID &chan, IListener *lsn) {
@@ -667,7 +665,7 @@ bool LocalBus::clear_return_path(IListener *lsn, ChannelID sender, ChannelID rec
 }
 
 void LocalBus::BackPathStorage::remove_listener(IListener *l) {
-    auto *ptr = _root;
+    auto *ptr = _root.next;
     while (ptr != reinterpret_cast<BackPathItem *>(&_last)) {
         auto x = ptr;
         ptr = ptr->next;
