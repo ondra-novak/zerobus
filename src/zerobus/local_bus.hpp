@@ -27,7 +27,7 @@ public:
     virtual bool forward_message(IListener *sender, Message msg) override;
     virtual bool is_channel(ChannelID id) const override;
     virtual bool update_serial(IListener *lsn, SerialID serialId) override;
-    virtual void clear_path(ChannelID sender, ChannelID receiver) override;
+    virtual void clear_path(ChannelID sender, ChannelID receiver, ConversationID cid) override;
     virtual ChannelList get_public_channels(
             IListener *listener, ChannelListStorage &storage) const override;
     virtual ChannelList get_subscribed_channels(IListener *listener,

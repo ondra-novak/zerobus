@@ -160,18 +160,18 @@ bool LocalBus::is_channel(ChannelID id) const {
     return static_cast<bool>(c);
 }
 
-void LocalBus::clear_path(ChannelID sender, ChannelID receiver) {
+void LocalBus::clear_path(ChannelID sender, ChannelID receiver, ConversationID cid) {
     Dispatcher &disp = Dispatcher::get_instance();
     disp.finish();    //finish pending, unlock all locks
     std::unique_lock lk(_mx);
     IListener *lsn = _routing_cache.find_path(sender);
     _routing_cache.clear_path(receiver);
     if (lsn) {
-        disp.enqueue([lsn, &sender, &receiver, lk = std::move(lk)]() mutable{
+        disp.enqueue([lsn, &sender, &receiver, cid, lk = std::move(lk)]() mutable{
             if (!lsn) return;
             auto l = lsn;
             lsn = nullptr;
-            l->on_no_route(sender, receiver);
+            l->on_no_route(sender, receiver,cid);
         });
         disp.dispatch();
     }

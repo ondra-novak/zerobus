@@ -52,7 +52,7 @@ public:
     virtual ChannelList get_subscribed_groups(IListener *listener, ChannelListStorage &storage) const = 0;
     virtual void channel_notify(IChannelNotifyListener *mon, bool enable)  = 0;
 
-    virtual void clear_path( ChannelID sender, ChannelID receiver) = 0;
+    virtual void clear_path( ChannelID sender, ChannelID receiver, ConversationID cid) = 0;
     virtual SerialID get_serial() const;
     virtual bool update_serial(IListener *lsn, SerialID serialId) = 0;
 
@@ -401,8 +401,8 @@ public:
      *      If the sender is on the local bus, the on_no_route()
      *      function is called directly on the sender instance.
      */
-    void clear_path(ChannelID sender, ChannelID receiver) {
-         _ptr->clear_path( sender, receiver);
+    void clear_path(ChannelID sender, ChannelID receiver, ConversationID cid) {
+         _ptr->clear_path( sender, receiver, cid);
     }
 
     ///Retrieves serial ID of whole network

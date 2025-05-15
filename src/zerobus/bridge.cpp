@@ -95,8 +95,8 @@ void Bridge::on_close_group(ChannelID group_name) noexcept {
     _transport->on_message(MsgCloseGroup{group_name});
 }
 
-void Bridge::on_no_route(ChannelID sender, ChannelID receiver) noexcept{
-    _transport->on_message(MsgNoRoute{sender, receiver});
+void Bridge::on_no_route(ChannelID sender, ChannelID receiver, ConversationID cid) noexcept{
+    _transport->on_message(MsgNoRoute{sender, receiver,cid});
 }
 
 void Bridge::on_group_empty(ChannelID group_name) noexcept{
@@ -108,13 +108,16 @@ void Bridge::on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept
 }
 
 void Bridge::on_message(const Message &message, bool pm) noexcept{
-    if (!pm) _transport->on_message(message);
-    else _bus.clear_path(message.get_sender(), message.get_channel());
+    if (!pm) {
+        _transport->on_message(MsgMessage{
+        message.get_sender(), message.get_channel(), message.get_content(), message.get_conversation()});
+    }
+    else _bus.clear_path(message.get_sender(), message.get_channel(), message.get_conversation());
 }
 
-void Bridge::on_message(const Message &msg) noexcept{
-    if (!_bus.forward_message(this, msg)) {
-        _bus.clear_path(msg.get_sender(), msg.get_channel());
+void Bridge::on_message(const MsgMessage &msg) noexcept{
+    if (!_bus.forward_message(this, Message(msg.sender, msg.channel, msg.content, msg.cid))) {
+        _bus.clear_path(msg.sender, msg.channel, msg.cid);
     }
 }
 
@@ -170,7 +173,7 @@ void Bridge::on_message(const MsgNewSession &) noexcept {
 }
 
 void Bridge::on_message(const MsgNoRoute &msg) noexcept {
-    _bus.clear_path(msg.sender, msg.receiver);
+    _bus.clear_path(msg.sender, msg.receiver, msg.cid);
 }
 
 void Bridge::on_message(const MsgCloseGroup &msg) noexcept {

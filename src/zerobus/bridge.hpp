@@ -8,12 +8,11 @@ namespace zerobus {
 class AbstractTransport: public IProtocol {
 public:
 
+    AbstractTransport() = default;
     AbstractTransport(const AbstractTransport &other) = delete;
     AbstractTransport &operator=(const AbstractTransport &other) = delete;
 
-    virtual void set_target(IProtocol *target) {_target = target;}
-protected:
-    IProtocol *_target = nullptr;
+    virtual void set_target(IProtocol *target) = 0;
 
 };
 
@@ -82,13 +81,13 @@ protected:
 
     //IListener
     virtual void on_close_group(ChannelID group_name) noexcept override;
-    virtual void on_no_route(ChannelID sender,ChannelID receiver) noexcept override;
+    virtual void on_no_route(ChannelID sender,ChannelID receiver, ConversationID cid) noexcept override;
     virtual void on_group_empty(ChannelID group_name) noexcept override;
     virtual void on_add_to_group(ChannelID group_name,ChannelID target_id) noexcept override;
     virtual void on_message(const Message &message, bool pm) noexcept override;
 
     //IProtocol
-    virtual void on_message(const Message &msg) noexcept override;
+    virtual void on_message(const MsgMessage &msg) noexcept override;
     virtual void on_message(const MsgSetChannels &msg) noexcept override;
     virtual void on_message(const MsgAddChannels &msg) noexcept override;
     virtual void on_message(const MsgEraseChannels &msg) noexcept override;
@@ -126,3 +125,4 @@ Bus _bus;
 
 
 }
+

@@ -42,7 +42,7 @@ public:
      * function send_message simply returns false. This message appear only when
      * message cannot be delivered after the send_message returned true
      */
-    virtual void on_no_route(ChannelID sender, ChannelID receiver) noexcept  = 0;
+    virtual void on_no_route(ChannelID sender, ChannelID receiver, ConversationID cid) noexcept  = 0;
 
     ///add group
     /**
