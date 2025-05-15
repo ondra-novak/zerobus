@@ -10,7 +10,7 @@ struct WebSocketTestFrame {
 };
 
 constexpr uint8_t frame1[] = { 0x81, 0x7D };  // Finální textový rámec, délka payloadu: 125 bajtů (bez maskování)
-constexpr uint8_t frame2[] = { 0x82, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7E };  // Binární rámec, délka payloadu: 126 bajtů (bez maskování)
+constexpr uint8_t frame2[] = { 0x83, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x7E };  // Binární rámec, délka payloadu: 126 bajtů (bez maskování)
 constexpr uint8_t frame3[] = { 0x81, 0x7E, 0x01, 0x00 };  // Finální textový rámec, délka payloadu: 256 bajtů (bez maskování)
 constexpr uint8_t frame4[] = { 0x82, 0x7F, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x00 };  // Binární rámec, délka payloadu: 256 bajtů (bez maskování)
 constexpr uint8_t frame5[] = { 0x81, 0x7E, 0x03, 0xE8 };  // Finální textový rámec, délka payloadu: 1000 bajtů (bez maskování)
