@@ -22,4 +22,5 @@ channel_list_storage.cpp
 #endif()
 
 add_library(zerobus ${COMMON_FILES} ${PLATFORM_SPECIFIC_FILES})
+add_subdirectory(transport/zmq)
 
