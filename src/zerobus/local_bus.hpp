@@ -24,9 +24,9 @@ public:
     virtual void unsubscribe(IListener *listener, ChannelList channel)override;
     virtual bool send_message(IListener *listener,ChannelID channel,
             MessageContent msg, ConversationID cid) override;
-    virtual bool forward_message(IListener *sender, Message msg) override;
+    virtual bool forward_message(IListener *sender, const Message &msg) override;
     virtual bool is_channel(ChannelID id) const override;
-    virtual bool update_serial(IListener *lsn, SerialID serialId) override;
+    virtual UpdateSerialStatus update_serial(IListener *lsn, const SerialID &serialId) override;
     virtual void clear_path(ChannelID sender, ChannelID receiver, ConversationID cid) override;
     virtual ChannelList get_public_channels(
             IListener *listener, ChannelListStorage &storage) const override;
@@ -39,7 +39,7 @@ public:
     virtual void close_group(IListener *owner, ChannelID group_name) override;
     virtual bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) override;
     virtual void channel_notify(IChannelNotifyListener *mon, bool enable) override;
-    virtual SerialID get_serial() const override;
+    virtual SerialStatus get_serial() const override;
     virtual void close_all_groups(IListener *owner) override;
     virtual std::string get_random_channel_name(std::string_view prefix) const override;
 
@@ -53,8 +53,8 @@ std::vector<IChannelNotifyListener *> _monitors;
 mutable std::shared_mutex _mx;
 std::atomic_flag _channels_no_change = {false};
 std::string _node_serial = {};
-std::string _cur_serial = {};
-IListener *_serial_source = nullptr;
+SerialStatus _cur_serial = {};
+mutable std::mutex _serial_mx;
 
 void do_forward_message(Message &&msg, IListener *owner);
 
@@ -66,6 +66,8 @@ template<std::invocable<const Channel<IListener *> &>Pred>
 ChannelList get_channels(ChannelListStorage &storage, Pred &&pred) const;
 template<std::invocable<const Channel<IListener *> &> Pred>
 void unsubscribe_helper(std::unique_lock<std::shared_mutex> &lk, Pred &&pred);
+
+void do_forward_message(IListener *sender, const Message &msg) ;
 
 
 };

@@ -81,6 +81,7 @@ public:
 
     ///Finish current task and continue dispatching tasks in the queue
     void dispatch() noexcept{
+        _dispatching = true;
         finish();
         while (!_queue.empty()) {
             //mark new task in progress
@@ -88,6 +89,14 @@ public:
             //finish it
             finish();
         }
+        if (_level == 0) {
+            _dispatching = false;
+        }
+    }
+
+
+    void dispatch_if_needed() noexcept {
+        if (!_dispatching) dispatch();
     }
 
     /**
@@ -103,14 +112,19 @@ public:
      * @brief Checks if a dispatch is currently in progress.
      * @return True if dispatch is in progress, false otherwise.
      */
-    auto get_in_progress() const {
+    auto is_in_progress() const {
         return _in_progress;
+    }
+
+    auto is_dispatching() const {
+        return _dispatching;
     }
 
 protected:
     DispatchQueue<void()> _queue;
     unsigned int _level = 0;
     bool _in_progress = false;
+    bool _dispatching = false;
 
     ThreadRecursiveDispatcher() = default;
 };

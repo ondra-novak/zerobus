@@ -1,20 +1,11 @@
-#include "iprotocol.hpp"
+#pragma once
+#include "protocol.hpp"
 
 #include "bus.hpp"
 
 #include <atomic>
 namespace zerobus {
 
-class AbstractTransport: public IProtocol {
-public:
-
-    AbstractTransport() = default;
-    AbstractTransport(const AbstractTransport &other) = delete;
-    AbstractTransport &operator=(const AbstractTransport &other) = delete;
-
-    virtual void set_target(IProtocol *target) = 0;
-
-};
 
 ///defines basic bridge filtering
 /**
@@ -60,19 +51,69 @@ enum class BridgeOpMode {
 };
 
 
-class Bridge: public IProtocol, public IListener, public IChannelNotifyListener {
+class Bridge: public AbstractTransport, public IListener, public IChannelNotifyListener {
 public:
 
-    Bridge(Bus bus, std::shared_ptr<AbstractTransport> transport, BridgeOpMode op = BridgeOpMode::bidirectional);
+    ///Init the bridge in master mode
+    /**
+     * @param bus associated bus which this side monitors
+     * @param transport unique pointer to transport object, which performs
+     *  serialization of the messages
+     * @param op bridge operation mode
+     *
+     * The constructor performs bidirectional. The transport object is owned
+     * by the bridge and it is destroyed with the Bridge
+     */
+    Bridge(Bus bus, std::unique_ptr<AbstractTransport> transport, BridgeOpMode op = BridgeOpMode::bidirectional);
+    ///Initialize the bridge in slave mode
+    /**
+     * The bridge is still associated with the bus, but it is not connected
+     * to a transport. You need to connect it before the bus is used to
+     * send messages. To connect it, use set_target()
+     *
+     * @param bus associated bus
+     * @param op bridge operation mode
+     */
+    Bridge(Bus bus, BridgeOpMode op = BridgeOpMode::bidirectional);
+
+    ///Destroy bridge
     ~Bridge();
 
+    ///Sets target for outgoing messages.
+    /** Use this function to connect a slave bridge to its master */
+    virtual void set_target(IProtocol *target) override;
 
+    ///Send reset request
+    /** The other side should respond with MsgSetChannels to update
+     * list of channels
+     */
     void send_reset();
+    ///Initate a session, send version
     void send_new_session(unsigned long version);
+    ///retrieve current version
     unsigned long get_version() const {return _version;}
 
+    ///change bridge mode
     void set_mode(BridgeOpMode mode);
+    ///get bridge mode
     BridgeOpMode get_mode() const;
+
+    ///Retrieve information about cycle detection
+    /**
+     * @retval true cycle was detected and this bridge doesn't propagate
+     * channels to the other side.
+     * @return false cycle was not detected, normal operation
+     */
+    bool get_cycle_status() const {return _cycle_status.load(std::memory_order_relaxed);}
+
+    ///Refresh list of channels
+    /**
+     * Ensures that all channels are propagated to the other side
+     * @param force use MsgSetChannels to ensure that no channel is missing.
+     * If this argument is false, the function can do nothing if there
+     * is no change detection.
+     */
+    void refresh(bool force);
 
 protected:
 
@@ -87,7 +128,7 @@ protected:
     virtual void on_message(const Message &message, bool pm) noexcept override;
 
     //IProtocol
-    virtual void on_message(const MsgMessage &msg) noexcept override;
+    virtual void on_message(const Message &msg) noexcept override;
     virtual void on_message(const MsgSetChannels &msg) noexcept override;
     virtual void on_message(const MsgAddChannels &msg) noexcept override;
     virtual void on_message(const MsgEraseChannels &msg) noexcept override;
@@ -102,8 +143,9 @@ protected:
 
 protected:
 
-Bus _bus;
-    std::shared_ptr<AbstractTransport> _transport;
+    Bus _bus;
+    std::unique_ptr<AbstractTransport> _transport;
+    IProtocol *_target;
 
     std::string _serial_id;
     ChannelListStorage _cur_list;
@@ -111,14 +153,14 @@ Bus _bus;
     ChannelListStorage _diff_list;
     unsigned long _version = 0;
     std::atomic<unsigned char> _lk_flag = {0};
-    std::atomic<unsigned char> _cycle_status = {false};
+    std::atomic<bool> _cycle_status = {false};
     std::atomic<BridgeOpMode> _op_mode ={BridgeOpMode::bidirectional};
     static constexpr unsigned char chan_locked = 1;
     static constexpr unsigned char chan_need_update = 2;
     static constexpr unsigned char chan_need_reset = 4;
 
 
-    void on_channels_update_lk() noexcept;
+    void on_channels_update_lk(bool force) noexcept;
 
 
 };

@@ -9,10 +9,19 @@
 
 namespace zerobus {
 
-using SerialID = std::string_view;
+using SerialID = std::string;
 
+struct SerialStatus {
+    SerialID serial;
+    const IListener *source = nullptr;
+};
 
-
+enum class UpdateSerialStatus {
+    changed,
+    not_changed,
+    same,
+    cycle
+};
 
 
 class IBus {
@@ -44,7 +53,7 @@ public:
     virtual void close_group(IListener *owner, ChannelID group_name) = 0;
     virtual void close_all_groups(IListener *owner) = 0;
     virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
-    virtual bool forward_message(IListener *sender, Message msg) = 0;
+    virtual bool forward_message(IListener *sender, const Message &msg) = 0;
     virtual std::string get_random_channel_name(std::string_view prefix) const = 0;
     virtual bool is_channel(ChannelID id) const = 0;
     virtual ChannelList get_public_channels(IListener *listener, ChannelListStorage &storage) const = 0;
@@ -53,8 +62,55 @@ public:
     virtual void channel_notify(IChannelNotifyListener *mon, bool enable)  = 0;
 
     virtual void clear_path( ChannelID sender, ChannelID receiver, ConversationID cid) = 0;
-    virtual SerialID get_serial() const;
-    virtual bool update_serial(IListener *lsn, SerialID serialId) = 0;
+    virtual SerialStatus get_serial() const = 0;
+    virtual UpdateSerialStatus update_serial(IListener *lsn, const SerialID &serialId) = 0;
+
+};
+
+class Bus;
+
+///Abstract client - associates bus with the listener
+/**
+ * Automatically unregisters itself when destroyed
+ */
+class AbstractClient: public IListener {
+public:
+
+    AbstractClient(std::shared_ptr<IBus> bus):_bus(std::move(bus)) {}
+    ~AbstractClient() {
+        _bus->unsubscribe_all(this);
+    }
+    Bus get_bus() const;
+
+
+    bool subscribe(ChannelID channel) {
+        return _bus->subscribe(this, channel);
+    }
+    void unsubscribe(ChannelID channel) {
+        _bus->unsubscribe(this, channel);
+    }
+    void close_private_channel() {
+        _bus->close_private_channel(this);
+    }
+    bool add_to_group(ChannelID group_name, ChannelID uid) {
+        return _bus->add_to_group(this, group_name, uid);
+    }
+    void close_group(ChannelID group_name) {
+        _bus->close_group(this, group_name);
+    }
+    void close_all_groups() {
+        _bus->close_all_groups(this);
+    }
+    bool send_message(ChannelID channel, MessageContent msg, ConversationID cid = 0) {
+        return _bus->send_message(this, channel, msg, cid);
+    }
+    bool forward_message(const Message &msg) {
+        return _bus->forward_message(this, msg);
+    }
+
+
+protected:
+    std::shared_ptr<IBus> _bus;
 
 };
 
@@ -64,6 +120,9 @@ class Bus {
 public:
     ///create new bus;
     static Bus create();
+
+
+    Bus(std::shared_ptr<IBus> handle):_ptr(std::move(handle)) {}
 
     /// Subscribes a listener to a specific channel.
     /**
@@ -239,7 +298,7 @@ public:
      *       may still return true. However, the listener may asynchronously receive an error through
      *       the `on_no_route()` callback.
      */
-    bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) {
+    bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid = 0) {
         return _ptr->send_message(listener, channel, msg, cid);
     }
 
@@ -269,8 +328,8 @@ public:
      * is known as unavailable.
      *
      */
-    bool forward_message(IListener *sender, Message msg) {
-        return _ptr->forward_message(sender, std::move(msg));
+    bool forward_message(IListener *sender, const Message &msg) {
+        return _ptr->forward_message(sender, msg);
     }
 
     ///Generates a random channel name
@@ -413,7 +472,7 @@ public:
      * all nodes in the network will start returning this ID.
      * The value of the ID itself is a random unique string
      */
-    SerialID get_serial() const {
+    SerialStatus get_serial() const {
         return _ptr->get_serial();
     }
 
@@ -439,12 +498,132 @@ public:
      * and only forward any updates to these IDs (there and back). If a new ID is received,
      * the cycle has been resolved and the bridge can be reactivated.
      */
-    bool update_serial(IListener *lsn, SerialID serialId) {
+    UpdateSerialStatus update_serial(IListener *lsn, const SerialID &serialId) {
         return _ptr->update_serial(lsn, serialId);
     }
 
     ///Retrieves pointer to underlying object
     auto get_handle() const {return _ptr;}
+
+    ///Indicates that group has been closed
+    /**
+     * This constant is used to notify events for new_client() function.
+     * In this case, sender contains name of group which has been closed
+     */
+    static constexpr MessageContent group_close = "c";
+    ///Indicates that group is empty.
+    /**
+     * This constant is used to notify events for new_client() function.
+     * In this case, sender contains name of the group. This client
+     * is owner of the group. The event indicates that there is nobody
+     * listening on the group
+     */
+    static constexpr MessageContent group_empty = "e";
+
+    ///Indicates that this client has been added to group
+    /**
+     * This constant is used to notify events for new_client() function.
+     * In this case, sender contains name of the group. It
+     * indicates, that this clien has been added to the specified group
+     * and now is able to receive messages broadcasted on that group.
+     * These messages are flagged as public (not private)
+     */
+    static constexpr MessageContent group_add = "a";
+    ///Indicates is known that some message was not delivered
+    /**
+     * This constant is used to notify events for new_client() function.
+     * In this case, sender contains ID of the failed message's original
+     * receiver. The conversiation ID is also filled with
+     * conversation ID of original message. This indicates, that
+     * message was not delivered, because there was no route information.
+     *
+     */
+    static constexpr MessageContent no_route = "r";
+
+
+    ///Construct ad-hoc client which call a function for every received event
+    /**
+     * The function receives pointer to associated instance of AbstractClient,
+     * the message itself and flag , which indicates whether the message
+     * is private. If tge flag is true, then message is private, otherwise
+     * it is sent from public channel
+     *
+     * @param callback the callback function
+     *
+     * @note This function introduces a special channel to forward
+     * non-message events. This is introduces for this case only. If the
+     * flag is true, indicating that message is private, and channel of
+     * the message is empty - which is otherwise impossible - then
+     * sender contains source of the event and content contains type
+     * of event. There are several types of events: group_close, group_empty,
+     * group_add, no_route
+     *
+     * @code
+     * new_client([&](AbstractClient *me, const Message &msg, bool pm){
+     *  if (pm)  { //private message
+     *      if (msg.get_channel().empty()) { // other event
+     *          auto event = msg.get_content();
+     *          if (event == Bus::no_route) {...}// mesage was not delivered
+     *      }
+     *  }
+     * });
+     *
+     *
+     * @return instance of the client (directly initialized). Note
+     * the instance is not movable. If you need to create pointer, use
+     * new_client_unique() or new_client_shared()
+     */
+    template<std::invocable<AbstractClient *, const Message &, bool> Callback>
+    auto new_client(Callback &&callback) {
+
+        class CbLsn: public AbstractClient {
+        public:
+            CbLsn(Callback &&cb, std::shared_ptr<IBus> bus)
+                :AbstractClient(std::move(bus)),_cb(std::move(cb)) {}
+
+            virtual void on_message(const Message &message, bool pm) noexcept override {
+                _cb(this, message, pm);
+            }
+            virtual void on_close_group(zerobus::ChannelID group_name) noexcept override {
+                _cb(this, Message(group_name, "", group_close,0), true);
+            }
+            virtual void on_add_to_group(ChannelID group_name, ChannelID ) noexcept override {
+                _cb(this, Message(group_name, "", group_add,0), true);
+            }
+            virtual void on_group_empty(ChannelID group_name) noexcept override {
+                _cb(this, Message(group_name, "", group_empty,0), true);
+            }
+            virtual void on_no_route(ChannelID, ChannelID receiver, ConversationID cid) noexcept override {
+                _cb(this, Message(receiver, "", no_route, cid), true);
+            }
+
+        protected:
+            std::decay_t<Callback> _cb;
+        };
+
+        return CbLsn(std::move(callback), _ptr);
+    }
+
+    ///Creates simple client as unique pointer
+    /**
+     * @param callback callback. For more information see new_client()
+     * @return unique pointer to AbstractClient interface
+     */
+    template<std::invocable<AbstractClient *, const Message &, bool> Callback>
+    std::unique_ptr<AbstractClient> new_client_unique(Callback &&callback) {
+        return std::unique_ptr<AbstractClient>(new auto(new_client(std::move(callback))));
+    }
+
+    ///Creates simple client as shared pointer
+    /**
+     * @param callback callback. For more information see new_client()
+     * @return shared pointer to AbstractClient interface
+     */
+    template<std::invocable<AbstractClient *, const Message &, bool> Callback>
+    std::shared_ptr<AbstractClient> new_client_shared(Callback &&callback) {
+        using Ret = decltype(this->new_client(std::move(callback)));
+        return std::make_shared<Ret>(std::move(callback), _ptr);
+    }
 
 
 
@@ -453,4 +632,10 @@ protected:
 
 };
 
+inline Bus AbstractClient::get_bus() const {
+    return Bus(_bus);
 }
+
+
+}
+

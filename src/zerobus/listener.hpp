@@ -11,7 +11,11 @@ class IListener {
 public:
 
 
+    IListener() = default;
     virtual ~IListener() = default;
+
+    IListener(const IListener &) = delete;
+    IListener &operator=(const IListener &) = delete;
 
     ///Message received
     /**
@@ -84,7 +88,6 @@ public:
      */
     virtual void on_group_empty(ChannelID group_name) noexcept = 0;
 };
-
 
 
 }

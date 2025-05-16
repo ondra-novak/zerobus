@@ -9,16 +9,16 @@ namespace zerobus {
 using Dispatcher = utils::ThreadRecursiveDispatcher;
 
 LocalBus::LocalBus():_node_serial(LocalBus::get_random_channel_name({})) {
-_cur_serial = _node_serial;
+_cur_serial.serial = _node_serial;
 }
 
 void LocalBus::notify_channel_change() {
     Dispatcher &disp = Dispatcher::get_instance();
     std::size_t *pos = nullptr;
     disp.enqueue([this, pos, lk = std::shared_lock(_mx, std::defer_lock)]() mutable{
-        std::size_t stpos;
-        if (_channels_no_change.test_and_set(std::memory_order_relaxed)) return;
+        std::size_t stpos = 0;
         if (!lk.owns_lock()) {
+            if (_channels_no_change.test_and_set(std::memory_order_relaxed)) return;
             lk.lock();
         }
         //create storage for position
@@ -32,6 +32,7 @@ void LocalBus::notify_channel_change() {
             p->on_channels_update();    //REENTRY POINT
         }
     });
+    disp.dispatch_if_needed();
 }
 
 
@@ -96,39 +97,74 @@ bool LocalBus::send_message(zerobus::IListener *listener,
     std::string id("@");
     std::string_view sender = _private_channels.find(listener);
     lk.unlock();
-    if (sender.empty()) {
+    if (listener && sender.empty()) {
         //sender has no mailbox, it must be created, switch to exclusive lock
         std::unique_lock _(_mx);
         generate_mailbox_id(std::back_inserter(id));
         _private_channels.add(id, listener);
         sender = id;
     }
-    return forward_message(nullptr, Message(sender, channel, content, cid));
+    do_forward_message(nullptr, {sender, channel, content, cid});
+    return true;
+
 }
 
 
-bool LocalBus::forward_message(IListener *sender, Message msg) {
-
-
-    if (sender) {
-        Dispatcher::get_instance().finish();
+bool LocalBus::forward_message(IListener *sender, const Message &msg) {
+    Dispatcher::get_instance().finish();
+    {
         std::lock_guard _(_mx);
         if (!is_valid_target_lk(msg.get_channel(), sender)) return false;
         _routing_cache.register_path(msg.get_sender(), sender);
     }
+    do_forward_message(sender, msg);
+    return true;
 
+}
+void LocalBus::do_forward_message(IListener *sender, const Message &msg) {
     Channel<IListener *> *c = nullptr;
     std::size_t *pos = nullptr;
-    Dispatcher::get_instance().enqueue(
-            [this, c, pos, sender,
-             msg = std::move(msg),
-             lk = std::shared_lock(_mx, std::defer_lock)]()mutable{
+    Dispatcher &disp = Dispatcher::get_instance();
+    bool indisp = disp.is_dispatching();
+    auto msg_deleter = [indisp](const Message *msg) {
+        if (indisp) delete msg;
+    };
+    using MPtr = std::unique_ptr<const Message, decltype(msg_deleter)>;
+    MPtr msg_ptr(nullptr, msg_deleter);
+
+    if (indisp) {
+        auto channel = msg.get_channel();
+        auto content = msg.get_content();
+        auto sender = msg.get_sender();
+        std::size_t needsz = sizeof(Message)+channel.size()+content.size()+sender.size();
+        void *b = ::operator new(needsz);
+        Message *mcpy = static_cast<Message *>(b);
+        auto iter = static_cast<char *>(b)+sizeof(Message);
+        auto cpy_str = [&iter](auto &cont) {
+            auto end = std::copy(cont.begin(), cont.end(), iter);
+            cont = {iter, end};
+            iter = end;
+        };
+        cpy_str(sender);cpy_str(channel);cpy_str(content);
+        std::construct_at(mcpy, sender, channel, content, msg.get_conversation());
+        msg_ptr.reset(mcpy);
+    } else {
+        msg_ptr.reset(&msg);
+    }
+
+    MPtr *mptr_lnk = nullptr;
+
+
+    disp.enqueue([this, c, pos, sender, mptr = std::move(msg_ptr), mptr_lnk,
+                  lk = std::shared_lock(_mx, std::defer_lock)]()mutable{
 
         if (c) {
-            c->broadcast(msg, *pos);
+            c->broadcast(*(*mptr_lnk), *pos);
         } else if (!lk.owns_lock()){
-            auto chan = msg.get_channel();
             bool pm = true;
+            auto msg_ptr = std::move(mptr);
+            mptr_lnk = &msg_ptr;
+            auto chan = msg_ptr->get_channel();
             lk.lock();
             auto trg = _private_channels.find(chan);
             if (!trg) {
@@ -139,15 +175,15 @@ bool LocalBus::forward_message(IListener *sender, Message msg) {
                 std::size_t stpos = 0;  //create space on broadcast status
                 pos = &stpos;
                 c = _public_channels.find_channel_for_broadcast(chan, sender);
-                c->broadcast(msg, *pos);
+                if (c) c->broadcast(*msg_ptr, *pos);
             } else {
-                auto m = std::move(msg);
-                trg->on_message(m, pm);
+                trg->on_message(*msg_ptr, pm);
             }
         }
     });
+    disp.dispatch_if_needed();
 
-    return true;
+
 
 }
 
@@ -228,8 +264,9 @@ void LocalBus::unsubscribe_all(IListener *listener) {
     std::unique_lock<std::shared_mutex> lk(_mx);
     _private_channels.erase(listener);
     _routing_cache.clear_bridge(listener);
-    if (_serial_source == listener) {
-        _cur_serial = _node_serial;
+    if (_cur_serial.source == listener) {
+        _cur_serial.serial = _node_serial;
+        _cur_serial.source = nullptr;
         _channels_no_change.clear(std::memory_order_relaxed);
     }
     unsubscribe_helper(lk, [&](auto &chan) {
@@ -321,27 +358,35 @@ void LocalBus::channel_notify(IChannelNotifyListener *mon, bool enable) {
 
  }
 
-bool LocalBus::update_serial(IListener *lsn, SerialID serialId) {
-    Dispatcher::get_instance().dispatch();
-    std::unique_lock lk(_mx);
-    if (_cur_serial == serialId) {
-        return _serial_source == lsn;
+ UpdateSerialStatus LocalBus::update_serial(IListener *lsn, const SerialID &serialId) {
+    std::unique_lock lk(_serial_mx);
+    UpdateSerialStatus st = UpdateSerialStatus::not_changed;
+    if (_cur_serial.serial == serialId) {
+        st = _cur_serial.source != lsn?UpdateSerialStatus::cycle:UpdateSerialStatus::same;
+    } else if (_cur_serial.serial < serialId) {
+        _cur_serial.serial.clear();
+        _cur_serial.serial.append(serialId);
+        _cur_serial.source = lsn;
+        st = UpdateSerialStatus::changed;
+    } else if (_cur_serial.source == lsn && lsn) {
+        _cur_serial.serial = serialId;
+        st = UpdateSerialStatus::changed;
     }
-    if (_cur_serial < serialId) {
-        _cur_serial.clear();
-        _cur_serial.append(serialId);
-        _serial_source = lsn;
+    if (st == UpdateSerialStatus::changed) {
+        _channels_no_change.clear(std::memory_order_relaxed);
         lk.unlock();
         notify_channel_change();
     }
-    return true;
+    return st;
 }
 
-SerialID LocalBus::get_serial() const {
-    Dispatcher::get_instance().dispatch();
-    std::shared_lock _(_mx);
+SerialStatus LocalBus::get_serial() const {
+    std::unique_lock _(_serial_mx);
     return _cur_serial;
 }
 
+Bus Bus::create() {
+    return Bus(std::make_shared<LocalBus>());
+}
 
 }

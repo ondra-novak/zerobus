@@ -48,11 +48,11 @@ public:
         return pop_internal(std::forward<Args>(args)...);
     }
     Ret front(Args ... args) {
-        return pop_internal(std::forward<Args>(args)...);
+        return front_internal(std::forward<Args>(args)...);
     }
 
     Ret pop_rv(Args &&... args) {
-        return front_internal(std::forward<Args>(args)...);
+        return pop_internal(std::forward<Args>(args)...);
     }
     Ret front_rv(Args &&... args) {
         return front_internal(std::forward<Args>(args)...);
@@ -150,13 +150,13 @@ protected:
             _cur_item = nullptr;
             _first->bottom+=sz;
             if (_first->bottom == _first->top) {
-                if (_first->next != _last) {
+                if (_first != _last) {
                     delete _cache;
                     _cache = _first;
                     _cache->bottom = _cache->top = 0;
                     _first = _first->next;
                 } else {
-                    _first->bottom = _cache->top = 0;
+                    _first->bottom = _first->top = 0;
                 }
             }
         }

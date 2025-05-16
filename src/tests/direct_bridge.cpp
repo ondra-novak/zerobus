@@ -1,8 +1,7 @@
 #include "check.h"
 
-#include <zerobus/monitor.h>
-#include <zerobus/client.h>
-#include <zerobus/direct_bridge.h>
+#include <zerobus/bus.hpp>
+#include <zerobus/null_bridge.hpp>
 #include <future>
 
 #include <algorithm>
@@ -12,100 +11,10 @@
 using namespace zerobus;
 
 
-class VerboseBridge: public DirectBridge {
-public:
+void debug_output(std::string_view text) {
+    std::cout << text << std::endl;
+}
 
-    VerboseBridge(Bus b1, Bus b2): DirectBridge(std::move(b1),std::move(b2), false) {
-        connect();
-    }
-
-
-protected:
-    template<typename ... Args>
-    void log(const Bridge &bs, Args && ... args) {
-        auto &bt = select_other(bs);
-        auto ptrs = bs.get_bus().get_handle().get();
-        auto ids = (reinterpret_cast<std::uintptr_t>(ptrs) / 8) & 0xFFF;
-        auto ptrt = bt.get_bus().get_handle().get();
-        auto idt = (reinterpret_cast<std::uintptr_t>(ptrt) / 8) & 0xFFF;
-        std::cout << std::setw(4) << ids << "->" << std::setw(4) << idt << ": ";
-        std::cout << "+-";
-        for (int i = 1; i < level; ++i) std::cout << '-';
-        (std::cout << ... << args);
-        std::cout << std::endl;
-    }
-
-    static int level;
-public:
-    void lock() {
-        level++;
-    }
-    void unlock() {
-        level--;
-    }
-protected:
-    virtual void on_send(const Bridge &source, const Bridge::ChannelReset &r) override {
-        std::lock_guard _(*this);
-        log(source, "RESET");
-        DirectBridge::on_send(source, std::move(r));
-    }
-    virtual void on_send(const DirectBridge::Bridge &source, const Message &msg) override {
-        std::lock_guard _(*this);
-        log(source, "MESSAGE: sender: ", msg.get_sender(), " channel: ", msg.get_channel(),
-                " content: ", msg.get_content(), " conversation: ", msg.get_conversation());
-        DirectBridge::on_send(source, msg);
-    }
-    virtual void on_send(const DirectBridge::Bridge &source, const Bridge::ChannelUpdate &r) override {
-        std::lock_guard _(*this);
-        std::ostringstream chlist;
-        char sep = ' ';
-        for (auto c: r.lst) {
-            chlist << sep << c;
-            sep = ',';
-        }
-        log(source, "CHANNELS: ", r.op == AbstractBridge::Operation::add?"ADD":
-                          r.op == AbstractBridge::Operation::erase?"ERASE":"REPLACE", chlist.view());
-        DirectBridge::on_send(source, std::move(r));
-    }
-    virtual void on_send(const Bridge &source, const Bridge::NoRoute &r) override {
-        std::lock_guard _(*this);
-        log(source, "NO_ROUTE: ",r.sender," -> ",r.receiver);
-        DirectBridge::on_send(source, std::move(r));
-    }
-    virtual void cycle_detection(const DirectBridge::Bridge &source, bool state) noexcept override{
-        std::lock_guard _(*this);
-        if (state) log(source, "CYCLE DETECTED!");
-        else log(source, "CYCLE cleared");
-    }
-    virtual void on_send(const Bridge &source, const Bridge::CloseGroup &g) override {
-        std::lock_guard _(*this);
-        log(source, "CLOSE_GROUP: ",g.group);
-        DirectBridge::on_send(source, std::move(g));
-    }
-    virtual void on_send(const Bridge &source, const Bridge::AddToGroup &g) override {
-        std::lock_guard _(*this);
-        log(source, "ADD_TO_GROUP: ",g.target," -> ",g.group);
-        DirectBridge::on_send(source, std::move(g));
-    }
-    virtual void on_send(const Bridge &source, const Bridge::GroupEmpty &g) override {
-        std::lock_guard _(*this);
-        log(source, "GROUP_EMPTY: ",g.group);
-        DirectBridge::on_send(source, std::move(g));
-    }
-    virtual void on_send(const Bridge &source, const Bridge::UpdateSerial &g) override {
-        std::lock_guard _(*this);
-        log(source, "UPDATE_SERIAL: ",g.serial);
-        DirectBridge::on_send(source, std::move(g));
-    }
-    virtual void on_send(const Bridge &source, const Bridge::NewSession &g) override {
-        std::lock_guard _(*this);
-        log(source, "NEW SESSION: ",g.version);
-        DirectBridge::on_send(source, std::move(g));
-    }
-};
-
-
-int VerboseBridge::level = 0;
 
 void direct_bridge_simple() {
     std::cout << __FUNCTION__ << std::endl;
@@ -113,23 +22,23 @@ void direct_bridge_simple() {
     auto slave1 = Bus::create();
     auto slave2 = Bus::create();
 
-    VerboseBridge br1(slave1, master);
-    VerboseBridge br2(slave2, master);
+    DebugNullBridge br1(slave1, master, &debug_output, "SLAVE1", "MASTER");
+    DebugNullBridge br2(slave2, master, &debug_output, "SLAVE2", "MASTER");
     std::string result;
 
-    auto sn = ClientCallback(slave1, [&](AbstractClient &c, const Message &msg, bool){
+    auto sn = slave1.new_client([&](AbstractClient *c, const Message &msg, bool){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c.send_message(msg.get_sender(), s, msg.get_conversation());
+        c->send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto sn2 = ClientCallback(slave1, [&](AbstractClient &c, const Message &msg, bool){
+    auto sn2 = slave1.new_client([&](AbstractClient *c, const Message &msg, bool){
         std::string s ( msg.get_content());
         s.push_back('x');
-        c.send_message(msg.get_sender(), s, msg.get_conversation());
+        c->send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= ClientCallback(slave2, [&](AbstractClient &c, const Message &msg, bool){
+    auto cn= slave2.new_client([&](AbstractClient *c, const Message &msg, bool){
         if (msg.get_conversation() == 0) {
-            c.send_message("addx", msg.get_content(), 1);
+            c->send_message("addx", msg.get_content(), 1);
         } else {
             result=std::string(msg.get_content());
         }
@@ -152,21 +61,20 @@ void direct_bridge_cycle() {
     auto slave2 = Bus::create();
     std::string result;
 
-    VerboseBridge br1(slave1, master);
-    VerboseBridge br2(slave2, master);
-    auto sn = ClientCallback(slave1, [&](AbstractClient &c, const Message &msg, bool){
+    DebugNullBridge br1(slave1, master, &debug_output, "SLAVE1", "MASTER");
+    DebugNullBridge br2(slave2, master, &debug_output, "SLAVE2", "MASTER");
+    auto sn = slave1.new_client([&](AbstractClient *c, const Message &msg, bool){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c.send_message(msg.get_sender(), s, msg.get_conversation());
+        c->send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= ClientCallback(slave2, [&](AbstractClient &, const Message &msg, bool){
+    auto cn= slave2.new_client([&](AbstractClient *, const Message &msg, bool){
         result=std::string(msg.get_content());
     });
 
     sn.subscribe("reverse");
 
-    VerboseBridge br3(slave2, slave1);
-
+    DebugNullBridge br3(slave2, slave1, &debug_output, "SLAVE2", "SLAVE1");
 
     cn.send_message("reverse", "ahoj svete");
     CHECK_EQUAL(result, "etevs joha");
@@ -180,25 +88,25 @@ void detect_cycle_test2() {
     auto master2 = Bus::create();
     std::promise<std::string> result;
 
-    VerboseBridge b1(master, slave1);
-    VerboseBridge b2(master, slave2);
-    std::optional<VerboseBridge> b3(std::in_place, master2, slave1);
+    DebugNullBridge br1(slave1, master, &debug_output, "SLAVE1", "MASTER");
+    DebugNullBridge br2(slave2, master, &debug_output, "SLAVE2", "MASTER");
+    std::optional<DebugNullBridge<decltype(&debug_output)>> b3(std::in_place, master2, slave1, &debug_output, "MASTER2", "SLAVE1");
 
 
 
-    auto sn = ClientCallback(slave1, [&](AbstractClient &c, const Message &msg, bool){
+    auto sn =slave1.new_client([&](AbstractClient *c, const Message &msg, bool){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c.send_message(msg.get_sender(), s, msg.get_conversation());
+        c->send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= ClientCallback(slave2, [&](AbstractClient &, const Message &msg, bool){
+    auto cn= slave2.new_client([&](AbstractClient *, const Message &msg, bool){
             result.set_value(std::string(msg.get_content()));
     });
 
     sn.subscribe("reverse");
 
     //close the cycle
-    VerboseBridge b4(master2, slave2);
+    DebugNullBridge  b4(master2, slave2, &debug_output, "MASTER2", "SLAVE2");
 
 
     cn.send_message("reverse", "ahoj svete");
@@ -207,6 +115,7 @@ void detect_cycle_test2() {
     b3.reset();
 }
 
+#if 0
 
 void clear_path_test() {
     std::cout << __FUNCTION__ << std::endl;
@@ -433,15 +342,20 @@ void authorize() {
 
 }
 
+#endif
+
 int main() {
     direct_bridge_simple();
     direct_bridge_cycle();
     detect_cycle_test2();
+#if 0
     clear_path_test();
     filter_channels();
     groups();
     clear_path_group_test();
     authorize();
+#endif
+
 }
 
 

@@ -4,6 +4,7 @@
 #include <cstdint>
 #include <utility>
 #include <string_view>
+#include <ranges>
 
 namespace zerobus {
 

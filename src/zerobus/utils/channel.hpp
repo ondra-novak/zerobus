@@ -145,7 +145,7 @@ public:
 
     Channel<Listener> * find_channel_for_broadcast(std::string_view name, Listener sender) const {
         auto iter = this->find(name);
-        if (iter == this->end() || sender != iter->second->get_owner()) return nullptr;
+        if (iter == this->end() || ( iter->second->get_owner() != nullptr && sender != iter->second->get_owner())) return nullptr;
         return iter->second.get();
     }
 
@@ -174,16 +174,20 @@ public:
 
     void erase(std::string_view channel) {
         auto iter = _channel2listener.find(channel);
-        auto iter2 = _listener2channel.find(iter->second);
-        _channel2listener.erase(iter);
-        _listener2channel.erase(iter2);
+        if (iter != _channel2listener.end()) {
+            auto iter2 = _listener2channel.find(iter->second);
+            _channel2listener.erase(iter);
+            _listener2channel.erase(iter2);
+        }
     }
 
     void erase(const Listener listener){
         auto iter = _listener2channel.find(listener);
-        auto iter2 = _channel2listener.find(iter->second);
-        _channel2listener.erase(iter2);
-        _listener2channel.erase(iter);
+        if (iter != _listener2channel.end()) {
+            auto iter2 = _channel2listener.find(iter->second);
+            _channel2listener.erase(iter2);
+            _listener2channel.erase(iter);
+        }
     }
 
 protected:

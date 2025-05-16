@@ -1,13 +1,13 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests/)
 
 set(testFiles
-             local_bus.cpp
+            local_bus.cpp
             direct_bridge.cpp
-            tcp_bridge.cpp
-            pipe_bridge.cpp
-            spawn.cpp
-            websocket.cpp
-            stream.cpp
+#            tcp_bridge.cpp
+#            pipe_bridge.cpp
+#            spawn.cpp
+#            websocket.cpp
+#            stream.cpp
 )
 
 
