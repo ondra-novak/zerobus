@@ -15,20 +15,20 @@ public:
     virtual void set_target(IProtocol *target) override {
         _target = target;
     }
-    virtual void on_message(const MsgEraseChannels &msg) noexcept override {
+    virtual void on_message(const bmsg::EraseChannels &msg) noexcept override {
         auto t = _prefix;
         t.append("UNSUB ");
         channel_list(t, msg.lst);
         _output(t);
         _target->on_message(msg);
     }
-    virtual void on_message(const MsgGroupEmpty &msg) noexcept override {
+    virtual void on_message(const bmsg::GroupEmpty &msg) noexcept override {
         auto t = _prefix;
         t.append("GROUP_IS_EMPTY ").append(msg.group);
         _output(t);
         _target->on_message(msg);
     }
-    virtual void on_message(const MsgAddChannels &msg) noexcept override {
+    virtual void on_message(const bmsg::AddChannels &msg) noexcept override {
         auto t = _prefix;
         t.append("SUB ");
         channel_list(t, msg.lst);
@@ -36,7 +36,7 @@ public:
         _target->on_message(msg);
 
     }
-    virtual void on_message(const MsgSetChannels &msg) noexcept override {
+    virtual void on_message(const bmsg::SetChannels &msg) noexcept override {
         auto t = _prefix;
         t.append("SUB (replace): ");
         channel_list(t, msg.lst);
@@ -44,21 +44,21 @@ public:
         _target->on_message(msg);
     }
 
-    virtual void on_message(const MsgChannelReset &msg) noexcept override {
+    virtual void on_message(const bmsg::ChannelReset &msg) noexcept override {
         auto t = _prefix;
         t.append("RESET");
         _output(t);
         _target->on_message(msg);
 
     }
-    virtual void on_message(const MsgNewSession &msg) noexcept override {
+    virtual void on_message(const bmsg::NewSession &msg) noexcept override {
         auto t = _prefix;
         t.append("SESSION ");
         t.append(std::to_string(msg.version));
         _output(t);
         _target->on_message(msg);
     }
-    virtual void on_message(const MsgAddToGroup &msg) noexcept override {
+    virtual void on_message(const bmsg::AddToGroup &msg) noexcept override {
         auto t = _prefix;
         t.append("GROUP_ADD ");
         t.append(msg.group);
@@ -68,7 +68,7 @@ public:
         _target->on_message(msg);
 
     }
-    virtual void on_message(const MsgCloseGroup &msg) noexcept override {
+    virtual void on_message(const bmsg::CloseGroup &msg) noexcept override {
         auto t = _prefix;
         t.append("GROUP_CLOSE ");
         t.append(msg.group);
@@ -90,7 +90,7 @@ public:
         _target->on_message(msg);
 
     }
-    virtual void on_message(const MsgNoRoute &msg) noexcept override {
+    virtual void on_message(const bmsg::NoRoute &msg) noexcept override {
         auto t = _prefix;
         t.append("NO_ROUTE ");
         t.append(msg.sender);
@@ -103,7 +103,7 @@ public:
         _target->on_message(msg);
 
     }
-    virtual void on_message(const MsgUpdateSerial &msg) noexcept override {
+    virtual void on_message(const bmsg::UpdateSerial &msg) noexcept override {
         auto t = _prefix;
         t.append("UPDATE SERIAL ");
         t.append(msg.serial);

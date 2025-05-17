@@ -77,7 +77,7 @@ void Bridge::on_channels_update_lk(bool force) noexcept {
     if (srl.serial != _serial_id || force) {
         _serial_id = srl.serial;
         if (srl.source != this) {
-            _target->on_message(MsgUpdateSerial{_serial_id});
+            _target->on_message(bmsg::UpdateSerial{_serial_id});
         }
     }
 
@@ -96,36 +96,36 @@ void Bridge::on_channels_update_lk(bool force) noexcept {
     ChannelList old_lst = _cur_list.get_stored();
     if (force) {
         std::swap(_cur_list, _tmp_list);
-        _target->on_message(MsgSetChannels{new_lst});
+        _target->on_message(bmsg::SetChannels{new_lst});
         return;
 
     }
 
     ChannelList added = _diff_list.set_difference(new_lst, old_lst);
     if (!added.empty()) {
-        _target->on_message(MsgAddChannels{added});
+        _target->on_message(bmsg::AddChannels{added});
     }
     ChannelList removed = _diff_list.set_difference(old_lst, new_lst);
     if (!removed.empty()) {
-        _target->on_message(MsgEraseChannels{removed});
+        _target->on_message(bmsg::EraseChannels{removed});
     }
     std::swap(_cur_list, _tmp_list);
 }
 
 void Bridge::on_close_group(ChannelID group_name) noexcept {
-    _target->on_message(MsgCloseGroup{group_name});
+    _target->on_message(bmsg::CloseGroup{group_name});
 }
 
 void Bridge::on_no_route(ChannelID sender, ChannelID receiver, ConversationID cid) noexcept{
-    _target->on_message(MsgNoRoute{sender, receiver,cid});
+    _target->on_message(bmsg::NoRoute{sender, receiver,cid});
 }
 
 void Bridge::on_group_empty(ChannelID group_name) noexcept{
-    _target->on_message(MsgGroupEmpty{group_name});
+    _target->on_message(bmsg::GroupEmpty{group_name});
 }
 
 void Bridge::on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept{
-    _target->on_message(MsgAddToGroup{group_name, target_id});
+    _target->on_message(bmsg::AddToGroup{group_name, target_id});
 }
 
 void Bridge::on_message(const Message &message, bool pm) noexcept{
@@ -141,10 +141,10 @@ void Bridge::on_message(const Message &msg) noexcept{
     }
 }
 
-void Bridge::on_message(const MsgSetChannels &msg) noexcept {
+void Bridge::on_message(const bmsg::SetChannels &msg) noexcept {
 
     if (!msg.lst.empty() && _cycle_status.load(std::memory_order_relaxed)) {
-        on_message(MsgSetChannels{});
+        on_message(bmsg::SetChannels{});
         return;
     }
 
@@ -169,19 +169,19 @@ void Bridge::on_message(const MsgSetChannels &msg) noexcept {
     }
 }
 
-void Bridge::on_message(const MsgAddChannels &msg) noexcept {
+void Bridge::on_message(const bmsg::AddChannels &msg) noexcept {
     if (_cycle_status.load(std::memory_order_relaxed)) {
-        on_message(MsgSetChannels{});
+        on_message(bmsg::SetChannels{});
         return;
     }
     _bus.subscribe(this, msg.lst);
 }
 
-void Bridge::on_message(const MsgEraseChannels &msg) noexcept {
+void Bridge::on_message(const bmsg::EraseChannels &msg) noexcept {
     _bus.unsubscribe(this, msg.lst);
 }
 
-void Bridge::on_message(const MsgUpdateSerial &msg) noexcept {
+void Bridge::on_message(const bmsg::UpdateSerial &msg) noexcept {
     auto st = _bus.update_serial(this,SerialID(msg.serial));
     bool is_cycle = false;
     bool make_reply = false;
@@ -200,44 +200,44 @@ void Bridge::on_message(const MsgUpdateSerial &msg) noexcept {
         make_reply = false;
     }
     if (make_reply) {
-        _target->on_message(MsgUpdateSerial{_bus.get_serial().serial});
+        _target->on_message(bmsg::UpdateSerial{_bus.get_serial().serial});
     }
 
 }
 
-void Bridge::on_message(const MsgChannelReset &) noexcept {
+void Bridge::on_message(const bmsg::ChannelReset &) noexcept {
     //request to need reset channels
     _lk_flag.fetch_or(chan_need_reset, std::memory_order_relaxed);
     //perform update
     on_channels_update();
 }
 
-void Bridge::on_message(const MsgNewSession &) noexcept {
-    on_message(MsgChannelReset{});
+void Bridge::on_message(const bmsg::NewSession &) noexcept {
+    on_message(bmsg::ChannelReset{});
 }
 
-void Bridge::on_message(const MsgNoRoute &msg) noexcept {
+void Bridge::on_message(const bmsg::NoRoute &msg) noexcept {
     _bus.clear_path(msg.sender, msg.receiver, msg.cid);
 }
 
-void Bridge::on_message(const MsgCloseGroup &msg) noexcept {
+void Bridge::on_message(const bmsg::CloseGroup &msg) noexcept {
     _bus.close_group(this, msg.group);
 }
 
-void Bridge::on_message(const MsgGroupEmpty &msg) noexcept {
+void Bridge::on_message(const bmsg::GroupEmpty &msg) noexcept {
     _bus.unsubscribe(this, msg.group);
 }
 
-void Bridge::on_message(const MsgAddToGroup &msg) noexcept {
+void Bridge::on_message(const bmsg::AddToGroup &msg) noexcept {
     _bus.add_to_group(this, msg.group, msg.target);
 }
 
 void Bridge::send_reset() {
-    _target->on_message(MsgChannelReset{});
+    _target->on_message(bmsg::ChannelReset{});
 }
 
 void Bridge::send_new_session(unsigned long version) {
-    _target->on_message(MsgNewSession{version});
+    _target->on_message(bmsg::NewSession{version});
 }
 
 

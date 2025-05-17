@@ -2,70 +2,68 @@
 
 namespace zerobus {
 
-bool ZmqEndpoint::receive(std::string &identity, std::vector<char> &data, std::chrono::system_clock::time_point timeout) {
-    bool has_data = false;
+
+ZmqEndpoint::RecStatus ZmqEndpoint::receive(Message &msg, std::chrono::system_clock::time_point timeout) {
     std::lock_guard _(_mx_receive);
-    zmq::pollitem_t items[] = {
-             { static_cast<void*>(_socket), 0, ZMQ_POLLIN, 0 },
-             { nullptr, _event_fd, ZMQ_POLLIN, 0 }
-      };
 
+    while (true) {
 
-    std::chrono::milliseconds timeout_ms{-1};
-    if (timeout != timeout.max()) {
-        timeout_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
-                        timeout - std::chrono::system_clock::now());
-        if (timeout_ms < std::chrono::milliseconds{0}) {
-            timeout_ms = std::chrono::milliseconds{0};
+        bool st = flush_send_queue(msg);
+        if (!st) return RecStatus::error_send;
+
+        zmq::pollitem_t items[] = {
+                 { static_cast<void*>(_socket), 0, ZMQ_POLLIN, 0 },
+                 { nullptr, _event_fd, ZMQ_POLLIN, 0 }
+          };
+        std::chrono::milliseconds timeout_ms{-1};
+        if (timeout != timeout.max()) {
+            timeout_ms = std::chrono::duration_cast<std::chrono::milliseconds>(
+                            timeout - std::chrono::system_clock::now());
+            if (timeout_ms < std::chrono::milliseconds{0}) {
+                timeout_ms = std::chrono::milliseconds{0};
+            }
         }
-    }
-    zmq::poll(items, 2, timeout_ms);
-    if (items[0].revents & ZMQ_POLLIN) {
-        zmq::message_t id_msg;
-        zmq::message_t empty_msg;
-        zmq::message_t data_msg;
+        if (zmq::poll(items, 2, timeout_ms) == 0) return RecStatus::message;
+        if (items[0].revents & ZMQ_POLLIN) {
+            zmq::message_t data_msg;
 
-        if (_sock_type == ZMQ_ROUTER) {
-            std::ignore = _socket.recv(id_msg);
-            std::ignore = _socket.recv(empty_msg);
-            identity.clear();
-            identity.append(static_cast<const char *>(id_msg.data()), id_msg.size());
-        } else {
-            identity.clear();
+            if (_sock_type == ZMQ_ROUTER) {
+                zmq::message_t id_msg;
+                zmq::message_t empty_msg;
+                std::ignore = _socket.recv(id_msg);
+                std::ignore = _socket.recv(empty_msg);
+                auto str = id_msg.to_string_view();
+                msg.identity.clear();
+                msg.identity.insert(msg.identity.end(),str.begin(), str.end());
+            }
+            std::ignore = _socket.recv(data_msg);
+            auto str = data_msg.to_string_view();
+            msg.data.clear();
+            msg.data.insert(msg.data.end(),str.begin(), str.end());
+            return RecStatus::message;
+
         }
-        std::ignore = _socket.recv(data_msg);
-        data.clear();
-        data.insert(data.end(),static_cast<const char *>(data_msg.data()), static_cast<const char *>(data_msg.data())+data_msg.size());
-        has_data = true;
+
+        if (items[1].revents & ZMQ_POLLIN) {
+            if (_stop_signal.load(std::memory_order_relaxed)) return RecStatus::stop_signal;
+            eventfd_t buf;
+            eventfd_read(_event_fd, &buf);
+            continue;
+        }
 
     }
-
-    if (items[1].revents & ZMQ_POLLIN) {
-        _send_done.load(std::memory_order_acquire);
-         eventfd_t buf;
-         eventfd_read(_event_fd, &buf);
-         if (!is_stopped())  {
-             if (_sock_type == ZMQ_ROUTER) {
-                 zmq::message_t id_msg(_send_ident.data(), _send_data.size());
-                 zmq::message_t empty_msg(0);
-                 _socket.send(id_msg, zmq::send_flags::sndmore);
-                 _socket.send(empty_msg, zmq::send_flags::sndmore);
-             }
-             zmq::message_t data_msg(_send_data.data(), _send_data.size());
-             _socket.send(data_msg, zmq::send_flags::none);
-             _send_done.store(true, std::memory_order_relaxed);
-         }
-    }
-    return has_data;
 }
 
-void ZmqEndpoint::send(const std::string_view identity, std::string_view &data) {
+void ZmqEndpoint::send(std::string_view data, std::string_view identity) {
+    std::unique_ptr<int,
+        decltype([](int *fd){eventfd_write(*fd, 1);})> finally1(&_event_fd);
+
     std::lock_guard _(_mx_send);
-    _send_ident = identity;
-    _send_data = data;
-    eventfd_write(_event_fd, 1);
-    _send_done.wait(false);
-    _send_done.store(false, std::memory_order_relaxed);
+    _send_queue.push(QueueItem{
+        zmq::message_t(identity),
+        zmq::message_t(data),
+    });
+
 }
 
 void ZmqEndpoint::stop() {
@@ -75,6 +73,26 @@ void ZmqEndpoint::stop() {
 
 bool ZmqEndpoint::is_stopped() const {
     return _stop_signal.load(std::memory_order_relaxed);
+}
+
+bool ZmqEndpoint::flush_send_queue(Message &msg) {
+    std::lock_guard _(_mx_send);
+    while (!_send_queue.empty()) {
+        auto &m = _send_queue.front();
+        try {
+            if (_sock_type == ZMQ_ROUTER) {
+                auto str =m.ident.to_string_view();
+                msg.identity.clear();
+                msg.identity.insert(msg.identity.begin(), str.begin(), str. end());
+                _socket.send(std::move(m.ident), zmq::send_flags::sndmore|zmq::send_flags::dontwait);
+                _socket.send(zmq::message_t(), zmq::send_flags::sndmore|zmq::send_flags::dontwait);
+            }
+            _socket.send(std::move(m.data), zmq::send_flags::dontwait);
+        } catch (const zmq::error_t &) {
+            return false;
+        }
+    }
+    return true;
 }
 
 }

@@ -6,6 +6,6 @@
 #include "transport_log.hpp"
 #include "null_bridge.hpp"
 
-template class zerobus::BinaryTransport<decltype([](const auto &){})>;
+template class zerobus::BinaryTransport<zerobus::OutputTypeTest>;
 template class zerobus::TransportLog<decltype([](const std::string_view &){})>;
 template class zerobus::DebugNullBridge<decltype([](const std::string_view &){})>;
