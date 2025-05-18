@@ -35,15 +35,8 @@ public:
     };
 
     struct Message {
-        std::vector<char> identity;
-        std::vector<char> data;
-
-        std::string_view get_identity() const {
-            return {identity.data(), identity.size()};
-        }
-        std::string_view get_data() const {
-            return {data.data(), data.size()};
-        }
+        zmq::message_t ident;
+        zmq::message_t data;
     };
 
     RecStatus receive(Message &msg, std::chrono::system_clock::time_point timeout);

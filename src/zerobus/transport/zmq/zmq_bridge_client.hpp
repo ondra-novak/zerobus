@@ -4,6 +4,7 @@
 #include "../../binary_transport.hpp"
 #include "../../utils/multithreads.hpp"
 #include "zmq_endpoint.hpp"
+#include "zmq_mt_hlp.hpp"
 
 namespace zerobus {
 
@@ -26,13 +27,18 @@ protected:
     std::optional<Bridge> _br;
     BinaryTransport<OutputTypeProxy<ZmqBridgeClient *> > *_parser = nullptr;
 
-    utils::MultiThread _mthr;
     mutable std::mutex _mx;
     std::vector<char> _out_buffer;
-
     unsigned int _ping_interval;
 
-    void worker(const bool &kf);
+    void on_message(std::string_view data, std::string_view ident);
+    std::chrono::system_clock::time_point on_timeout();
+    void on_error(std::string_view ident);
+
+    friend class ZmqMtHelp<ZmqBridgeClient &>;
+
+    ZmqMtHelp<ZmqBridgeClient &> _pool;
+
 
     char *output_start(std::size_t sz);
     void output_commit(std::size_t sz);
@@ -43,7 +49,6 @@ protected:
     std::unique_ptr<AbstractTransport> create_binary_transport(
             BinaryTransport<OutputTypeProxy<ZmqBridgeClient *> >  *& in);
 
-    void message_received(std::string_view msg);
 
 
     void send_ping();

@@ -61,7 +61,7 @@ Iter decode_number(T &number, Iter from, Iter to) {
     return from;
 }
 
-std::size_t get_encoded_string_size(std::string_view sz) {
+inline std::size_t get_encoded_string_size(std::string_view sz) {
     return get_encoded_number_size(sz.size())+sz.size();
 }
 

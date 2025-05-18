@@ -29,15 +29,14 @@ std::unique_ptr<AbstractTransport> ZmqBridgeClient::create_binary_transport(
 ZmqBridgeClient::ZmqBridgeClient(Bus bus, zmq::context_t &ctx,
         std::string address, ZmqBridgeConfig config)
     :_endpoint(prepare_socket(ctx, address, config.decorate_socket))
-    ,_ping_interval(config.housekeeping_sec/2) {
+    ,_ping_interval(config.housekeeping_sec/2)
+    ,_pool(_endpoint,*this){
+
 
     _br.emplace(bus, create_binary_transport(_parser), config.mode);
-    _mthr.add_threads(config.threads, [this](std::stop_token stp, const bool &kf){
-       std::stop_callback _(stp,[this]{
-           _endpoint.stop();
-       });
-       worker(kf);
-    });
+    _pool.run(config.threads);
+    _br->refresh(true);
+    _br->send_reset();
 
 
 }
@@ -45,30 +44,6 @@ ZmqBridgeClient::ZmqBridgeClient(Bus bus, zmq::context_t &ctx,
 ZmqBridgeClient::~ZmqBridgeClient() {
 }
 
-void ZmqBridgeClient::worker(const bool &kf) {
-    ZmqEndpoint::Message msg;
-
-
-    while (!_endpoint.is_stopped()) {
-        auto tm = std::chrono::system_clock::now() + std::chrono::seconds(_ping_interval);
-        auto r = _endpoint.receive(msg, tm);
-        switch (r) {
-            case ZmqEndpoint::RecStatus::message:
-                message_received(msg.get_data());
-                if (kf) return;
-                break;
-            case ZmqEndpoint::RecStatus::timeout:
-                send_ping();
-                break;
-            case ZmqEndpoint::RecStatus::stop_signal:
-                return;
-            case ZmqEndpoint::RecStatus::error_send:
-                //do nothing
-                break;
-        }
-    }
-
-}
 
 
 char* ZmqBridgeClient::output_start(std::size_t sz) {
@@ -84,12 +59,23 @@ void ZmqBridgeClient::output_commit(std::size_t sz) {
     _mx.unlock();
 }
 
-void ZmqBridgeClient::message_received(std::string_view msg) {
-    _parser->parse(msg);
-}
 
 void ZmqBridgeClient::send_ping() {
     _endpoint.send({},{});
+}
+
+void ZmqBridgeClient::on_message(std::string_view data,
+        std::string_view ) {
+    _parser->parse(data);
+}
+
+std::chrono::system_clock::time_point ZmqBridgeClient::on_timeout() {
+    send_ping();
+    return std::chrono::system_clock::now() + std::chrono::seconds(_ping_interval);
+}
+
+void ZmqBridgeClient::on_error(std::string_view ) {
+    //do nothing
 }
 
 }

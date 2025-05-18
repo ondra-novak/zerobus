@@ -2,6 +2,7 @@
 
 #include "zmq_bridge_config.hpp"
 #include "zmq_endpoint.hpp"
+#include "zmq_mt_hlp.hpp"
 #include "../../bus.hpp"
 #include "../../bridge.hpp"
 #include "../../binary_transport.hpp"
@@ -58,6 +59,7 @@ protected:
         std::chrono::system_clock::time_point _last_activity;
     };
 
+
     Bus _bus;
     ZmqEndpoint _endpoint;
     BridgeOpMode _mode;
@@ -66,17 +68,19 @@ protected:
 
     std::unordered_map<std::string_view, std::unique_ptr<PeerContext> > _peers;
     std::shared_mutex _mx;
+    std::atomic<std::chrono::system_clock::time_point> _next_housekeeping;
 
-    template<bool housekeeping> void worker(const bool &kf);
-    std::chrono::system_clock::time_point get_new_timeout(bool hk);
-
-    void message_received(std::string_view identity, std::string_view data);
     void do_housekeeping();
     void sleep_peer(std::string_view identity, bool sleep);
+    void on_message(std::string_view data, std::string_view ident);
+    std::chrono::system_clock::time_point on_timeout();
+    void on_error(std::string_view ident);
     static std::unique_ptr<AbstractTransport> create_binary_transport(PeerContext *out,
             BinaryTransport<OutputTypeProxy<PeerContext *> >  *& in);
 
-    utils::MultiThread _mthrd;
+    friend class ZmqMtHelp<ZmqBridgeServer &>;
+    ZmqMtHelp<ZmqBridgeServer &> _pool;
+
 };
 
 }

@@ -1,3 +1,4 @@
+
 #ifdef _WIN32
 #define _CRTDBG_MAP_ALLOC
 #include <stdlib.h>
@@ -8,7 +9,7 @@
 #include <zerobus/client.h>
 #include <zerobus/bridge_tcp_client.h>
 #include <zerobus/bridge_tcp_server.h>
-#include <zerobus/channel_notify.h>
+#include <../zerobus/channel_notify.hpp>
 #include <future>
 #include <thread>
 
@@ -43,8 +44,6 @@ void direct_bridge_simple() {
     cn.send_message("reverse", "ahoj svete");
     auto r = result.get_future().get();
     CHECK_EQUAL(r, "etevs joha");
-
-
 }
 
 void two_hop_bridge() {

@@ -1,7 +1,7 @@
 #pragma once
-#include "bus.h"
-#include "monitor.h"
-#include "bridge_api.h"
+#include "bus.hpp"
+#include "channel_notify_listener.hpp"
+
 
 #include <chrono>
 #include <condition_variable>
@@ -27,7 +27,7 @@ public:
         :_bus(std::move(bus))
         ,_channel(channel)
         ,_cb(std::move(cb)) {
-        get_bridge()->register_monitor(this);
+        _bus.channel_notify(this, true);
         ChannelNotifyCallback::on_channels_update();
     }
 
@@ -35,7 +35,7 @@ public:
     ChannelNotifyCallback &operator=(const ChannelNotifyCallback &) = delete;
 
     ~ChannelNotifyCallback() {
-        get_bridge()->unregister_monitor(this);
+        _bus.channel_notify(this, false);
     }
 
 
@@ -44,13 +44,9 @@ protected:
     ChannelID _channel;
     CB _cb;
 
-    IBridgeAPI *get_bridge() {
-        return static_cast<IBridgeAPI *>(_bus.get_handle().get());
-    }
-
     virtual void on_channels_update() noexcept override {
         if (_bus.is_channel(_channel)) {
-            get_bridge()->unregister_monitor(this);
+            _bus.channel_notify(this, false);
             _cb();
         }
     }

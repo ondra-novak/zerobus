@@ -11,24 +11,20 @@ namespace zerobus {
 
 template<typename Msg> struct Serialize;
 
-struct SerializeBase {
-    template<typename Fn>
-    static auto alloc_workspace(const char *, const char *, Fn &&fn) {
-        return fn(nullptr);
-    }
-};
 
 template<typename Msg>
 requires(std::is_trivially_copyable_v<Msg> && !std::is_base_of_v<bmsg::ChannelsBase, Msg>)
-struct Serialize<Msg>: SerializeBase {
+struct Serialize<Msg> {
     static std::size_t bin_size(const Msg &) {return sizeof(Msg);}
     static void to_binary(const Msg &msg, char *buffer) {
         std::memcpy(buffer, &msg, sizeof(msg));
     }
-    static const char *from_binary(void *, Msg &msg, const char *from, const char *to) {
+    template<typename Fn>
+    static auto from_binary(Fn &&fn, const char *from, const char *to) {
+        Msg msg;
         auto sz = std::min<std::size_t>(sizeof(Msg), std::distance(from, to));
         std::memcpy(&msg, from, sz);
-        return from + sz;
+        return fn(msg);
     }
 };
 template<typename Msg>
@@ -46,32 +42,29 @@ requires(std::is_base_of_v<bmsg::ChannelsBase, Msg>) struct Serialize<Msg> {
     }
 
     template<typename Fn>
-    static auto alloc_workspace(const char *from, const char *to, Fn &&fn) {
-        std::size_t count = 0;
-        bin::decode_number(count, from, to);
-        return utils::stack_alloc<ChannelID>(count, std::forward<Fn>(fn));
-    }
-
-    static const char *from_binary(ChannelID *workspace, Msg &msg, const char *from, const char *to) {
+    static auto from_binary(Fn &&fn, const char *from, const char *to) {
         std::size_t count = 0;
         from = bin::decode_number(count, from, to);
-        if (count) {
-               for (std::size_t i = 0; i < count; ++i) {
-                   from = bin::decode_string(workspace[i], from, to);
-               }
-        }
-        msg.lst = ChannelList(workspace, count);
-        return from;
+        return utils::stack_alloc<ChannelID>(count, [&](ChannelID *ptr){
+           for (std::size_t i = 0; i < count; ++i) {
+               from = bin::decode_string(ptr[i], from, to);
+           }
+           return fn(Msg{ChannelList(ptr, count)});
+        });
+
     }
+
 };
 
-template<> struct Serialize<bmsg::ChannelReset>: SerializeBase {
+template<> struct Serialize<bmsg::ChannelReset>{
     static std::size_t bin_size(const bmsg::ChannelReset &) {return 0;}
     static void to_binary(const bmsg::ChannelReset &, char *) {}
-    static const char *from_binary(void *, bmsg::ChannelReset &,
-            const char *from, const char *) {return from;}
+    template<typename Fn>
+    static auto from_binary(Fn &&fn, const char *, const char *) {
+        fn(bmsg::ChannelReset{});
+    }
 };
-template<> struct Serialize<bmsg::AddToGroup>: SerializeBase {
+template<> struct Serialize<bmsg::AddToGroup> {
     using Msg = bmsg::AddToGroup;
 
     static std::size_t bin_size(const Msg &msg) {
@@ -82,13 +75,15 @@ template<> struct Serialize<bmsg::AddToGroup>: SerializeBase {
         iter = bin::encode_string(msg.group, iter);
         iter = bin::encode_string(msg.target, iter);
     }
-    static const char *from_binary(void *, Msg &msg, const char *from, const char *to) {
+    template<typename Fn>
+    static auto from_binary(Fn &&fn, const char *from, const char *to) {
+        Msg msg;
         from = bin::decode_string(msg.group, from, to);
         from = bin::decode_string(msg.target, from, to);
-        return from;
+        return fn(msg);
     }
 };
-template<> struct Serialize<bmsg::CloseGroup>: SerializeBase {
+template<> struct Serialize<bmsg::CloseGroup> {
     using Msg = bmsg::CloseGroup;
 
     static std::size_t bin_size(const Msg &msg) {
@@ -97,12 +92,14 @@ template<> struct Serialize<bmsg::CloseGroup>: SerializeBase {
     static void to_binary(const Msg &msg, char *iter) {
         iter = bin::encode_string(msg.group, iter);
     }
-    static const char *from_binary(void *, Msg &msg, const char *from, const char *to) {
+    template<typename Fn>
+    static auto from_binary(Fn &&fn, const char *from, const char *to) {
+        Msg msg;
         from = bin::decode_string(msg.group, from, to);
-        return from;
+        return fn(msg);
     }
 };
-template<> struct Serialize<bmsg::GroupEmpty>: SerializeBase {
+template<> struct Serialize<bmsg::GroupEmpty> {
     using Msg = bmsg::GroupEmpty;
 
     static std::size_t bin_size(const Msg &msg) {
@@ -111,13 +108,15 @@ template<> struct Serialize<bmsg::GroupEmpty>: SerializeBase {
     static void to_binary(const Msg &msg, char *iter) {
         iter = bin::encode_string(msg.group, iter);
     }
-    static const char *from_binary(void *, Msg &msg, const char *from, const char *to) {
+    template<typename Fn>
+    static auto from_binary(Fn &&fn, const char *from, const char *to) {
+        Msg msg;
         from = bin::decode_string(msg.group, from, to);
-        return from;
+        return fn(msg);
     }
 };
 
-template<> struct Serialize<bmsg::NoRoute>: SerializeBase {
+template<> struct Serialize<bmsg::NoRoute> {
     using Msg = bmsg::NoRoute;
 
     static std::size_t bin_size(const Msg &msg) {
@@ -130,14 +129,16 @@ template<> struct Serialize<bmsg::NoRoute>: SerializeBase {
         iter = bin::encode_string(msg.receiver, iter);
         iter = bin::encode_number(msg.cid, iter);
     }
-    static const char *from_binary(void *, Msg &msg, const char *from, const char *to) {
+    template<typename Fn>
+    static auto from_binary(Fn &&fn, const char *from, const char *to) {
+        Msg msg;
         from = bin::decode_string(msg.sender, from, to);
         from = bin::decode_string(msg.receiver, from, to);
         from = bin::decode_number(msg.cid, from, to);
-        return from;
+        return fn(msg);
     }
 };
-template<> struct Serialize<Message>: SerializeBase {
+template<> struct Serialize<Message> {
     using Msg = Message;
 
     static std::size_t bin_size(const Msg &msg) {
@@ -152,15 +153,17 @@ template<> struct Serialize<Message>: SerializeBase {
         iter = bin::encode_string(msg.content, iter);
         iter = bin::encode_number(msg.cid, iter);
     }
-    static const char *from_binary(void *, Msg &msg, const char *from, const char *to) {
+    template<typename Fn>
+    static auto from_binary(Fn &&fn, const char *from, const char *to) {
+        Msg msg;
         from = bin::decode_string(msg.sender, from, to);
         from = bin::decode_string(msg.channel, from, to);
         from = bin::decode_string(msg.content, from, to);
         from = bin::decode_number(msg.cid, from, to);
-        return from;
+        return fn(msg);
     }
 };
-template<> struct Serialize<bmsg::UpdateSerial>: SerializeBase {
+template<> struct Serialize<bmsg::UpdateSerial> {
     using Msg = bmsg::UpdateSerial;
 
     static std::size_t bin_size(const Msg &msg) {
@@ -169,12 +172,14 @@ template<> struct Serialize<bmsg::UpdateSerial>: SerializeBase {
     static void to_binary(const Msg &msg, char *iter) {
         iter = bin::encode_string(msg.serial, iter);
     }
-    static const char *from_binary(void *, Msg &msg, const char *from, const char *to) {
+    template<typename Fn>
+    static auto from_binary(Fn &&fn, const char *from, const char *to) {
+        Msg msg;
         from = bin::decode_string(msg.serial, from, to);
-        return from;
+        return fn(msg);
     }
 };
-template<> struct Serialize<bmsg::NewSession>: SerializeBase {
+template<> struct Serialize<bmsg::NewSession> {
     using Msg = bmsg::NewSession;
 
     static std::size_t bin_size(const Msg &msg) {
@@ -183,24 +188,26 @@ template<> struct Serialize<bmsg::NewSession>: SerializeBase {
     static void to_binary(const Msg &msg, char *iter) {
         iter = bin::encode_number(msg.version, iter);
     }
-    static const char *from_binary(void *, Msg &msg, const char *from, const char *to) {
+    template<typename Fn>
+    static auto from_binary(Fn &&fn, const char *from, const char *to) {
+        Msg msg;
         from = bin::decode_number(msg.version, from, to);
-        return from;
+        return fn(msg);
     }
 };
 
 template<typename T> static constexpr std::uint8_t message_id = 255;
-template<> constexpr std::uint8_t message_id<bmsg::ChannelReset> = 0;
-template<> constexpr std::uint8_t message_id<Message> = 1;
-template<> constexpr std::uint8_t message_id<bmsg::AddChannels> = 2;
-template<> constexpr std::uint8_t message_id<bmsg::EraseChannels> = 3;
-template<> constexpr std::uint8_t message_id<bmsg::SetChannels> = 4;
-template<> constexpr std::uint8_t message_id<bmsg::NoRoute> = 5;
-template<> constexpr std::uint8_t message_id<bmsg::AddToGroup> = 6;
-template<> constexpr std::uint8_t message_id<bmsg::CloseGroup> = 7;
-template<> constexpr std::uint8_t message_id<bmsg::GroupEmpty> = 8;
-template<> constexpr std::uint8_t message_id<bmsg::UpdateSerial> = 9;
-template<> constexpr std::uint8_t message_id<bmsg::NewSession> = 10;
+template<> inline constexpr std::uint8_t message_id<bmsg::ChannelReset> = 0;
+template<> inline constexpr std::uint8_t message_id<Message> = 1;
+template<> inline constexpr std::uint8_t message_id<bmsg::AddChannels> = 2;
+template<> inline constexpr std::uint8_t message_id<bmsg::EraseChannels> = 3;
+template<> inline constexpr std::uint8_t message_id<bmsg::SetChannels> = 4;
+template<> inline constexpr std::uint8_t message_id<bmsg::NoRoute> = 5;
+template<> inline constexpr std::uint8_t message_id<bmsg::AddToGroup> = 6;
+template<> inline constexpr std::uint8_t message_id<bmsg::CloseGroup> = 7;
+template<> inline constexpr std::uint8_t message_id<bmsg::GroupEmpty> = 8;
+template<> inline constexpr std::uint8_t message_id<bmsg::UpdateSerial> = 9;
+template<> inline constexpr std::uint8_t message_id<bmsg::NewSession> = 10;
 
 using AllMessages = std::tuple<
         Message,
@@ -280,11 +287,9 @@ public:
             using MsgType = typename decltype(tag)::type;
             if constexpr(!std::is_null_pointer_v<MsgType>)  {
                 ret = 1;
-                Serialize<MsgType>::alloc_workspace(from, to, [&](auto ptr){
-                    MsgType msg;
-                    Serialize<MsgType>::from_binary(ptr, msg, from, to);
+                Serialize<MsgType>::from_binary([&](auto &&msg){
                     _target->on_message(msg);
-                });
+                }, from, to);
             }
         });
         return ret;
