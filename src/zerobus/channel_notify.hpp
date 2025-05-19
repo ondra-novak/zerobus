@@ -50,6 +50,10 @@ protected:
             _cb();
         }
     }
+
+    virtual void on_announce(zerobus::ConversationID,
+                                zerobus::ChannelID) noexcept override {}
+
 };
 
 ///wait until channel is available
@@ -89,3 +93,4 @@ bool channel_wait_for(Bus bus, ChannelID channel, std::chrono::system_clock::dur
 
 
 }
+

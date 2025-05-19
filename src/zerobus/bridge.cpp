@@ -93,12 +93,9 @@ void Bridge::on_channels_update_lk(bool force) noexcept {
         new_lst = _tmp_list.make_ordered();
     }
 
-    ChannelList old_lst = _cur_list.get_stored();
-    if (force) {
-        std::swap(_cur_list, _tmp_list);
-        _target->on_message(bmsg::SetChannels{new_lst});
-        return;
-
+    ChannelList old_lst;
+    if (!force) {
+        old_lst = _cur_list.get_stored();
     }
 
     ChannelList added = _diff_list.set_difference(new_lst, old_lst);
@@ -141,37 +138,9 @@ void Bridge::on_message(const Message &msg) noexcept{
     }
 }
 
-void Bridge::on_message(const bmsg::SetChannels &msg) noexcept {
-
-    if (!msg.lst.empty() && _cycle_status.load(std::memory_order_relaxed)) {
-        on_message(bmsg::SetChannels{});
-        return;
-    }
-
-    auto m = _op_mode.load(std::memory_order_relaxed);
-
-    ChannelListStorage tmp_list;
-    ChannelListStorage diff_list;
-    ChannelList cur_lst = _bus.get_subscribed_channels(this,tmp_list);
-    cur_lst = tmp_list.make_ordered();
-    ChannelList new_lst;
-    if (m==BridgeOpMode::outbound || m == BridgeOpMode::bidirectional) {
-        new_lst = msg.lst;
-    }
-
-    ChannelList added = diff_list.set_difference(cur_lst, new_lst);
-    if (!added.empty()) {
-        _bus.subscribe(this, added);
-    }
-    ChannelList removed = diff_list.set_difference(new_lst, cur_lst);
-    if (!removed.empty()) {
-        _bus.unsubscribe(this, added);
-    }
-}
 
 void Bridge::on_message(const bmsg::AddChannels &msg) noexcept {
     if (_cycle_status.load(std::memory_order_relaxed)) {
-        on_message(bmsg::SetChannels{});
         return;
     }
     _bus.subscribe(this, msg.lst);
@@ -240,5 +209,11 @@ void Bridge::send_new_session(unsigned long version) {
     _target->on_message(bmsg::NewSession{version});
 }
 
+void Bridge::on_message(const bmsg::Announce&a) noexcept {
+    _bus.announce(this, a.request_id, a.sender);
+}
 
+void Bridge::on_announce(ConversationID reqid, ChannelID chan) noexcept {
+    _target->on_message(bmsg::Announce{chan, reqid});
+}
 }

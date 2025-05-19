@@ -36,12 +36,14 @@ public:
         _target->on_message(msg);
 
     }
-    virtual void on_message(const bmsg::SetChannels &msg) noexcept override {
+    virtual void on_message(const bmsg::Announce &msg) noexcept override {
         auto t = _prefix;
-        t.append("SUB (replace): ");
-        channel_list(t, msg.lst);
+        t.append("ANNOUNCE ( ");
+        t.append(std::to_string(msg.request_id));
+        t.append(") ").append(msg.sender);
         _output(t);
         _target->on_message(msg);
+
     }
 
     virtual void on_message(const bmsg::ChannelReset &msg) noexcept override {

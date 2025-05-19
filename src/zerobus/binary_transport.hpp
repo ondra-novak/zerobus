@@ -138,6 +138,26 @@ template<> struct Serialize<bmsg::NoRoute> {
         return fn(msg);
     }
 };
+template<> struct Serialize<bmsg::Announce> {
+    using Msg = bmsg::Announce;
+
+    static std::size_t bin_size(const Msg &msg) {
+        return bin::get_encoded_string_size(msg.sender)
+                +bin::get_encoded_number_size(msg.request_id);
+    }
+    static void to_binary(const Msg &msg, char *iter) {
+        iter = bin::encode_string(msg.sender, iter);
+        iter = bin::encode_number(msg.request_id, iter);
+    }
+    template<typename Fn>
+    static auto from_binary(Fn &&fn, const char *from, const char *to) {
+        Msg msg;
+        from = bin::decode_string(msg.sender, from, to);
+        from = bin::decode_number(msg.request_id, from, to);
+        return fn(msg);
+    }
+};
+
 template<> struct Serialize<Message> {
     using Msg = Message;
 
@@ -201,7 +221,6 @@ template<> inline constexpr std::uint8_t message_id<bmsg::ChannelReset> = 0;
 template<> inline constexpr std::uint8_t message_id<Message> = 1;
 template<> inline constexpr std::uint8_t message_id<bmsg::AddChannels> = 2;
 template<> inline constexpr std::uint8_t message_id<bmsg::EraseChannels> = 3;
-template<> inline constexpr std::uint8_t message_id<bmsg::SetChannels> = 4;
 template<> inline constexpr std::uint8_t message_id<bmsg::NoRoute> = 5;
 template<> inline constexpr std::uint8_t message_id<bmsg::AddToGroup> = 6;
 template<> inline constexpr std::uint8_t message_id<bmsg::CloseGroup> = 7;
@@ -214,7 +233,6 @@ using AllMessages = std::tuple<
         bmsg::ChannelReset,
         bmsg::AddChannels,
         bmsg::EraseChannels,
-        bmsg::SetChannels,
         bmsg::NoRoute,
         bmsg::AddToGroup,
         bmsg::CloseGroup,
@@ -320,13 +338,13 @@ protected:
     virtual void on_message(const bmsg::EraseChannels &msg) noexcept override {send(msg);}
     virtual void on_message(const bmsg::GroupEmpty &msg) noexcept override{send(msg);}
     virtual void on_message(const bmsg::AddChannels &msg) noexcept override{send(msg);}
-    virtual void on_message(const bmsg::SetChannels &msg) noexcept override{send(msg);}
     virtual void on_message(const bmsg::ChannelReset &msg) noexcept override{send(msg);}
     virtual void on_message(const bmsg::NewSession &msg) noexcept override{send(msg);}
     virtual void on_message(const bmsg::AddToGroup &msg) noexcept override{send(msg);}
     virtual void on_message(const bmsg::CloseGroup &msg) noexcept override{send(msg);}
     virtual void on_message(const bmsg::NoRoute &msg) noexcept override{send(msg);}
     virtual void on_message(const bmsg::UpdateSerial &msg) noexcept override{send(msg);}
+    virtual void on_message(const bmsg::Announce &msg) noexcept override{send(msg);}
 
 
 };

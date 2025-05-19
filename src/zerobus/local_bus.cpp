@@ -12,10 +12,11 @@ LocalBus::LocalBus():_node_serial(LocalBus::get_random_channel_name({})) {
 _cur_serial.serial = _node_serial;
 }
 
-void LocalBus::notify_channel_change() {
+template<typename ... Args>
+void LocalBus::notify_monitors(void (IChannelNotifyListener::*fn)(Args ...), Args ... args) {
     Dispatcher &disp = Dispatcher::get_instance();
     std::size_t *pos = nullptr;
-    disp.enqueue([this, pos, lk = std::shared_lock(_mx, std::defer_lock)]() mutable{
+    disp.enqueue([this, pos, lk = std::shared_lock(_mx, std::defer_lock), fn, args...]() mutable{
         std::size_t stpos = 0;
         if (!lk.owns_lock()) {
             if (_channels_no_change.test_and_set(std::memory_order_relaxed)) return;
@@ -29,10 +30,16 @@ void LocalBus::notify_channel_change() {
         while (posr < cnt) {
             IChannelNotifyListener *p = _monitors[posr];
             ++posr;
-            p->on_channels_update();    //REENTRY POINT
+            (p->*fn)(args...);
         }
     });
     disp.dispatch_if_needed();
+}
+
+
+
+void LocalBus::notify_channel_change() {
+    notify_monitors(&IChannelNotifyListener::on_channels_update);
 }
 
 
@@ -83,6 +90,15 @@ bool LocalBus::is_valid_target_lk(const ChannelID &chan, IListener *sender) {
             || _public_channels.find_channel_for_broadcast(chan, sender) != nullptr;
 }
 
+std::string LocalBus::add_mailbox(zerobus::IListener *listener) {
+    std::string id("@");
+    //sender has no mailbox, it must be created, switch to exclusive lock
+    std::unique_lock _(_mx);
+    generate_mailbox_id(std::back_inserter(id));
+    _private_channels.add(id, listener);
+    return id;
+}
+
 bool LocalBus::send_message(zerobus::IListener *listener,
         zerobus::ChannelID channel, zerobus::MessageContent content,
         zerobus::ConversationID cid) {
@@ -94,15 +110,11 @@ bool LocalBus::send_message(zerobus::IListener *listener,
 
     if (!is_valid_target_lk(channel, listener)) return false;
 
-    std::string id("@");
     std::string_view sender = _private_channels.find(listener);
     lk.unlock();
+    std::string id;
     if (listener && sender.empty()) {
-        //sender has no mailbox, it must be created, switch to exclusive lock
-        std::unique_lock _(_mx);
-        generate_mailbox_id(std::back_inserter(id));
-        _private_channels.add(id, listener);
-        sender = id;
+        sender = id = add_mailbox(listener);
     }
     do_forward_message(nullptr, {sender, channel, content, cid});
     return true;
@@ -121,6 +133,27 @@ bool LocalBus::forward_message(IListener *sender, const Message &msg) {
     return true;
 
 }
+
+void LocalBus::announce(IListener *listener, ConversationID req_id, ChannelID chan) {
+    Dispatcher &disp = Dispatcher::get_instance();
+    disp.finish();
+    std::string c;
+    if (!chan.empty())  {
+        std::lock_guard _(_mx);
+        if (!_routing_cache.register_path(chan, listener, req_id)) return;
+        c = chan;
+    } else {
+        std::lock_guard _(_mx);
+        chan = _private_channels.find(listener);
+        if (chan.empty()) {
+            c = add_mailbox(listener);
+        } else {
+            c = chan;
+        }
+    }
+    notify_monitors(&IChannelNotifyListener::on_announce, req_id, std::string_view(c));
+}
+
 void LocalBus::do_forward_message(IListener *sender, const Message &msg) {
     Channel<IListener *> *c = nullptr;
     std::size_t *pos = nullptr;
@@ -248,7 +281,7 @@ ChannelList LocalBus::get_subscribed_groups(IListener *listener,
 ChannelList LocalBus::get_public_channels(IListener *listener,
         ChannelListStorage &storage) const {
     return get_channels(storage, [&](const Channel<IListener *> &chan){
-       return chan.get_owner() == nullptr && 
+       return chan.get_owner() == nullptr &&
         (chan.size()>1 || !chan.contains(listener));
     });
 }

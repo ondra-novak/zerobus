@@ -42,6 +42,8 @@ public:
     virtual SerialStatus get_serial() const override;
     virtual void close_all_groups(IListener *owner) override;
     virtual std::string get_random_channel_name(std::string_view prefix) const override;
+    virtual void announce(IListener *listener, ConversationID req_id, ChannelID chan) override;
+
 
 protected:
 
@@ -69,8 +71,11 @@ void unsubscribe_helper(std::unique_lock<std::shared_mutex> &lk, Pred &&pred);
 
 void do_forward_message(IListener *sender, const Message &msg) ;
 
+template<typename ... Args>
+void notify_monitors(void (IChannelNotifyListener::*fn)(Args ...), Args ... args);
 
+private:
+    std::string add_mailbox(zerobus::IListener *listener);
 };
-
 }
 

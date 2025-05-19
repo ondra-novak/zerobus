@@ -60,7 +60,7 @@ public:
     virtual ChannelList get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const = 0;
     virtual ChannelList get_subscribed_groups(IListener *listener, ChannelListStorage &storage) const = 0;
     virtual void channel_notify(IChannelNotifyListener *mon, bool enable)  = 0;
-
+    virtual void announce(IListener *listener, ConversationID req_id, ChannelID chan = {}) = 0;
     virtual void clear_path( ChannelID sender, ChannelID receiver, ConversationID cid) = 0;
     virtual SerialStatus get_serial() const = 0;
     virtual UpdateSerialStatus update_serial(IListener *lsn, const SerialID &serialId) = 0;
@@ -107,12 +107,16 @@ public:
     bool forward_message(const Message &msg) {
         return _bus->forward_message(this, msg);
     }
+    void announce(ConversationID req_id) {
+        return _bus->announce(this, req_id);
+    }
 
 
 protected:
     std::shared_ptr<IBus> _bus;
 
 };
+
 
 
 
@@ -474,6 +478,23 @@ public:
      */
     SerialStatus get_serial() const {
         return _ptr->get_serial();
+    }
+
+
+    ///Announces the presence of the specified listener on the network.
+    /**
+     * @param lsn   Pointer to the listener to be announced.
+     * @param reqid Unique identifier of the request.
+     * @param chan  (Optional) Name of a private channel. Used if the listener acts as a bridge and forwards the request to another part of the network.
+     * Repeatedly call this function with a period of at least 1 minute.
+     * This function ensures that all nodes in the network will eventually know the shortest path
+     * to the specified listener, even in the presence of cycles in the network topology.
+     *
+     * @note To maintain up-to-date routing information, this function should be invoked periodically,
+     *       with an interval of at least one minute between calls.
+     */
+    void announce(IListener *lsn, ConversationID reqid, ChannelID chan = {}) {
+        return _ptr->announce(lsn, reqid, chan);
     }
 
     ///Updates serial ID from the other node

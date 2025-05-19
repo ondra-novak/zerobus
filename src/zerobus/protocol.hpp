@@ -13,11 +13,6 @@ namespace bmsg {
 struct ChannelsBase {
     ChannelList lst; ///< List of channels to set.
 };
-/// @brief Represents a message to set a list of channels.
-/// This message requires unsubscribing from all current channels and subscribing to the new list.
-struct SetChannels: ChannelsBase {
-
-};
 
 /// @brief Represents a message to add a list of channels.
 struct AddChannels: ChannelsBase {
@@ -66,6 +61,12 @@ struct AddToGroup {
     ChannelID target; ///< The target channel ID to add to the group.
 };
 
+///Request anounce
+struct Announce {
+    ChannelID sender;
+    ConversationID request_id;
+};
+
 }
 
 class IProtocol {
@@ -74,7 +75,6 @@ public:
 
 
     virtual void on_message(const Message &) noexcept = 0;
-    virtual void on_message(const bmsg::SetChannels &) noexcept = 0;
     virtual void on_message(const bmsg::AddChannels &) noexcept = 0;
     virtual void on_message(const bmsg::EraseChannels &) noexcept = 0;
     virtual void on_message(const bmsg::UpdateSerial &) noexcept = 0;
@@ -84,6 +84,7 @@ public:
     virtual void on_message(const bmsg::CloseGroup &) noexcept = 0;
     virtual void on_message(const bmsg::GroupEmpty &) noexcept = 0;
     virtual void on_message(const bmsg::AddToGroup &) noexcept = 0;
+    virtual void on_message(const bmsg::Announce &) noexcept = 0;
     virtual ~IProtocol() = default;
 };
 

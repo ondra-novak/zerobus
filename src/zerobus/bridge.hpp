@@ -119,6 +119,7 @@ protected:
 
     //IChannelNotifyListener
     virtual void on_channels_update() noexcept override;
+    virtual void on_announce(ConversationID reqid, ChannelID chan) noexcept override;
 
     //IListener
     virtual void on_close_group(ChannelID group_name) noexcept override;
@@ -129,7 +130,6 @@ protected:
 
     //IProtocol
     virtual void on_message(const Message &msg) noexcept override;
-    virtual void on_message(const bmsg::SetChannels &msg) noexcept override;
     virtual void on_message(const bmsg::AddChannels &msg) noexcept override;
     virtual void on_message(const bmsg::EraseChannels &msg) noexcept override;
     virtual void on_message(const bmsg::UpdateSerial &msg) noexcept override;
@@ -139,6 +139,7 @@ protected:
     virtual void on_message(const bmsg::CloseGroup &msg) noexcept override;
     virtual void on_message(const bmsg::GroupEmpty &msg) noexcept override;
     virtual void on_message(const bmsg::AddToGroup &msg) noexcept override;
+    virtual void on_message(const bmsg::Announce &) noexcept override;
 
 
 protected:

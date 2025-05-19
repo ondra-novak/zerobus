@@ -2,6 +2,7 @@
 
 #include <chrono>
 #include <memory>
+#include <optional>
 #include <unordered_map>
 #include <string>
 
@@ -17,18 +18,24 @@ public:
         _record_timeout = timeout;
     }
 
-    void register_path(std::string_view target, Bridge bridge) {
+    bool register_path(std::string_view target, Bridge bridge, std::optional<std::uint32_t> rqid = std::nullopt) {
         auto f = _cache_map.find(target);
         if (f != _cache_map.end()) {
+            if (rqid) {
+                if (f->second->_rqid == *rqid) return false;
+                f->second->_rqid = *rqid;
+            }
             f->second->_bridge = bridge;
             f->second->_expiration = std::chrono::system_clock::now()+_record_timeout;
         } else {
             auto p = std::make_unique<Record>();
             p->_bridge = bridge;
+            if (rqid) f->second->_rqid = *rqid;
             p->_expiration = std::chrono::system_clock::now()+_record_timeout;
             p->_target.append(target);
             _cache_map.emplace(std::string_view(p->_target), std::move(p));
         }
+        return true;
     }
 
     Bridge find_path(std::string_view target) const {
@@ -58,6 +65,7 @@ protected:
         Bridge _bridge;
         std::chrono::system_clock::time_point _expiration;
         std::string _target;
+        std::uint32_t _rqid = 0;
     };
 
     std::unordered_map<std::string_view, std::unique_ptr<Record> > _cache_map;
