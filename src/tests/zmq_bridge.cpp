@@ -1,6 +1,6 @@
 #include "check.h"
 #include <iostream>
-#include <zerobus/bus.hpp>
+#include <zerobus/client.hpp>
 #include <zerobus/transport/zmq/zmq_bridge_client.hpp>
 #include <zerobus/transport/zmq/zmq_bridge_server.hpp>
 #include <zerobus/channel_notify.hpp>
@@ -19,12 +19,12 @@ void direct_bridge_simple() {
 
     std::promise<std::string> result;
 
-    auto sn = master.new_client([&](AbstractClient *c, const Message &msg, bool){
+    auto sn = master.new_client([&](auto &c, const Message &msg, auto){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c->send_message(msg.get_sender(), s, msg.get_conversation());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave.new_client([&](AbstractClient *, const Message &msg, bool){
+    auto cn= slave.new_client([&](auto &, const Message &msg, auto){
         result.set_value(std::string(msg.get_content()));
     });
 
@@ -52,12 +52,12 @@ void two_hop_bridge() {
 
     std::promise<std::string> result;
 
-    auto sn = slave2.new_client([&](AbstractClient *c, const Message &msg, bool){
+    auto sn = slave2.new_client([&](auto &c, const Message &msg, auto){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c->send_message(msg.get_sender(), s, msg.get_conversation());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave1.new_client([&](AbstractClient *, const Message &msg, bool){
+    auto cn= slave1.new_client([&](auto &, const Message &msg, auto){
         result.set_value(std::string(msg.get_content()));
     });
 

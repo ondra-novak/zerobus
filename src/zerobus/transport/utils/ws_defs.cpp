@@ -1,0 +1,23 @@
+#include "ws_defs.hpp"
+#include <array>
+#include <random>
+#include "sha1.hpp"
+#include "base64.hpp"
+
+
+namespace ws {
+
+
+WsAcceptStr calculate_ws_accept(std::string_view key) {
+    SHA1 sha1;
+    sha1.update(key);
+    sha1.update("258EAFA5-E914-47DA-95CA-C5AB0DC85B11");
+    auto digest = sha1.final();
+    WsAcceptStr encoded;
+    base64.encode(digest.begin(), digest.end(), encoded.begin());
+    return encoded;
+}
+
+
+
+}

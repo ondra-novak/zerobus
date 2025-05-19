@@ -1,7 +1,7 @@
 #include "check.h"
 
 #include <zerobus/channel_notify_listener.hpp>
-#include <zerobus/bus.hpp>
+#include <zerobus/client.hpp>
 
 #include <algorithm>
 using namespace zerobus;
@@ -15,31 +15,31 @@ void testLocalBus() {
     constexpr std::string_view channel_name = "test";
     constexpr std::string_view message = "msg";
 
-    auto client1 = broker.new_client([&](auto,const Message &msg, bool ){
+    auto client1 = broker.new_client([&](auto &,const Message &msg, auto ){
         CHECK_EQUAL(msg.get_channel(), channel_name);
         CHECK_EQUAL(msg.get_content(), message);
         r1 = true;
     });
-    auto client2 = broker.new_client([&](auto,const Message &msg, bool ){
+    auto client2 = broker.new_client([&](auto &,const Message &msg, auto ){
         CHECK_EQUAL(msg.get_channel(), channel_name);
         CHECK_EQUAL(msg.get_content(), message);
         r2 = true;
     });
-    auto client3 = broker.new_client([&](auto,const Message &msg, bool ){
+    auto client3 = broker.new_client([&](auto &,const Message &msg, auto ){
         CHECK_EQUAL(msg.get_channel(), channel_name);
         CHECK_EQUAL(msg.get_content(), message);
         r3 = true;
     });
-    auto clientd = broker.new_client([&](AbstractClient *client, const Message &msg, bool ){
+    auto clientd = broker.new_client([&](auto &client, const Message &msg, auto){
         CHECK_EQUAL(msg.get_channel(), channel_name);
         CHECK_EQUAL(msg.get_content(), message);
         rd = true;
-        client->get_bus().unsubscribe(client, channel_name);
+        client.unsubscribe(channel_name);
     });
-    broker.subscribe(&client1, channel_name);
-    broker.subscribe(&clientd, channel_name);
-    broker.subscribe(&client2, channel_name);
-    broker.subscribe(&client3, channel_name);
+    client1.subscribe(channel_name);
+    clientd.subscribe(channel_name);
+    client2.subscribe(channel_name);
+    client3.subscribe(channel_name);
     broker.send_message(nullptr, channel_name, message);
     CHECK(r1);
     CHECK(r2);
@@ -61,12 +61,12 @@ void testReqRep() {
     auto broker = Bus::create();
     std::string result;
 
-    auto server = broker.new_client([&](AbstractClient *c, const Message &msg, bool ){
+    auto server = broker.new_client([&](auto &c, const Message &msg, auto){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c->get_bus().send_message(c,msg.get_sender(), s);
+        c.send_message(msg.get_sender(), s);
     });
-    auto client = broker.new_client([&](AbstractClient *, const Message &msg, bool ){
+    auto client = broker.new_client([&](auto &, const Message &msg, auto){
         result.append(std::string(msg.get_content()));
     });
 
@@ -80,20 +80,20 @@ void testReqRep2() {
     auto broker = Bus::create();
     std::string result;
 
-    auto server = broker.new_client([&](AbstractClient *c, const Message &msg, bool ){
+    auto server = broker.new_client([&](auto &c, const Message &msg, auto ){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c->get_bus().send_message(c, msg.get_sender(), s);
-        c->get_bus().send_message(c, msg.get_sender(), s);
+        c.send_message(msg.get_sender(), s);
+        c.send_message(msg.get_sender(), s);
     });
-    auto client = broker.new_client([&](AbstractClient *c, const Message &msg, bool ){
+    auto client = broker.new_client([&](auto &c, const Message &msg, auto ){
         result.append(std::string(msg.get_content()));
-        c->get_bus().unsubscribe_all(c);
+        c.unsubscribe_all();
 
     });
 
-    broker.subscribe(&server,"reverse");
-    broker.send_message(&client, "reverse", "ahoj svete");
+    server.subscribe("reverse");
+    client.send_message( "reverse", "ahoj svete");
     CHECK_EQUAL(result, "etevs joha");
 }
 
@@ -101,12 +101,12 @@ void testChannelForward() {
     auto broker = Bus::create();
     std::string result;
 
-    auto node1 = broker.new_client([&](AbstractClient *c, const Message &msg, bool ){
+    auto node1 = broker.new_client([&](auto &c, const Message &msg, auto ){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c->get_bus().send_message(c,"c2", s);
+        c.send_message("c2", s);
     });
-    auto node2 = broker.new_client([&](AbstractClient *, const Message &msg, bool ){
+    auto node2 = broker.new_client([&](auto &, const Message &msg, auto ){
         result = std::string(msg.get_content());
     });
 
@@ -125,26 +125,26 @@ void testDialog() {
     int pos = 0;
 
 
-    auto server = broker.new_client([&](AbstractClient *c, const Message &msg, bool pm){
-        if (pm) {
+    auto server = broker.new_client([&](auto &c, const Message &msg, auto type){
+        if (type == Type::direct) {
             std::string s ( msg.get_content());
             std::reverse(s.begin(), s.end());
-            c->get_bus().send_message(c, msg.get_sender(), s);
+            c.send_message(msg.get_sender(), s);
         } else {
-            c->get_bus().send_message(c, msg.get_sender(), "");
+            c.send_message(msg.get_sender(), "");
         }
     });
-    auto client = broker.new_client([&](AbstractClient *c, const Message &msg, bool ){
+    auto client = broker.new_client([&](auto &c, const Message &msg, auto ){
         if (msg.get_channel() == "start_test") {
             pos = -1;
-            c->get_bus().send_message(c,"reverse", "");
+            c.send_message("reverse", "");
         } else {
             if (pos >= 0) {
                 test_result.push_back(std::string(msg.get_content()));
             }
             ++pos;
             if (pos < static_cast<int>(test_data.size())) {
-                c->get_bus().send_message(c, msg.get_sender(), test_data[pos]);
+                c.send_message(msg.get_sender(), test_data[pos]);
             }
         }
     });

@@ -1,6 +1,6 @@
 #include "check.h"
 
-#include <zerobus/bus.hpp>
+#include <zerobus/client.hpp>
 #include <zerobus/null_bridge.hpp>
 #include <future>
 
@@ -26,19 +26,19 @@ void direct_bridge_simple() {
     DebugNullBridge br2(slave2, master, &debug_output, "SLAVE2", "MASTER");
     std::string result;
 
-    auto sn = slave1.new_client([&](AbstractClient *c, const Message &msg, bool){
+    auto sn = slave1.new_client([&](auto &c, const Message &msg, auto){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c->send_message(msg.get_sender(), s, msg.get_conversation());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto sn2 = slave1.new_client([&](AbstractClient *c, const Message &msg, bool){
+    auto sn2 = slave1.new_client([&](auto &c, const Message &msg, auto){
         std::string s ( msg.get_content());
         s.push_back('x');
-        c->send_message(msg.get_sender(), s, msg.get_conversation());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave2.new_client([&](AbstractClient *c, const Message &msg, bool){
+    auto cn= slave2.new_client([&](auto &c, const Message &msg, auto){
         if (msg.get_conversation() == 0) {
-            c->send_message("addx", msg.get_content(), 1);
+            c.send_message("addx", msg.get_content(), 1);
         } else {
             result=std::string(msg.get_content());
         }
@@ -63,12 +63,12 @@ void direct_bridge_cycle() {
 
     DebugNullBridge br1(slave1, master, &debug_output, "SLAVE1", "MASTER");
     DebugNullBridge br2(slave2, master, &debug_output, "SLAVE2", "MASTER");
-    auto sn = slave1.new_client([&](AbstractClient *c, const Message &msg, bool){
+    auto sn = slave1.new_client([&](auto &c, const Message &msg, auto){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c->send_message(msg.get_sender(), s, msg.get_conversation());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave2.new_client([&](AbstractClient *, const Message &msg, bool){
+    auto cn= slave2.new_client([&](auto &, const Message &msg, auto){
         result=std::string(msg.get_content());
     });
 
@@ -94,12 +94,12 @@ void detect_cycle_test2() {
 
 
 
-    auto sn =slave1.new_client([&](AbstractClient *c, const Message &msg, bool){
+    auto sn =slave1.new_client([&](auto &c, const Message &msg, auto){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
-        c->send_message(msg.get_sender(), s, msg.get_conversation());
+        c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave2.new_client([&](AbstractClient *, const Message &msg, bool){
+    auto cn= slave2.new_client([&](auto &, const Message &msg, auto){
             result.set_value(std::string(msg.get_content()));
     });
 

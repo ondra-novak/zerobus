@@ -43,9 +43,6 @@ void LocalBus::notify_channel_change() {
 }
 
 
-bool LocalBus::subscribe(IListener *listener, ChannelID channel){
-    return subscribe(listener, ChannelList(&channel,1));
-}
 bool LocalBus::subscribe(IListener *listener, ChannelList channelList){
     Dispatcher::get_instance().finish(); //finish any pending action
     bool result = true;
@@ -62,9 +59,6 @@ bool LocalBus::subscribe(IListener *listener, ChannelList channelList){
     }
     notify_channel_change();
     return result;
-}
-void LocalBus::unsubscribe(IListener *listener, ChannelID channel){
-    unsubscribe(listener, ChannelList(&channel,1));
 }
 void LocalBus::unsubscribe(IListener *listener, ChannelList channelList){
     Dispatcher::get_instance().finish(); //finish any pending action

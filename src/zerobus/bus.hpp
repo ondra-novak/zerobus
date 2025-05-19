@@ -23,102 +23,51 @@ enum class UpdateSerialStatus {
     cycle
 };
 
-
-class IBus {
-public:
-
-
-    ///An object used to temporarily store the channel list obtained from the Bus object
-    /**Because the Bus environment is dynamic and can change in the background,
-     * it is necessary to ensure that the channel list obtained is firm and valid
-     * at the time it is obtained. In addition, the object allows the reuse of
-     * already allocated space from the previous use.
-     *
-     * The object contains locks that are held for the lifetime of the object.
-     * Holding locks can cause some allocated memory that is no longer
-     * needed to remain allocated. Therefore, it is a good idea to call
-     * clear() when the list is no longer needed.
+enum class Type {
+    /// Message was broadcasted to a channel or group
+    /**
+     * The "channel" property contains the name of the channel or group
+     * where the message was sent.
      */
+    broadcast = 0,
 
+    /// Direct (private) message
+    /**
+     * This message was sent directly to the recipient using their
+     * unicast address.
+     */
+    direct,
 
-    virtual ~IBus() = default;
+    /// Notification that a previous message was not delivered
+    /**
+     * The message contains the "channel" and "conversation_id" of the
+     * failed message to help identify it.
+     */
+    undelivered,
 
-    virtual bool subscribe(IListener *listener, ChannelID channel) = 0;
-    virtual bool subscribe(IListener *listener, ChannelList channel) = 0;
-    virtual void unsubscribe(IListener *listener, ChannelID channel) = 0;
-    virtual void unsubscribe(IListener *listener, ChannelList channel) = 0;
-    virtual void unsubscribe_all(IListener *listener) = 0;
-    virtual void close_private_channel(IListener *listener) = 0;
-    virtual bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) = 0;
-    virtual void close_group(IListener *owner, ChannelID group_name) = 0;
-    virtual void close_all_groups(IListener *owner) = 0;
-    virtual bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid) = 0;
-    virtual bool forward_message(IListener *sender, const Message &msg) = 0;
-    virtual std::string get_random_channel_name(std::string_view prefix) const = 0;
-    virtual bool is_channel(ChannelID id) const = 0;
-    virtual ChannelList get_public_channels(IListener *listener, ChannelListStorage &storage) const = 0;
-    virtual ChannelList get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const = 0;
-    virtual ChannelList get_subscribed_groups(IListener *listener, ChannelListStorage &storage) const = 0;
-    virtual void channel_notify(IChannelNotifyListener *mon, bool enable)  = 0;
-    virtual void announce(IListener *listener, ConversationID req_id, ChannelID chan = {}) = 0;
-    virtual void clear_path( ChannelID sender, ChannelID receiver, ConversationID cid) = 0;
-    virtual SerialStatus get_serial() const = 0;
-    virtual UpdateSerialStatus update_serial(IListener *lsn, const SerialID &serialId) = 0;
+    /// Notification that the recipient has been added to a group
+    /**
+     * The "channel" property contains the name of the group.
+     */
+    added_to_group,
 
+    /// Notification that a group the recipient was a member of has been closed
+    /**
+     * The "channel" property contains the name of the group.
+     */
+    group_closed,
+
+    /// Notification that a group has become empty (last member left)
+    /**
+     * The "channel" property contains the name of the group.
+     * Sent to the group owner when the last member leaves.
+     */
+    group_empty
 };
 
-class Bus;
+class LocalBus;
 
-///Abstract client - associates bus with the listener
-/**
- * Automatically unregisters itself when destroyed
- */
-class AbstractClient: public IListener {
-public:
-
-    AbstractClient(std::shared_ptr<IBus> bus):_bus(std::move(bus)) {}
-    ~AbstractClient() {
-        _bus->unsubscribe_all(this);
-    }
-    Bus get_bus() const;
-
-
-    bool subscribe(ChannelID channel) {
-        return _bus->subscribe(this, channel);
-    }
-    void unsubscribe(ChannelID channel) {
-        _bus->unsubscribe(this, channel);
-    }
-    void close_private_channel() {
-        _bus->close_private_channel(this);
-    }
-    bool add_to_group(ChannelID group_name, ChannelID uid) {
-        return _bus->add_to_group(this, group_name, uid);
-    }
-    void close_group(ChannelID group_name) {
-        _bus->close_group(this, group_name);
-    }
-    void close_all_groups() {
-        _bus->close_all_groups(this);
-    }
-    bool send_message(ChannelID channel, MessageContent msg, ConversationID cid = 0) {
-        return _bus->send_message(this, channel, msg, cid);
-    }
-    bool forward_message(const Message &msg) {
-        return _bus->forward_message(this, msg);
-    }
-    void announce(ConversationID req_id) {
-        return _bus->announce(this, req_id);
-    }
-
-
-protected:
-    std::shared_ptr<IBus> _bus;
-
-};
-
-
-
+class Client;
 
 class Bus {
 public:
@@ -126,7 +75,7 @@ public:
     static Bus create();
 
 
-    Bus(std::shared_ptr<IBus> handle):_ptr(std::move(handle)) {}
+    Bus(std::shared_ptr<LocalBus> handle);
 
     /// Subscribes a listener to a specific channel.
     /**
@@ -138,9 +87,7 @@ public:
      * @retval true if the subscription was successful.
      * @retval false if the channel name is invalid or reserved.
      */
-    bool subscribe(IListener *listener, ChannelID channel) {
-        return _ptr->subscribe(listener, channel);
-    }
+    bool subscribe(IListener *listener, ChannelID channel);
 
     /// Subscribes a listener to multiple channels.
     /**
@@ -155,9 +102,7 @@ public:
      * @retval true if all channels were successfully subscribed
      * @retval false otherwise.
      */
-    bool subscribe(IListener *listener, ChannelList channel) {
-        return _ptr->subscribe(listener, channel);
-    }
+    bool subscribe(IListener *listener, ChannelList channel);
 
     /// Unsubscribes a listener from a specific channel.
     /**
@@ -168,18 +113,14 @@ public:
      * @param listener Pointer to the listener object to be unsubscribed.
      * @param channel The ID of the channel to unsubscribe from.
      */
-    void unsubscribe(IListener *listener, ChannelID channel) {
-        _ptr->unsubscribe(listener, channel);
-    }
+    void unsubscribe(IListener *listener, ChannelID channel);
 
     /// Unsubscribe multiple channels
     /**
      * @param listener listener
      * @param channels list of channels
      */
-    void unsubscribe(IListener *listener, ChannelList channel) {
-        _ptr->unsubscribe(listener, channel);
-    }
+    void unsubscribe(IListener *listener, ChannelList channel);
 
     /// Unsubscribes the listener from everything
     /**
@@ -196,9 +137,7 @@ public:
      * delivered. During this period, the listener may still receive messages
      * sent from other threads.
      */
-    void unsubscribe_all(IListener *listener) {
-        _ptr->unsubscribe_all(listener);
-    }
+    void unsubscribe_all(IListener *listener);
 
     ///Close private channel
     /**
@@ -218,9 +157,7 @@ public:
      * @note any message routed to this private channel after the channel is closed
      * may be returned to the sender through on_no_route().
      */
-    void close_private_channel(IListener *listener) {
-        _ptr->close_private_channel(listener);
-    }
+    void close_private_channel(IListener *listener);
 
 
     /// Adds a listener to a group.
@@ -248,18 +185,14 @@ public:
      *               specified local listener does not own the group, the group
      *               name is reserved, or the group name is invalid.
      */
-    bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) {
-        return _ptr->add_to_group(owner, group_name, uid);
-    }
+    bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid);
 
     ///Closes the group, removes all members
     /**
      * @param owner pointer identifies the owner
      * @param group_name name of group to close
      */
-    void close_group(IListener *owner, ChannelID group_name) {
-        _ptr->close_group(owner, group_name);
-    }
+    void close_group(IListener *owner, ChannelID group_name);
 
     ///Close all groups associated with the listener's pointer
     /**
@@ -268,9 +201,7 @@ public:
      * @note you don't need to call this function if unsubscribe_all() is
      * eventually used
      */
-    void close_all_groups(IListener *owner) {
-        _ptr->close_all_groups(owner);
-    }
+    void close_all_groups(IListener *owner);
 
     ///Send message to a channel
     /**
@@ -302,10 +233,7 @@ public:
      *       may still return true. However, the listener may asynchronously receive an error through
      *       the `on_no_route()` callback.
      */
-    bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid = 0) {
-        return _ptr->send_message(listener, channel, msg, cid);
-    }
-
+    bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid = 0);
     ///Forward message
     /**
      * Forwards a message to its intended recipient using the bus's routing system.
@@ -332,9 +260,7 @@ public:
      * is known as unavailable.
      *
      */
-    bool forward_message(IListener *sender, const Message &msg) {
-        return _ptr->forward_message(sender, msg);
-    }
+    bool forward_message(IListener *sender, const Message &msg);
 
     ///Generates a random channel name
     /**
@@ -347,18 +273,14 @@ public:
      * @param prefix A string prefix to prepend to the generated channel name.
      * @return A unique channel name with the specified prefix.
      */
-    std::string get_random_channel_name(std::string_view prefix) const {
-        return _ptr->get_random_channel_name(prefix);
-    }
+    std::string get_random_channel_name(std::string_view prefix) const;
 
     ///Determines whether id is a channel
     /**
      * @retval true id is channel
      * @retval flase id either doesn't exist or is not channel. Groups are not included
      */
-    bool is_channel(ChannelID id) const {
-        return _ptr->is_channel(id);
-    }
+    bool is_channel(ChannelID id) const;
 
     /// Retrieves the list of channels subscribed by a specific listener.
     /**
@@ -380,9 +302,7 @@ public:
      *
      * @note The returned list does not include private channels or groups
      */
-    ChannelList get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const {
-        return _ptr->get_subscribed_channels(listener, storage);
-    }
+    ChannelList get_subscribed_channels(IListener *listener, ChannelListStorage &storage) const;
 
     /// Retrieves the list of groups subscribed by a specific listener.
     /**
@@ -402,9 +322,7 @@ public:
      * @return A list of channel IDs representing the groups to which the listener is subscribed.
      *         The list will be empty if the listener has no active subscriptions.
      */
-    ChannelList get_subscribed_groups(IListener *listener, ChannelListStorage &storage) const {
-        return _ptr->get_subscribed_groups(listener, storage);
-    }
+    ChannelList get_subscribed_groups(IListener *listener, ChannelListStorage &storage) const;
 
     ///enable or disable notification about changes in public channel list
     /**
@@ -418,9 +336,7 @@ public:
      * @note When notifications are enabled for multiple listeners, all of them will receive updates
      *       until notifications are explicitly disabled for each listener.
      */
-    void channel_notify(IChannelNotifyListener *listener, bool enable) {
-        _ptr->channel_notify(listener, enable);
-    }
+    void channel_notify(IChannelNotifyListener *listener, bool enable);
 
     ///Retrieve all public channels, or channels not subscribed by specified listener
     /**
@@ -436,10 +352,7 @@ public:
      *
      * @return A list of channel IDs representing the public channels
      */
-    ChannelList get_public_channels(IListener *skip_listener, ChannelListStorage &storage) const {
-        return _ptr->get_public_channels(skip_listener, storage);
-    }
-
+    ChannelList get_public_channels(IListener *skip_listener, ChannelListStorage &storage) const;
 
     ///Deletes the path to the given recipient.
     /**
@@ -464,9 +377,7 @@ public:
      *      If the sender is on the local bus, the on_no_route()
      *      function is called directly on the sender instance.
      */
-    void clear_path(ChannelID sender, ChannelID receiver, ConversationID cid) {
-         _ptr->clear_path( sender, receiver, cid);
-    }
+    void clear_path(ChannelID sender, ChannelID receiver, ConversationID cid);
 
     ///Retrieves serial ID of whole network
     /**
@@ -476,9 +387,7 @@ public:
      * all nodes in the network will start returning this ID.
      * The value of the ID itself is a random unique string
      */
-    SerialStatus get_serial() const {
-        return _ptr->get_serial();
-    }
+    SerialStatus get_serial() const;
 
 
     ///Announces the presence of the specified listener on the network.
@@ -493,9 +402,7 @@ public:
      * @note To maintain up-to-date routing information, this function should be invoked periodically,
      *       with an interval of at least one minute between calls.
      */
-    void announce(IListener *lsn, ConversationID reqid, ChannelID chan = {}) {
-        return _ptr->announce(lsn, reqid, chan);
-    }
+    void announce(IListener *lsn, ConversationID reqid, ChannelID chan = {});
 
     ///Updates serial ID from the other node
     /**
@@ -519,143 +426,22 @@ public:
      * and only forward any updates to these IDs (there and back). If a new ID is received,
      * the cycle has been resolved and the bridge can be reactivated.
      */
-    UpdateSerialStatus update_serial(IListener *lsn, const SerialID &serialId) {
-        return _ptr->update_serial(lsn, serialId);
-    }
-
-    ///Retrieves pointer to underlying object
-    auto get_handle() const {return _ptr;}
-
-    ///Indicates that group has been closed
-    /**
-     * This constant is used to notify events for new_client() function.
-     * In this case, sender contains name of group which has been closed
-     */
-    static constexpr MessageContent group_close = "c";
-    ///Indicates that group is empty.
-    /**
-     * This constant is used to notify events for new_client() function.
-     * In this case, sender contains name of the group. This client
-     * is owner of the group. The event indicates that there is nobody
-     * listening on the group
-     */
-    static constexpr MessageContent group_empty = "e";
-
-    ///Indicates that this client has been added to group
-    /**
-     * This constant is used to notify events for new_client() function.
-     * In this case, sender contains name of the group. It
-     * indicates, that this clien has been added to the specified group
-     * and now is able to receive messages broadcasted on that group.
-     * These messages are flagged as public (not private)
-     */
-    static constexpr MessageContent group_add = "a";
-    ///Indicates is known that some message was not delivered
-    /**
-     * This constant is used to notify events for new_client() function.
-     * In this case, sender contains ID of the failed message's original
-     * receiver. The conversiation ID is also filled with
-     * conversation ID of original message. This indicates, that
-     * message was not delivered, because there was no route information.
-     *
-     */
-    static constexpr MessageContent no_route = "r";
+    UpdateSerialStatus update_serial(IListener *lsn, const SerialID &serialId);
 
 
-    ///Construct ad-hoc client which call a function for every received event
-    /**
-     * The function receives pointer to associated instance of AbstractClient,
-     * the message itself and flag , which indicates whether the message
-     * is private. If tge flag is true, then message is private, otherwise
-     * it is sent from public channel
-     *
-     * @param callback the callback function
-     *
-     * @note This function introduces a special channel to forward
-     * non-message events. This is introduces for this case only. If the
-     * flag is true, indicating that message is private, and channel of
-     * the message is empty - which is otherwise impossible - then
-     * sender contains source of the event and content contains type
-     * of event. There are several types of events: group_close, group_empty,
-     * group_add, no_route
-     *
-     * @code
-     * new_client([&](AbstractClient *me, const Message &msg, bool pm){
-     *  if (pm)  { //private message
-     *      if (msg.get_channel().empty()) { // other event
-     *          auto event = msg.get_content();
-     *          if (event == Bus::no_route) {...}// mesage was not delivered
-     *      }
-     *  }
-     * });
-     *
-     *
-     * @return instance of the client (directly initialized). Note
-     * the instance is not movable. If you need to create pointer, use
-     * new_client_unique() or new_client_shared()
-     */
-    template<std::invocable<AbstractClient *, const Message &, bool> Callback>
-    auto new_client(Callback &&callback) {
-
-        class CbLsn: public AbstractClient {
-        public:
-            CbLsn(Callback &&cb, std::shared_ptr<IBus> bus)
-                :AbstractClient(std::move(bus)),_cb(std::move(cb)) {}
-
-            virtual void on_message(const Message &message, bool pm) noexcept override {
-                _cb(this, message, pm);
-            }
-            virtual void on_close_group(zerobus::ChannelID group_name) noexcept override {
-                _cb(this, Message(group_name, "", group_close,0), true);
-            }
-            virtual void on_add_to_group(ChannelID group_name, ChannelID ) noexcept override {
-                _cb(this, Message(group_name, "", group_add,0), true);
-            }
-            virtual void on_group_empty(ChannelID group_name) noexcept override {
-                _cb(this, Message(group_name, "", group_empty,0), true);
-            }
-            virtual void on_no_route(ChannelID, ChannelID receiver, ConversationID cid) noexcept override {
-                _cb(this, Message(receiver, "", no_route, cid), true);
-            }
-
-        protected:
-            std::decay_t<Callback> _cb;
-        };
-
-        return CbLsn(std::move(callback), _ptr);
-    }
-
-    ///Creates simple client as unique pointer
-    /**
-     * @param callback callback. For more information see new_client()
-     * @return unique pointer to AbstractClient interface
-     */
-    template<std::invocable<AbstractClient *, const Message &, bool> Callback>
-    std::unique_ptr<AbstractClient> new_client_unique(Callback &&callback) {
-        return std::unique_ptr<AbstractClient>(new auto(new_client(std::move(callback))));
-    }
-
-    ///Creates simple client as shared pointer
-    /**
-     * @param callback callback. For more information see new_client()
-     * @return shared pointer to AbstractClient interface
-     */
-    template<std::invocable<AbstractClient *, const Message &, bool> Callback>
-    std::shared_ptr<AbstractClient> new_client_shared(Callback &&callback) {
-        using Ret = decltype(this->new_client(std::move(callback)));
-        return std::make_shared<Ret>(std::move(callback), _ptr);
-    }
-
+    template<std::invocable<Client &, const Message &, Type> Callback>
+    auto new_client(Callback &&cb);
+    template<std::invocable<Client &, const Message &, Type> Callback>
+    std::unique_ptr<Client> new_client_unique(Callback &&cb);
+    template<std::invocable<Client &, const Message &, Type> Callback>
+    std::shared_ptr<Client> new_client_shared(Callback &&cb);
 
 
 protected:
-    std::shared_ptr<IBus> _ptr;
+    std::shared_ptr<LocalBus> _ptr;
 
 };
 
-inline Bus AbstractClient::get_bus() const {
-    return Bus(_bus);
-}
 
 
 }
