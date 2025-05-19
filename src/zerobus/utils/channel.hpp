@@ -37,11 +37,11 @@ public:
         }
     }
 
-    bool contains(const Listener lsn) const {
+    bool contains(Listener lsn) const {
         return std::find(_listeners.begin(), _listeners.end(), lsn) != _listeners.end();
     }
 
-    bool remove(const Listener lsn)
+    bool remove(Listener lsn)
     {
         _listeners.erase(std::remove_if(_listeners.begin(), _listeners.end(),
                                         [&](const Listener l)
@@ -51,13 +51,13 @@ public:
     }
 
     template<typename Message>
-    void broadcast(Message &&msg, std::size_t &pos)
+    void broadcast(Listener sender, Message &&msg, std::size_t &pos)
     {
         std::size_t cnt = _listeners.size();
         while (pos < cnt) {
             auto &p = _listeners[pos];
             ++pos;
-            p->on_message(msg, false);
+            if (p != sender) p->on_message(msg, false);
         }
     }
 

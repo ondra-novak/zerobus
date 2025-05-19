@@ -159,7 +159,7 @@ void LocalBus::do_forward_message(IListener *sender, const Message &msg) {
                   lk = std::shared_lock(_mx, std::defer_lock)]()mutable{
 
         if (c) {
-            c->broadcast(*(*mptr_lnk), *pos);
+            c->broadcast(sender, *(*mptr_lnk), *pos);
         } else if (!lk.owns_lock()){
             bool pm = true;
             auto msg_ptr = std::move(mptr);
@@ -175,7 +175,7 @@ void LocalBus::do_forward_message(IListener *sender, const Message &msg) {
                 std::size_t stpos = 0;  //create space on broadcast status
                 pos = &stpos;
                 c = _public_channels.find_channel_for_broadcast(chan, sender);
-                if (c) c->broadcast(*msg_ptr, *pos);
+                if (c) c->broadcast(sender, *msg_ptr, *pos);
             } else {
                 trg->on_message(*msg_ptr, pm);
             }
@@ -248,7 +248,8 @@ ChannelList LocalBus::get_subscribed_groups(IListener *listener,
 ChannelList LocalBus::get_public_channels(IListener *listener,
         ChannelListStorage &storage) const {
     return get_channels(storage, [&](const Channel<IListener *> &chan){
-       return chan.get_owner() == nullptr && !chan.contains(listener);
+       return chan.get_owner() == nullptr && 
+        (chan.size()>1 || !chan.contains(listener));
     });
 }
 
