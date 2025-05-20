@@ -1,7 +1,5 @@
 #pragma once
 
-#include <functional>
-#include <zmq.hpp>
 #include "../../bridge.hpp"
 
 namespace zerobus {

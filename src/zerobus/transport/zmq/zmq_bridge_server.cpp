@@ -105,13 +105,13 @@ void ZmqBridgeServer::PeerContext::on_incoming_message(std::string_view msg) {
 void ZmqBridgeServer::PeerContext::set_sleeping(bool sleeping) {
     std::lock_guard _(_mx);
     _sleeping = sleeping;
-    if (_sleeping) {
-        while (_q.empty()) {
-            _owner._endpoint.send(_q.front(), _ident);
-            _q.pop();
-        }
+    while (!_sleeping && !_q.empty()) {
+        _owner._endpoint.send(_q.front(), _ident);
+        _q.pop();
     }
-    _last_activity = std::chrono::system_clock::now();
+    if (!_sleeping) {
+        _last_activity = std::chrono::system_clock::now();
+    }
 }
 
 std::chrono::system_clock::time_point ZmqBridgeServer::PeerContext::get_last_activity() const {

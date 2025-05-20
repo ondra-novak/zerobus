@@ -43,6 +43,10 @@ public:
         stop_threads();
     }
 
+    std::stop_token get_stop_token() const {
+        return _stop_src.get_token();
+    }
+
 protected:
 
     struct ThreadReg { // @suppress("Miss copy constructor or assignment operator")

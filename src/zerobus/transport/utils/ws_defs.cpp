@@ -18,6 +18,23 @@ WsAcceptStr calculate_ws_accept(std::string_view key) {
     return encoded;
 }
 
+WsKeyStr generate_ws_key() {
+
+    WsKeyStr out;
+    std::random_device rd;
+    std::mt19937 gen(rd());
+    std::uniform_int_distribution<> dis(0, 61);
+
+    for (int i = 0; i < 21; ++i) {
+        int r = dis(gen);
+        char c = r < 10?'0'+r:r<36?'A'+r-10:'a'+r-36;
+        out[i] = c;
+    }
+    out[21] = 'A';
+    out[22] = '=';
+    out[23] = '=';
+    return out;
+}
 
 
 }

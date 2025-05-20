@@ -417,6 +417,12 @@ public:
     operator std::string_view() const {return {data(),size()};}
 };
 
+class WsKeyStr: public std::array<char, 24> {
+public:
+    using std::array<char, 24>::array;
+    operator std::string_view() const {return {data(),size()};}
+};
+
 
 ///calculate WebSocket Accept header value from key
 /**
@@ -425,6 +431,7 @@ public:
  */
 WsAcceptStr calculate_ws_accept(std::string_view key);
 
+WsKeyStr generate_ws_key();
 
 }
 
