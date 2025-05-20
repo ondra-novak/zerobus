@@ -63,16 +63,17 @@ bool LocalBus::subscribe(IListener *listener, ChannelList channelList){
 }
 void LocalBus::unsubscribe(IListener *listener, ChannelList channelList){
     Dispatcher::get_instance().finish(); //finish any pending action
-    {
+    utils::stack_alloc<PChannel>(channelList.size(),[&](PChannel *iter){
         std::lock_guard _(_mx);
         for (const auto &x: channelList) {
-           auto c = _public_channels.find_channel_for_broadcast(x, nullptr);
-           if (c && c->remove(listener)) {
-               _public_channels.erase(x);
+           auto c = _public_channels.find(x);
+           if (c != _public_channels.end() && c->second->remove(listener)) {
+               *iter++= std::move(c->second);
+               _public_channels.erase(c);
                _channels_no_change.clear(std::memory_order_relaxed);
            }
         }
-    }
+    });
     notify_channel_change();
 }
 
@@ -410,14 +411,23 @@ void LocalBus::close_group(IListener *owner, ChannelID group_name) {
 }
 
 bool LocalBus::add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) {
-    Dispatcher::get_instance().dispatch();
-    std::lock_guard lk(_mx);
+    Dispatcher &disp=Dispatcher::get_instance();
+    disp.finish();
+    std::unique_lock lk(_mx);
     IListener *trg = _private_channels.find(uid);
     if (!trg) trg = _routing_cache.find_path(uid);
     if (!trg) return false;
     auto c = _public_channels.create_channel(group_name, owner);
     if (!c) return false;
     c->add(trg);
+    disp.enqueue([&, lk = std::move(lk), once = false]()mutable{
+        if (once) {
+            return;
+        }
+        once = true;
+        trg->on_add_to_group(group_name, uid);
+    });
+    disp.dispatch();
     return true;
 }
 

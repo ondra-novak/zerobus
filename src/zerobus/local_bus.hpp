@@ -44,7 +44,7 @@ public:
 protected:
 
     using MyChannel = Channel<IListener *>;
-    using PChannel = std::shared_ptr<MyChannel>;
+    using PChannel = std::unique_ptr<MyChannel>;
 
 
     PublicChannelMap<IListener*> _public_channels;
