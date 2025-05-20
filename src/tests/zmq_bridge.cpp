@@ -19,12 +19,12 @@ void direct_bridge_simple() {
 
     std::promise<std::string> result;
 
-    auto sn = master.new_client([&](auto &c, const Message &msg, auto){
+    auto sn = master.new_client([&](auto &c, const Message &msg){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
         c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave.new_client([&](auto &, const Message &msg, auto){
+    auto cn= slave.new_client([&](auto &, const Message &msg){
         result.set_value(std::string(msg.get_content()));
     });
 
@@ -52,12 +52,12 @@ void two_hop_bridge() {
 
     std::promise<std::string> result;
 
-    auto sn = slave2.new_client([&](auto &c, const Message &msg, auto){
+    auto sn = slave2.new_client([&](auto &c, const Message &msg){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
         c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave1.new_client([&](auto &, const Message &msg, auto){
+    auto cn= slave1.new_client([&](auto &, const Message &msg){
         result.set_value(std::string(msg.get_content()));
     });
 

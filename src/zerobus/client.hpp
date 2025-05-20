@@ -219,29 +219,45 @@ protected:
 };
 
 
-template<std::invocable<Client &, const Message &, Type> Callback>
+
+
+
+
+template<ClientCallback Callback>
 class CallbackClient : public Client {
 public:
     CallbackClient(Bus bus, Callback &&cb)
         :Client(std::move(bus)), _cb(std::forward<Callback>(cb)) {}
 
     virtual void on_close_group(ChannelID group_name) noexcept override {
-        _cb(*this, Message({},group_name, {}, 0), Type::group_closed);
+        if constexpr(std::invocable<Callback, Client &, const GroupClosed &>) {
+            _cb(*this, static_cast<const GroupClosed &>(group_name));
+        }
     }
     virtual void on_no_route(ChannelID, ChannelID receiver, ConversationID cid) noexcept override{
-        _cb(*this, Message({}, receiver, {}, cid), Type::undelivered);
+        if constexpr(std::invocable<Callback, Client &, const Undelivered &>) {
+            _cb(*this, Undelivered{receiver, cid});
+        }
     }
     virtual void on_group_empty(ChannelID group_name) noexcept override{
-        _cb(*this, Message({}, group_name, {}, 0), Type::group_empty);
+        if constexpr(std::invocable<Callback, Client &, const GroupEmpty &>) {
+            _cb(*this, static_cast<const GroupEmpty &>(group_name));
+        }
     }
     virtual void on_message(const Message &message) noexcept override{
-        _cb(*this, message, Type::broadcast);
+        if constexpr(std::invocable<Callback, Client &, const ChannelMessage &>) {
+            _cb(*this, static_cast<const ChannelMessage &>(message));
+        }
     }
     virtual void on_direct_message(const Message &message) noexcept override{
-        _cb(*this, message, Type::direct);
+        if constexpr(std::invocable<Callback, Client &, const DirectMessage &>) {
+            _cb(*this, static_cast<const DirectMessage &>(message));
+        }
     }
-    virtual void on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept override{
-        _cb(*this, Message(target_id, group_name, {}, 0), Type::added_to_group);
+    virtual void on_add_to_group(ChannelID group_name, ChannelID) noexcept override{
+        if constexpr(std::invocable<Callback, Client &, const AddedToGroup &>) {
+            _cb(*this, static_cast<const AddedToGroup &>(group_name));
+        }
 
     }
 
@@ -250,15 +266,15 @@ protected:
 };
 
 
-template<std::invocable<Client &, const Message &, Type> Callback>
+template<ClientCallback Callback>
 auto Bus::new_client(Callback &&cb) {
     return CallbackClient(*this, std::forward<Callback>(cb));
 }
-template<std::invocable<Client &, const Message &, Type> Callback>
+template<ClientCallback Callback>
 std::unique_ptr<Client> Bus::new_client_unique(Callback &&cb) {
     return std::unique_ptr<CallbackClient<Callback> >(*this, std::forward<Callback>(cb));
 }
-template<std::invocable<Client &, const Message &, Type> Callback>
+template<ClientCallback Callback>
 std::shared_ptr<Client> Bus::new_client_shared(Callback &&cb) {
     return std::shared_ptr<CallbackClient<Callback> >(*this, std::forward<Callback>(cb));
 

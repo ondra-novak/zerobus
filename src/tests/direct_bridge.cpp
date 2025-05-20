@@ -26,17 +26,17 @@ void direct_bridge_simple() {
     DebugNullBridge br2(slave2, master, &debug_output, "SLAVE2", "MASTER");
     std::string result;
 
-    auto sn = slave1.new_client([&](auto &c, const Message &msg, auto){
+    auto sn = slave1.new_client([&](auto &c, const Message &msg){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
         c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto sn2 = slave1.new_client([&](auto &c, const Message &msg, auto){
+    auto sn2 = slave1.new_client([&](auto &c, const Message &msg){
         std::string s ( msg.get_content());
         s.push_back('x');
         c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave2.new_client([&](auto &c, const Message &msg, auto){
+    auto cn= slave2.new_client([&](auto &c, const Message &msg){
         if (msg.get_conversation() == 0) {
             c.send_message("addx", msg.get_content(), 1);
         } else {
@@ -63,12 +63,12 @@ void direct_bridge_cycle() {
 
     DebugNullBridge br1(slave1, master, &debug_output, "SLAVE1", "MASTER");
     DebugNullBridge br2(slave2, master, &debug_output, "SLAVE2", "MASTER");
-    auto sn = slave1.new_client([&](auto &c, const Message &msg, auto){
+    auto sn = slave1.new_client([&](auto &c, const Message &msg){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
         c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave2.new_client([&](auto &, const Message &msg, auto){
+    auto cn= slave2.new_client([&](auto &, const Message &msg){
         result=std::string(msg.get_content());
     });
 
@@ -94,12 +94,12 @@ void detect_cycle_test2() {
 
 
 
-    auto sn =slave1.new_client([&](auto &c, const Message &msg, auto){
+    auto sn =slave1.new_client([&](auto &c, const Message &msg){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
         c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave2.new_client([&](auto &, const Message &msg, auto){
+    auto cn= slave2.new_client([&](auto &, const Message &msg){
             result.set_value(std::string(msg.get_content()));
     });
 
@@ -128,17 +128,17 @@ void clear_path_test() {
 
     DebugNullBridge br1(slave1, master, &debug_output, "SLAVE1", "MASTER");
     DebugNullBridge br2(slave2, master, &debug_output, "SLAVE2", "MASTER");
-    auto sn = slave1.new_client([&](auto &c, const Message &msg, Type type){
-        if (type == Type::broadcast) {
+    auto sn = slave1.new_client(overloaded{
+        [&](auto &c, const ChannelMessage &msg){
             std::string s ( msg.get_content());
             rp = msg.get_sender();
             std::reverse(s.begin(), s.end());
             c.send_message(msg.get_sender(), s, msg.get_conversation());
-        } else if (type == Type::undelivered) {
+        },[&](auto &, const Undelivered &) {
             recvd_error = true;
         }
     });
-    auto cn= slave2.new_client([&](auto &, const Message &msg, auto){
+    auto cn= slave2.new_client([&](auto &, const Message &msg){
         result=std::string(msg.get_content());
     });
 
@@ -167,18 +167,14 @@ void groups() {
     std::string result;
 
 
-    auto sn = slave2.new_client([&](Client &c, const Message &msg, Type type){
-        if (type == Type::broadcast) {
+    auto sn = slave2.new_client([&](Client &c, const ChannelMessage &msg){
             c.add_to_group("test_group", msg.get_sender());
             std::string s ( msg.get_content());
             std::reverse(s.begin(), s.end());
             c.send_message("test_group", s);
-        }
     });
-    auto cn= slave1.new_client([&](Client &, const Message &msg, Type type){
-        if (type == Type::broadcast) {
+    auto cn= slave1.new_client([&](Client &, const ChannelMessage &msg){
             result=std::string(msg.get_content());
-        }
     });
 
     sn.subscribe("reverse");
@@ -199,18 +195,14 @@ void clear_path_group_test() {
 
     DebugNullBridge br1(slave1, master, &debug_output, "SLAVE1", "MASTER");
     DebugNullBridge br2(slave2, master, &debug_output, "SLAVE2", "MASTER");
-    auto sn = slave2.new_client([&](Client &c, const Message &msg, Type type){
-        if (type == Type::broadcast) {
+    auto sn = slave2.new_client([&](Client &c, const ChannelMessage &msg){
             std::string s ( msg.get_content());
             std::reverse(s.begin(), s.end());
             c.add_to_group("gr", msg.get_sender());
             c.send_message("gr", s, msg.get_conversation());
-        }
     });
-    auto cn= slave1.new_client([&](Client &, const Message &msg, Type type){
-        if (type == Type::broadcast) {
+    auto cn= slave1.new_client([&](Client &, const ChannelMessage &msg){
             result=std::string(msg.get_content());
-        }
     });
 
     sn.subscribe("reverse");

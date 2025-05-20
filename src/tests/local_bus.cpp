@@ -16,22 +16,22 @@ void testLocalBus() {
     constexpr std::string_view channel_name = "test";
     constexpr std::string_view message = "msg";
 
-    auto client1 = broker.new_client([&](auto &,const Message &msg, auto ){
+    auto client1 = broker.new_client([&](auto &,const Message &msg){
         CHECK_EQUAL(msg.get_channel(), channel_name);
         CHECK_EQUAL(msg.get_content(), message);
         r1 = true;
     });
-    auto client2 = broker.new_client([&](auto &,const Message &msg, auto ){
+    auto client2 = broker.new_client([&](auto &,const Message &msg){
         CHECK_EQUAL(msg.get_channel(), channel_name);
         CHECK_EQUAL(msg.get_content(), message);
         r2 = true;
     });
-    auto client3 = broker.new_client([&](auto &,const Message &msg, auto ){
+    auto client3 = broker.new_client([&](auto &,const Message &msg){
         CHECK_EQUAL(msg.get_channel(), channel_name);
         CHECK_EQUAL(msg.get_content(), message);
         r3 = true;
     });
-    auto clientd = broker.new_client([&](auto &client, const Message &msg, auto){
+    auto clientd = broker.new_client([&](auto &client, const Message &msg){
         CHECK_EQUAL(msg.get_channel(), channel_name);
         CHECK_EQUAL(msg.get_content(), message);
         rd = true;
@@ -62,12 +62,12 @@ void testReqRep() {
     auto broker = Bus::create();
     std::string result;
 
-    auto server = broker.new_client([&](auto &c, const Message &msg, auto){
+    auto server = broker.new_client([&](auto &c, const ChannelMessage &msg){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
         c.send_message(msg.get_sender(), s);
     });
-    auto client = broker.new_client([&](auto &, const Message &msg, auto){
+    auto client = broker.new_client([&](auto &, const DirectMessage &msg){
         result.append(std::string(msg.get_content()));
     });
 
@@ -82,17 +82,17 @@ void testReqRep2() {
     std::string result;
     bool failed_recv = false;
 
-    auto server = broker.new_client([&](auto &c, const Message &msg, auto type){
-        if (type == Type::broadcast) {
+    auto server = broker.new_client(overloaded{
+        [&](auto &c, const ChannelMessage &msg){
             std::string s ( msg.get_content());
             std::reverse(s.begin(), s.end());
             c.send_message(msg.get_sender(), s);
             c.send_message(msg.get_sender(), s);
-        } else if (type == Type::undelivered) {
+        },[&](auto &, const Undelivered &) {
             failed_recv = true;
         }
     });
-    auto client = broker.new_client([&](auto &c, const Message &msg, auto ){
+    auto client = broker.new_client([&](auto &c, const DirectMessage &msg){
         result.append(std::string(msg.get_content()));
         c.unsubscribe_all();
 
@@ -108,12 +108,12 @@ void testChannelForward() {
     auto broker = Bus::create();
     std::string result;
 
-    auto node1 = broker.new_client([&](auto &c, const Message &msg, auto ){
+    auto node1 = broker.new_client([&](auto &c, const Message &msg){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
         c.send_message("c2", s);
     });
-    auto node2 = broker.new_client([&](auto &, const Message &msg, auto ){
+    auto node2 = broker.new_client([&](auto &, const Message &msg){
         result = std::string(msg.get_content());
     });
 
@@ -132,16 +132,16 @@ void testDialog() {
     int pos = 0;
 
 
-    auto server = broker.new_client([&](auto &c, const Message &msg, auto type){
-        if (type == Type::direct) {
+    auto server = broker.new_client(overloaded{
+        [&](auto &c, const DirectMessage &msg){
             std::string s ( msg.get_content());
             std::reverse(s.begin(), s.end());
             c.send_message(msg.get_sender(), s);
-        } else {
+        },[&](auto &c, const ChannelMessage &msg){
             c.send_message(msg.get_sender(), "");
         }
     });
-    auto client = broker.new_client([&](auto &c, const Message &msg, auto ){
+    auto client = broker.new_client([&](auto &c, const Message &msg){
         if (msg.get_channel() == "start_test") {
             pos = -1;
             c.send_message("reverse", "");

@@ -11,6 +11,10 @@
 
 namespace zerobus {
 
+class LocalBus;
+
+class Client;
+
 using SerialID = std::string;
 
 struct SerialStatus { // @suppress("Miss copy constructor or assignment operator")
@@ -31,47 +35,61 @@ enum class UpdateSerialStatus {
     cycle
 };
 
-enum class Type {
-    /// Message was broadcasted to a channel or group
-    /**
-     * The "channel" property contains the name of the channel or group
-     * where the message was sent.
-     */
-    broadcast = 0,
-
-    /// Direct (private) message
-    /**
-     * This message was sent directly to the recipient using their
-     * unicast address.
-     */
-    direct,
-
-    /// Notification that a previous message was not delivered
-    /**
-     * The message contains the "channel" and "conversation_id" of the
-     * failed message to help identify it.
-     */
-    undelivered,
-
-    /// Notification that the recipient has been added to a group
-    /**
-     * The "channel" property contains the name of the group.
-     */
-    added_to_group,
-
-    /// Notification that a group the recipient was a member of has been closed
-    /**
-     * The "channel" property contains the name of the group.
-     */
-    group_closed,
-
-    /// Notification that a group has become empty (last member left)
-    /**
-     * The "channel" property contains the name of the group.
-     * Sent to the group owner when the last member leaves.
-     */
-    group_empty
+/// Notification that a previous message was not delivered
+/**
+ * The message contains the "channel" and "conversation_id" of the
+ * failed message to help identify it.
+ */
+struct Undelivered {
+    ChannelID target;
+    ConversationID cid;
 };
+/// Notification that the recipient has been added to a group
+/**
+ * The value contains the name of the group.
+ */
+class AddedToGroup: public ChannelID {};
+/// Notification that a group the recipient was a member of has been closed
+/**
+ * * The value contains the name of the group.
+ */
+class GroupClosed: public ChannelID {};
+/// Notification that a group has become empty (last member left)
+/**
+ * * The value contains the name of the group.
+ * Sent to the group owner when the last member leaves.
+ */
+class GroupEmpty: public ChannelID {};
+/// Message was broadcasted to a channel or group
+/**
+ * The "channel" property contains the name of the channel or group
+ * where the message was sent.
+ *
+ *
+ */
+class ChannelMessage: public Message {};
+/// Direct (private) message
+/**
+ * This message was sent directly to the recipient using their
+ * unicast address. The channel property contains this unicast
+ * address
+ *
+ * @note Messages sent to unicast address announced by
+ * the function `announce()` are delivered as ChannelMesage
+ */
+class DirectMessage: public Message {};
+
+template<typename Fn>
+concept ClientCallback =   std::is_invocable_v<Fn, Client &, const Undelivered &>
+                        || std::is_invocable_v<Fn, Client &, const ChannelMessage &>
+                        || std::is_invocable_v<Fn, Client &, const DirectMessage &>
+                        || std::is_invocable_v<Fn, Client &, const GroupEmpty &>
+                        || std::is_invocable_v<Fn, Client &, const GroupClosed &>
+                        || std::is_invocable_v<Fn, Client &, const AddedToGroup &>;
+
+
+
+
 
 enum class ChannelType {
     ///indicates, that name is not used for any channel
@@ -93,9 +111,6 @@ enum class ChannelType {
     group,
 };
 
-class LocalBus;
-
-class Client;
 
 class Bus {
 public:
@@ -467,14 +482,15 @@ public:
 
     ///Defer execution of the function outside of recursive context
     /**
-     * The function is executed
+     * The lambda function is executed ...
      *
-     * 1) if called inside of recursive context belongs to Bus, then
-     * it is defered and called when recursive context is about to finish
+     * 1) if the function is called inside of recursive context
+     * the execution of the lambda is defered to end of current
+     * recursive context
      *
-     * 2) otherwise it is called immediately
+     * 2) it is executed immediately otherwise.
      *
-     * @param fn function to call. Note the function must be movable
+     * @param fn function to execute. Note the function must be movable
      *
      */
     template<typename Fn>
@@ -493,41 +509,31 @@ public:
      * @param cb a callback function. It receives
      *
      * - reference to client's instance (this client)
-     * - received message
-     * - type of message
+     * - received message.
+     *
+     * The type of the second argument directly determines the message type.
+     * If a function is to respond to different types of messages,
+     * it must receive them all using "const auto &",
+     * or use the `overloaded` template
+     *
+     * List of types
+     *
+     * - const Message & - receives both DirectMessage and ChannelMessage
+     * - const DirectMessage &
+     * - const ChannelMessage &
+     * - const AddedToGroup &
+     * - const GroupClosed
+     * - const GroupEmpty &
+     * - const Undelivered &
      *
      * @return instance of new client
      * @note requires #include <client.hpp>
      */
-    template<std::invocable<Client &, const Message &, Type> Callback>
+    template<ClientCallback Callback>
     auto new_client(Callback &&cb);
-
-    ///Creates new client as unique_pointer
-    /**
-     * @param cb a callback function. It receives
-     *
-     * - reference to client's instance (this client)
-     * - received message
-     * - type of message
-     *
-     * @return unique pointer instance of new client
-     * @note requires #include <client.hpp>
-     */
-    template<std::invocable<Client &, const Message &, Type> Callback>
+    template<ClientCallback Callback>
     std::unique_ptr<Client> new_client_unique(Callback &&cb);
-
-    ///Creates new client as unique_pointer
-    /**
-     * @param cb a callback function. It receives
-     *
-     * - reference to client's instance (this client)
-     * - received message
-     * - type of message
-     *
-     * @return shared pointer instance of new client
-     * @note requires #include <client.hpp>
-     */
-    template<std::invocable<Client &, const Message &, Type> Callback>
+    template<ClientCallback Callback>
     std::shared_ptr<Client> new_client_shared(Callback &&cb);
 
 
