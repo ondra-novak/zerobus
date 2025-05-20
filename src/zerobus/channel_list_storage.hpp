@@ -66,19 +66,6 @@ namespace zerobus {
          */
         ChannelList get_stored() const;
 
-        ChannelList make_ordered();
-
-        ///Generates difference between two lists
-        /**
-         * operation return b-a;
-         *
-         * @param a ordered list
-         * @param b ordered list
-         * @return list of items presented in b but not a.
-         */
-        ChannelList set_difference(const ChannelList &a, const ChannelList &b);
-
-        ChannelList set_union(const ChannelList &a, const ChannelList &b);
 
 
     protected:
@@ -99,8 +86,6 @@ namespace zerobus {
         std::unique_ptr<ChannelData, ChannelDataDeleter> _data;
         void copy_strings();
         void alloc_items(std::size_t count, std::size_t chars);
-        template<typename Op>
-        ChannelList set_op(const ChannelList &a, const ChannelList &b, Op &&op);
 
 };
 

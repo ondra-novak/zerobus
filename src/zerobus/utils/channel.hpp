@@ -57,7 +57,7 @@ public:
         while (pos < cnt) {
             auto &p = _listeners[pos];
             ++pos;
-            if (p != sender) p->on_message(msg, false);
+            if (p != sender) p->on_message(msg);
         }
     }
 

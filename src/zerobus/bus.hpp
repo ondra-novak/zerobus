@@ -2,7 +2,9 @@
 #include "listener.hpp"
 #include "channel_list_storage.hpp"
 #include "channel_notify_listener.hpp"
+#include "utils/recursive_dispatcher.hpp"
 
+#include <chrono>
 #include <memory>
 #include <span>
 #include <vector>
@@ -11,15 +13,21 @@ namespace zerobus {
 
 using SerialID = std::string;
 
-struct SerialStatus {
+struct SerialStatus { // @suppress("Miss copy constructor or assignment operator")
+    ///contains current serial
     SerialID serial;
+    ///contains pointer of sender who is responsible to set this serial
     const IListener *source = nullptr;
 };
 
 enum class UpdateSerialStatus {
+    ///serial has been changed (adapted)
     changed,
+    ///serial hasn't been changed (this node won)
     not_changed,
+    ///serial is same
     same,
+    ///serial is same, cycle detected
     cycle
 };
 
@@ -63,6 +71,26 @@ enum class Type {
      * Sent to the group owner when the last member leaves.
      */
     group_empty
+};
+
+enum class ChannelType {
+    ///indicates, that name is not used for any channel
+    not_used,
+    ///indicates, that name specifies public channel
+    /**
+     * Multicast channel: anybody can subscribe, anybody can send message
+     */
+    multicast_channel,
+    ///indicates, that name specifies local private channel
+    /**
+     * Private channel: one subscribed, anybody can send message
+     */
+    private_channel,
+    ///indicates, that name specifies a group
+    /**
+     * Group: owner can post and add members
+     */
+    group,
 };
 
 class LocalBus;
@@ -273,7 +301,7 @@ public:
      * @param prefix A string prefix to prepend to the generated channel name.
      * @return A unique channel name with the specified prefix.
      */
-    std::string get_random_channel_name(std::string_view prefix) const;
+    static std::string get_random_channel_name(std::string_view prefix);
 
     ///Determines whether id is a channel
     /**
@@ -281,6 +309,14 @@ public:
      * @retval flase id either doesn't exist or is not channel. Groups are not included
      */
     bool is_channel(ChannelID id) const;
+
+
+    ///Determines type of channel
+    /**
+     * @param id name of channel
+     * @return see ChannelType
+     */
+    ChannelType get_channel_type(ChannelID id) const;
 
     /// Retrieves the list of channels subscribed by a specific listener.
     /**
@@ -429,13 +465,87 @@ public:
     UpdateSerialStatus update_serial(IListener *lsn, const SerialID &serialId);
 
 
+    ///Defer execution of the function outside of recursive context
+    /**
+     * The function is executed
+     *
+     * 1) if called inside of recursive context belongs to Bus, then
+     * it is defered and called when recursive context is about to finish
+     *
+     * 2) otherwise it is called immediately
+     *
+     * @param fn function to call. Note the function must be movable
+     *
+     */
+    template<typename Fn>
+    static void defer(Fn &&fn) {
+        auto &disp = utils::ThreadRecursiveDispatcher::get_instance();
+        disp.enqueue([fn = std::move(fn), once = false]()mutable{
+            if (once) return;
+            once = true;
+            fn();
+        });
+        disp.dispatch_if_needed();
+    }
+
+    ///Creates new client
+    /**
+     * @param cb a callback function. It receives
+     *
+     * - reference to client's instance (this client)
+     * - received message
+     * - type of message
+     *
+     * @return instance of new client
+     * @note requires #include <client.hpp>
+     */
     template<std::invocable<Client &, const Message &, Type> Callback>
     auto new_client(Callback &&cb);
+
+    ///Creates new client as unique_pointer
+    /**
+     * @param cb a callback function. It receives
+     *
+     * - reference to client's instance (this client)
+     * - received message
+     * - type of message
+     *
+     * @return unique pointer instance of new client
+     * @note requires #include <client.hpp>
+     */
     template<std::invocable<Client &, const Message &, Type> Callback>
     std::unique_ptr<Client> new_client_unique(Callback &&cb);
+
+    ///Creates new client as unique_pointer
+    /**
+     * @param cb a callback function. It receives
+     *
+     * - reference to client's instance (this client)
+     * - received message
+     * - type of message
+     *
+     * @return shared pointer instance of new client
+     * @note requires #include <client.hpp>
+     */
     template<std::invocable<Client &, const Message &, Type> Callback>
     std::shared_ptr<Client> new_client_shared(Callback &&cb);
 
+
+    /// Sets the time-to-live (TTL) for routing table entries.
+    /**
+     * Whenever a message passes through the node, routing information about
+     * the return path is stored in the routing table. This function sets the
+     * duration for which such information is retained.
+     *
+     * If no activity is observed from the source node within the given time,
+     * the corresponding routing entry is removed. To maintain a valid entry
+     * for a longer period, the source node should periodically generate activity,
+     * such as sending ping messages or invoking the `announce()` function.
+     *
+     * @param timeout Duration to keep routing information active.
+     *                Default is 300 seconds.
+     */
+    void set_ttl(std::chrono::seconds ttl);
 
 protected:
     std::shared_ptr<LocalBus> _ptr;

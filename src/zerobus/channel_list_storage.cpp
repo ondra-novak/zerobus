@@ -109,35 +109,5 @@ void ChannelListStorage::ChannelDataDeleter::operator()(ChannelData *ptr) {
     ::operator delete(ptr);
 }
 
-ChannelList ChannelListStorage::make_ordered() {
-    if (_data) {
-        ChannelID *items = _data->items();
-        std::sort(items, items + _data->count);
-    }
-    return get_stored();
-}
-
-template<typename Op>
-ChannelList ChannelListStorage::set_op(const ChannelList &a, const ChannelList &b, Op &&op) {
-    std::size_t count = 0;
-    std::size_t chars = 0;
-    op(a.begin(), a.end(), b.begin(), b.end(), CountingOutputIter(count, chars));
-    if (count == 0) {
-        if (_data) _data->clear();
-        return {};
-    }
-    alloc_items(count, chars);
-    op(a.begin(),  a.end(), b.begin(),  b.end(), _data->items());
-    copy_strings();
-    return get_stored();
-}
-ChannelList ChannelListStorage::set_difference(const ChannelList &a, const ChannelList &b) {
-    return set_op(a,b,[](auto ... args){return std::set_difference(args...);});
-}
-
-ChannelList ChannelListStorage::set_union(const ChannelList &a, const ChannelList &b) {
-    return set_op(a,b,[](auto ... args){return std::set_union(args...);});
-
-}
 
 }

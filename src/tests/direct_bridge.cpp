@@ -115,7 +115,7 @@ void detect_cycle_test2() {
     b3.reset();
 }
 
-#if 0
+
 
 void clear_path_test() {
     std::cout << __FUNCTION__ << std::endl;
@@ -124,16 +124,21 @@ void clear_path_test() {
     auto slave2 = Bus::create();
     std::string result;
     std::string rp;
+    bool recvd_error = false;
 
-    VerboseBridge br1(slave1, master);
-    VerboseBridge br2(slave2, master);
-    auto sn = ClientCallback(slave1, [&](AbstractClient &c, const Message &msg, bool){
-        std::string s ( msg.get_content());
-        rp = msg.get_sender();
-        std::reverse(s.begin(), s.end());
-        c.send_message(msg.get_sender(), s, msg.get_conversation());
+    DebugNullBridge br1(slave1, master, &debug_output, "SLAVE1", "MASTER");
+    DebugNullBridge br2(slave2, master, &debug_output, "SLAVE2", "MASTER");
+    auto sn = slave1.new_client([&](auto &c, const Message &msg, Type type){
+        if (type == Type::broadcast) {
+            std::string s ( msg.get_content());
+            rp = msg.get_sender();
+            std::reverse(s.begin(), s.end());
+            c.send_message(msg.get_sender(), s, msg.get_conversation());
+        } else if (type == Type::undelivered) {
+            recvd_error = true;
+        }
     });
-    auto cn= ClientCallback(slave2, [&](AbstractClient &, const Message &msg, bool){
+    auto cn= slave2.new_client([&](auto &, const Message &msg, auto){
         result=std::string(msg.get_content());
     });
 
@@ -141,12 +146,14 @@ void clear_path_test() {
     cn.send_message("reverse", "ahoj svete");
     CHECK_EQUAL(result, "etevs joha");
     cn.unsubscribe_all();
-    bool r1 = sn.send_message(rp, "aaa"); //still should return true (as we know detecting not delivering)
+    bool r1 = sn.send_message(rp, "aaa"); //still should return true
+    CHECK(recvd_error);
     bool r2 = sn.send_message(rp, "bbb"); //should return false
     CHECK(r1);
     CHECK(!r2);
 }
 
+#if 0
 class TestFlt: public Filter {
 public:
     virtual bool on_outgoing(ChannelID id) override{
@@ -348,8 +355,8 @@ int main() {
     direct_bridge_simple();
     direct_bridge_cycle();
     detect_cycle_test2();
-#if 0
     clear_path_test();
+#if 0
     filter_channels();
     groups();
     clear_path_group_test();

@@ -202,16 +202,15 @@ public:
 
     ///Announces the presence of the specified listener on the network.
     /**
-     * @param chan  (Optional) Name of a private channel. Used if the listener acts as a bridge and forwards the request to another part of the network.
-     * Repeatedly call this function with a period of at least 1 minute.
-     * This function ensures that all nodes in the network will eventually know the shortest path
-     * to the specified listener, even in the presence of cycles in the network topology.
+     * @param chan Name of unicast channel. This channel becomes available
+     * for all nodes and any message send to this channel is forwarded
+     * to this listener. Note that messages are sent as broadcast
      *
      * @note To maintain up-to-date routing information, this function should be invoked periodically,
      *       with an interval of at least one minute between calls.
      */
-    void announce(ConversationID reqid) {
-        return _bus.announce(this, reqid);
+    void announce(ChannelID name, ConversationID reqid) {
+        return _bus.announce(this, reqid, name);
     }
 
 protected:
@@ -229,14 +228,17 @@ public:
     virtual void on_close_group(ChannelID group_name) noexcept override {
         _cb(*this, Message({},group_name, {}, 0), Type::group_closed);
     }
-    virtual void on_no_route(ChannelID sender, ChannelID receiver, ConversationID cid) noexcept override{
-        _cb(*this, Message(sender, receiver, {}, cid), Type::undelivered);
+    virtual void on_no_route(ChannelID, ChannelID receiver, ConversationID cid) noexcept override{
+        _cb(*this, Message({}, receiver, {}, cid), Type::undelivered);
     }
     virtual void on_group_empty(ChannelID group_name) noexcept override{
         _cb(*this, Message({}, group_name, {}, 0), Type::group_empty);
     }
-    virtual void on_message(const Message &message, bool pm) noexcept override{
-        _cb(*this, message, pm?Type::direct:Type::broadcast);
+    virtual void on_message(const Message &message) noexcept override{
+        _cb(*this, message, Type::broadcast);
+    }
+    virtual void on_direct_message(const Message &message) noexcept override{
+        _cb(*this, message, Type::direct);
     }
     virtual void on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept override{
         _cb(*this, Message(target_id, group_name, {}, 0), Type::added_to_group);

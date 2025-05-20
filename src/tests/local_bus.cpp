@@ -1,5 +1,6 @@
 #include "check.h"
 
+
 #include <zerobus/channel_notify_listener.hpp>
 #include <zerobus/client.hpp>
 
@@ -79,12 +80,17 @@ void testReqRep2() {
 
     auto broker = Bus::create();
     std::string result;
+    bool failed_recv = false;
 
-    auto server = broker.new_client([&](auto &c, const Message &msg, auto ){
-        std::string s ( msg.get_content());
-        std::reverse(s.begin(), s.end());
-        c.send_message(msg.get_sender(), s);
-        c.send_message(msg.get_sender(), s);
+    auto server = broker.new_client([&](auto &c, const Message &msg, auto type){
+        if (type == Type::broadcast) {
+            std::string s ( msg.get_content());
+            std::reverse(s.begin(), s.end());
+            c.send_message(msg.get_sender(), s);
+            c.send_message(msg.get_sender(), s);
+        } else if (type == Type::undelivered) {
+            failed_recv = true;
+        }
     });
     auto client = broker.new_client([&](auto &c, const Message &msg, auto ){
         result.append(std::string(msg.get_content()));
@@ -95,6 +101,7 @@ void testReqRep2() {
     server.subscribe("reverse");
     client.send_message( "reverse", "ahoj svete");
     CHECK_EQUAL(result, "etevs joha");
+    CHECK(failed_recv);
 }
 
 void testChannelForward() {

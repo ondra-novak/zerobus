@@ -1,5 +1,6 @@
 #include "bus.hpp"
 #include "local_bus.hpp"
+#include "utils/random_channel_gen.hpp"
 
 namespace zerobus {
 
@@ -49,8 +50,10 @@ bool Bus::forward_message(IListener *sender, const Message &msg) {
     return _ptr->forward_message(sender, msg);
 }
 
-std::string Bus::get_random_channel_name(std::string_view prefix) const {
-    return _ptr->get_random_channel_name(prefix);
+std::string Bus::get_random_channel_name(std::string_view prefix)  {
+    std::string ret(prefix);
+    generate_mailbox_id(std::back_inserter(ret));
+    return ret;
 }
 
 bool Bus::is_channel(ChannelID id) const {
@@ -89,5 +92,12 @@ UpdateSerialStatus Bus::update_serial(IListener *lsn, const SerialID &serialId) 
     return _ptr->update_serial(lsn, serialId);
 }
 
+ChannelType Bus::get_channel_type(ChannelID id) const {
+    return _ptr->get_channel_type(id);
+}
+
+void Bus::set_ttl(std::chrono::seconds timeout) {
+    _ptr->set_ttl(timeout);
+}
 
 }

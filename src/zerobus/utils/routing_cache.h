@@ -14,8 +14,8 @@ template<typename Bridge>
 class RoutingCache {
 public:
 
-    void set_timeout(std::chrono::system_clock::duration timeout) {
-        _record_timeout = timeout;
+    void set_ttl(std::chrono::system_clock::duration timeout) {
+        _record_ttl = timeout;
     }
 
     bool register_path(std::string_view target, Bridge bridge, std::optional<std::uint32_t> rqid = std::nullopt) {
@@ -26,12 +26,12 @@ public:
                 f->second->_rqid = *rqid;
             }
             f->second->_bridge = bridge;
-            f->second->_expiration = std::chrono::system_clock::now()+_record_timeout;
+            f->second->_expiration = std::chrono::system_clock::now()+_record_ttl;
         } else {
             auto p = std::make_unique<Record>();
             p->_bridge = bridge;
             if (rqid) f->second->_rqid = *rqid;
-            p->_expiration = std::chrono::system_clock::now()+_record_timeout;
+            p->_expiration = std::chrono::system_clock::now()+_record_ttl;
             p->_target.append(target);
             _cache_map.emplace(std::string_view(p->_target), std::move(p));
         }
@@ -70,7 +70,7 @@ protected:
 
     std::unordered_map<std::string_view, std::unique_ptr<Record> > _cache_map;
 
-    std::chrono::system_clock::duration _record_timeout = std::chrono::seconds(120);
+    std::chrono::system_clock::duration _record_ttl = std::chrono::seconds(300);
 
 };
 

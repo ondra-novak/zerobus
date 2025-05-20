@@ -15,70 +15,70 @@ public:
     virtual void set_target(IProtocol *target) override {
         _target = target;
     }
-    virtual void on_message(const bmsg::EraseChannels &msg) noexcept override {
+    virtual void receive(const bmsg::EraseChannels &msg) noexcept override {
         auto t = _prefix;
-        t.append("UNSUB ");
+        t.append("DEL ");
         channel_list(t, msg.lst);
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
     }
-    virtual void on_message(const bmsg::GroupEmpty &msg) noexcept override {
+    virtual void receive(const bmsg::GroupEmpty &msg) noexcept override {
         auto t = _prefix;
         t.append("GROUP_IS_EMPTY ").append(msg.group);
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
     }
-    virtual void on_message(const bmsg::AddChannels &msg) noexcept override {
+    virtual void receive(const bmsg::AddChannels &msg) noexcept override {
         auto t = _prefix;
-        t.append("SUB ");
+        t.append("ADD ");
         channel_list(t, msg.lst);
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
 
     }
-    virtual void on_message(const bmsg::Announce &msg) noexcept override {
+    virtual void receive(const bmsg::Announce &msg) noexcept override {
         auto t = _prefix;
         t.append("ANNOUNCE ( ");
         t.append(std::to_string(msg.request_id));
         t.append(") ").append(msg.sender);
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
 
     }
 
-    virtual void on_message(const bmsg::ChannelReset &msg) noexcept override {
+    virtual void receive(const bmsg::ChannelReset &msg) noexcept override {
         auto t = _prefix;
         t.append("RESET");
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
 
     }
-    virtual void on_message(const bmsg::NewSession &msg) noexcept override {
+    virtual void receive(const bmsg::NewSession &msg) noexcept override {
         auto t = _prefix;
         t.append("SESSION ");
         t.append(std::to_string(msg.version));
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
     }
-    virtual void on_message(const bmsg::AddToGroup &msg) noexcept override {
+    virtual void receive(const bmsg::AddToGroup &msg) noexcept override {
         auto t = _prefix;
         t.append("GROUP_ADD ");
         t.append(msg.group);
         t.append(" <= ");
         t.append(msg.target);
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
 
     }
-    virtual void on_message(const bmsg::CloseGroup &msg) noexcept override {
+    virtual void receive(const bmsg::CloseGroup &msg) noexcept override {
         auto t = _prefix;
         t.append("GROUP_CLOSE ");
         t.append(msg.group);
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
 
     }
-    virtual void on_message(const Message &msg) noexcept override {
+    virtual void receive(const Message &msg) noexcept override {
         auto t = _prefix;
         t.append("MESSAGE  ");
         t.append(msg.get_sender());
@@ -89,10 +89,10 @@ public:
         t.append(") ");;
         t.append(msg.get_content());
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
 
     }
-    virtual void on_message(const bmsg::NoRoute &msg) noexcept override {
+    virtual void receive(const bmsg::NoRoute &msg) noexcept override {
         auto t = _prefix;
         t.append("NO_ROUTE ");
         t.append(msg.sender);
@@ -102,15 +102,15 @@ public:
         t.append(std::to_string(msg.cid));
         t.append(") ");;
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
 
     }
-    virtual void on_message(const bmsg::UpdateSerial &msg) noexcept override {
+    virtual void receive(const bmsg::UpdateSerial &msg) noexcept override {
         auto t = _prefix;
-        t.append("UPDATE SERIAL ");
+        t.append("SERIAL ");
         t.append(msg.serial);
         _output(t);
-        _target->on_message(msg);
+        _target->receive(msg);
 
     }
 

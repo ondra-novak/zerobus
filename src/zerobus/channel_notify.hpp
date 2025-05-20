@@ -51,7 +51,7 @@ protected:
         }
     }
 
-    virtual void on_announce(zerobus::ConversationID,
+    virtual void on_announce(IListener *, zerobus::ConversationID,
                                 zerobus::ChannelID) noexcept override {}
 
 };

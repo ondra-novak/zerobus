@@ -8,7 +8,7 @@ namespace zerobus {
 
 using Dispatcher = utils::ThreadRecursiveDispatcher;
 
-LocalBus::LocalBus():_node_serial(LocalBus::get_random_channel_name({})) {
+LocalBus::LocalBus():_node_serial(Bus::get_random_channel_name({})) {
 _cur_serial.serial = _node_serial;
 }
 
@@ -49,6 +49,7 @@ bool LocalBus::subscribe(IListener *listener, ChannelList channelList){
     {
         std::lock_guard _(_mx);
         for (const auto &chan: channelList) {
+            if (chan.empty()) result = false;
             auto c = _public_channels.create_channel(chan, nullptr);
             if (c == nullptr) result = false;
             else {
@@ -75,13 +76,22 @@ void LocalBus::unsubscribe(IListener *listener, ChannelList channelList){
     notify_channel_change();
 }
 
-
-
-
 bool LocalBus::is_valid_target_lk(const ChannelID &chan, IListener *sender) {
     return _private_channels.find(chan) != nullptr
             || _routing_cache.find_path(chan) != nullptr
             || _public_channels.find_channel_for_broadcast(chan, sender) != nullptr;
+}
+
+ChannelType LocalBus::get_channel_type(ChannelID id) const {
+    std::shared_lock _(_mx);
+    if (_private_channels.find(id) != nullptr) return ChannelType::private_channel;
+    auto iter = _public_channels.find(id);
+    if (iter != _public_channels.end()) {
+        if (iter->second->get_owner()) return ChannelType::group;
+        else return ChannelType::multicast_channel;
+    }
+    if (_routing_cache.find_path(id)) return ChannelType::private_channel;
+    return ChannelType::not_used;
 }
 
 std::string LocalBus::add_mailbox(zerobus::IListener *listener) {
@@ -97,20 +107,31 @@ bool LocalBus::send_message(zerobus::IListener *listener,
         zerobus::ChannelID channel, zerobus::MessageContent content,
         zerobus::ConversationID cid) {
 
-    //finish any pending task now (may held locks)
-    Dispatcher::get_instance().finish();
-    //we need just shared lock
-    std::shared_lock lk(_mx);
-
-    if (!is_valid_target_lk(channel, listener)) return false;
-
-    std::string_view sender = _private_channels.find(listener);
-    lk.unlock();
     std::string id;
-    if (listener && sender.empty()) {
-        sender = id = add_mailbox(listener);
+    if (channel.empty()) return false;
+
+    Dispatcher &disp = Dispatcher::get_instance();
+    //acquire lock
+    std::shared_lock lk(_mx); //_mx is recursive
+    //test whether channel is valid target - reject if not
+    if (!is_valid_target_lk(channel, listener)) return false;
+    //search for sender
+    std::string_view sender = _private_channels.find(listener);
+    //sender is not created yet
+    if (sender.empty()) {
+        //we need temporary unlock this lock
+        lk.unlock();
+        //and finish any currently pending operation (to release locks)
+        disp.finish();
+        //add new mailbox (exclusive lock)
+        sender = id = add_mailbox(listener);;
+        //reacquire the lock
+        lk.lock();
     }
-    do_forward_message(nullptr, {sender, channel, content, cid});
+
+    lk.unlock();
+    //continue by forwarding message
+    do_forward_message(listener, {sender, channel, content, cid});
     return true;
 
 }
@@ -145,79 +166,116 @@ void LocalBus::announce(IListener *listener, ConversationID req_id, ChannelID ch
             c = chan;
         }
     }
-    notify_monitors(&IChannelNotifyListener::on_announce, req_id, std::string_view(c));
+    notify_monitors(&IChannelNotifyListener::on_announce, listener, req_id, std::string_view(c));
 }
 
 void LocalBus::do_forward_message(IListener *sender, const Message &msg) {
-    Channel<IListener *> *c = nullptr;
+    //contains pointer selected channel
+    MyChannel *c = nullptr;
+    //contains pointer to broadcasting position variable
     std::size_t *pos = nullptr;
+    //dispatcher
     Dispatcher &disp = Dispatcher::get_instance();
+    //this is true, if we are dispatching
     bool indisp = disp.is_dispatching();
+    //if we are dispatching, message is allocated on heap, otherwise it is on stack
     auto msg_deleter = [indisp](const Message *msg) {
-        if (indisp) delete msg;
+        if (indisp) {
+            msg->~Message();
+            ::operator delete(const_cast<Message *>(msg));
+        }
     };
+    //construct special unique pointer
     using MPtr = std::unique_ptr<const Message, decltype(msg_deleter)>;
+    //this pointer releases memory when message is on heap,
+    //but not when it is on stack
     MPtr msg_ptr(nullptr, msg_deleter);
 
+    //if we dispatching, copy message to heap
     if (indisp) {
-        auto channel = msg.get_channel();
-        auto content = msg.get_content();
-        auto sender = msg.get_sender();
-        std::size_t needsz = sizeof(Message)+channel.size()+content.size()+sender.size();
+        //determine how many bytes we need
+        std::size_t needsz = sizeof(Message)+msg.size_bytes();
+        //allocate them
         void *b = ::operator new(needsz);
-        Message *mcpy = static_cast<Message *>(b);
+        //retrieve pointer to data buffer
         auto iter = static_cast<char *>(b)+sizeof(Message);
-        auto cpy_str = [&iter](auto &cont) {
-            auto end = std::copy(cont.begin(), cont.end(), iter);
-            cont = {iter, end};
-            iter = end;
-        };
-        cpy_str(sender);cpy_str(channel);cpy_str(content);
-        std::construct_at(mcpy, sender, channel, content, msg.get_conversation());
+        //construct copy with data
+        Message *mcpy = new(b) Message(msg.copy(iter));
+        //store pointer
         msg_ptr.reset(mcpy);
     } else {
+        //store pointer to stack
         msg_ptr.reset(&msg);
     }
 
+    //during the first call, we copy the pointer
+    //to the space of the callback's stack.
+    //This pointer is later initialized to point on the variable
+    //this protects message to not be destroyed even if
+    //the disp.finish() is callled - so the handler can use it futhrer
     MPtr *mptr_lnk = nullptr;
 
-
-    disp.enqueue([this, c, pos, sender, mptr = std::move(msg_ptr), mptr_lnk,
+    //construct dispatch task
+    disp.enqueue([this, c, pos, sender, mptr_lnk,
+                  mptr = std::move(msg_ptr),
                   lk = std::shared_lock(_mx, std::defer_lock)]()mutable{
 
+        //if we already broadcasting
         if (c) {
+            //finish broadcasting
             c->broadcast(sender, *(*mptr_lnk), *pos);
+        //test first call
         } else if (!lk.owns_lock()){
-            bool pm = true;
+            //copy pointer to stack
             auto msg_ptr = std::move(mptr);
+            //link this pointer
             mptr_lnk = &msg_ptr;
+            //retrieve channel
             auto chan = msg_ptr->get_channel();
+            //lock the mutex (shared)
             lk.lock();
+            //is it private channel?
             auto trg = _private_channels.find(chan);
-            if (!trg) {
-                trg = _routing_cache.find_path(chan);
-                pm = false;
+            if (trg) {
+                //send as private message
+                trg->on_direct_message(*msg_ptr);
+                return;
             }
-            if (!trg) {
-                std::size_t stpos = 0;  //create space on broadcast status
+            //is it channel or group?
+            c = _public_channels.find_channel_for_broadcast(chan, sender);
+            if (c) {
+                //create broadcast status
+                std::size_t stpos = 0;
+                //set pointer to this status
                 pos = &stpos;
-                c = _public_channels.find_channel_for_broadcast(chan, sender);
-                if (c) c->broadcast(sender, *msg_ptr, *pos);
-            } else {
-                trg->on_message(*msg_ptr, pm);
+                //perform broadcast
+                c->broadcast(sender, *msg_ptr, *pos);
+                return;
             }
+            //target is external?
+            trg = _routing_cache.find_path(chan);
+            if (trg) {
+                //otherwise forward the message to the bridge
+                trg->on_message(*msg_ptr);
+                return;
+            }
+            //message cannot be delivered - send it back
+            trg = _private_channels.find(msg_ptr->sender);
+            //if there is such targe
+            if (trg) {
+                trg->on_no_route(msg_ptr->sender, chan, msg_ptr->cid);
+                return;
+            }
+            //discard message
         }
     });
-    disp.dispatch_if_needed();
-
-
-
+    //start dispatching if needed
+    if (!indisp) disp.dispatch();
 }
 
 
 
 bool LocalBus::is_channel(ChannelID id) const {
-    Dispatcher::get_instance().finish();
     std::shared_lock lk(_mx);
     auto c = _public_channels.find_channel_for_broadcast(id, nullptr);
     return static_cast<bool>(c);
@@ -227,7 +285,9 @@ void LocalBus::clear_path(ChannelID sender, ChannelID receiver, ConversationID c
     Dispatcher &disp = Dispatcher::get_instance();
     disp.finish();    //finish pending, unlock all locks
     std::unique_lock lk(_mx);
-    IListener *lsn = _routing_cache.find_path(sender);
+
+    IListener *lsn = _private_channels.find(sender);
+    if (!lsn) lsn = _routing_cache.find_path(sender);
     _routing_cache.clear_path(receiver);
     if (lsn) {
         disp.enqueue([lsn, &sender, &receiver, cid, lk = std::move(lk)]() mutable{
@@ -242,7 +302,6 @@ void LocalBus::clear_path(ChannelID sender, ChannelID receiver, ConversationID c
 
 template<std::invocable<const Channel<IListener *> &> Pred>
 ChannelList LocalBus::get_channels(ChannelListStorage &storage, Pred &&pred) const{
-    Dispatcher::get_instance().finish();
     std::shared_lock lk(_mx);
     std::size_t need_cnt = 0;
     for (const auto &[chan, ptr]: _public_channels) {
@@ -379,12 +438,6 @@ void LocalBus::channel_notify(IChannelNotifyListener *mon, bool enable) {
      });
  }
 
- std::string LocalBus::get_random_channel_name(std::string_view prefix) const {
-     std::string id(prefix);
-     generate_mailbox_id(std::back_inserter(id));
-     return id;
-
- }
 
  UpdateSerialStatus LocalBus::update_serial(IListener *lsn, const SerialID &serialId) {
     std::unique_lock lk(_serial_mx);
@@ -415,6 +468,10 @@ SerialStatus LocalBus::get_serial() const {
 
 Bus Bus::create() {
     return Bus(std::make_shared<LocalBus>());
+}
+
+void LocalBus::set_ttl(std::chrono::seconds timeout) {
+    _routing_cache.set_ttl(timeout);
 }
 
 }

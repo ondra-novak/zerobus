@@ -17,18 +17,17 @@ public:
     IListener(const IListener &) = delete;
     IListener &operator=(const IListener &) = delete;
 
-    ///Message received
+    ///Message received from channel or group
     /**
      * @param message contains message
-     * @param pm this is set to true, if message was sent to private mailbox.
-     * If this is set false, the message was sent to public channel. If listener
-     * is bridge, this flag is true, when message is send to registered
-     * return path.
-     *
-     *
-     * @note if pm is set, channel name of the message is undefined
      */
-    virtual void on_message(const Message &message, bool pm) noexcept= 0;
+    virtual void on_message(const Message &message) noexcept= 0;
+
+    ///Message received as direct message
+    /**
+     * @param message contains message
+     */
+    virtual void on_direct_message(const Message &message) noexcept= 0;
 
 
     ///Sent when there is no route to destination

@@ -74,17 +74,17 @@ public:
 
 
 
-    virtual void on_message(const Message &) noexcept = 0;
-    virtual void on_message(const bmsg::AddChannels &) noexcept = 0;
-    virtual void on_message(const bmsg::EraseChannels &) noexcept = 0;
-    virtual void on_message(const bmsg::UpdateSerial &) noexcept = 0;
-    virtual void on_message(const bmsg::ChannelReset &) noexcept = 0;
-    virtual void on_message(const bmsg::NewSession &) noexcept = 0;
-    virtual void on_message(const bmsg::NoRoute &) noexcept = 0;
-    virtual void on_message(const bmsg::CloseGroup &) noexcept = 0;
-    virtual void on_message(const bmsg::GroupEmpty &) noexcept = 0;
-    virtual void on_message(const bmsg::AddToGroup &) noexcept = 0;
-    virtual void on_message(const bmsg::Announce &) noexcept = 0;
+    virtual void receive(const Message &) noexcept = 0;
+    virtual void receive(const bmsg::AddChannels &) noexcept = 0;
+    virtual void receive(const bmsg::EraseChannels &) noexcept = 0;
+    virtual void receive(const bmsg::UpdateSerial &) noexcept = 0;
+    virtual void receive(const bmsg::ChannelReset &) noexcept = 0;
+    virtual void receive(const bmsg::NewSession &) noexcept = 0;
+    virtual void receive(const bmsg::NoRoute &) noexcept = 0;
+    virtual void receive(const bmsg::CloseGroup &) noexcept = 0;
+    virtual void receive(const bmsg::GroupEmpty &) noexcept = 0;
+    virtual void receive(const bmsg::AddToGroup &) noexcept = 0;
+    virtual void receive(const bmsg::Announce &) noexcept = 0;
     virtual ~IProtocol() = default;
 };
 

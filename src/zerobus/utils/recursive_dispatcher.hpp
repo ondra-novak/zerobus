@@ -4,14 +4,6 @@
 
 namespace zerobus {
 
-
-
-
-
-
-
-
-
 namespace utils {
 
 /**

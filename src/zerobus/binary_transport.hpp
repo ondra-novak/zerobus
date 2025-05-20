@@ -306,7 +306,7 @@ public:
             if constexpr(!std::is_null_pointer_v<MsgType>)  {
                 ret = 1;
                 Serialize<MsgType>::from_binary([&](auto &&msg){
-                    _target->on_message(msg);
+                    _target->receive(msg);
                 }, from, to);
             }
         });
@@ -334,17 +334,17 @@ protected:
     }
 
     virtual void set_target(IProtocol *target) override {_target = target;}
-    virtual void on_message(const Message &msg) noexcept override{send(msg);}
-    virtual void on_message(const bmsg::EraseChannels &msg) noexcept override {send(msg);}
-    virtual void on_message(const bmsg::GroupEmpty &msg) noexcept override{send(msg);}
-    virtual void on_message(const bmsg::AddChannels &msg) noexcept override{send(msg);}
-    virtual void on_message(const bmsg::ChannelReset &msg) noexcept override{send(msg);}
-    virtual void on_message(const bmsg::NewSession &msg) noexcept override{send(msg);}
-    virtual void on_message(const bmsg::AddToGroup &msg) noexcept override{send(msg);}
-    virtual void on_message(const bmsg::CloseGroup &msg) noexcept override{send(msg);}
-    virtual void on_message(const bmsg::NoRoute &msg) noexcept override{send(msg);}
-    virtual void on_message(const bmsg::UpdateSerial &msg) noexcept override{send(msg);}
-    virtual void on_message(const bmsg::Announce &msg) noexcept override{send(msg);}
+    virtual void receive(const Message &msg) noexcept override{send(msg);}
+    virtual void receive(const bmsg::EraseChannels &msg) noexcept override {send(msg);}
+    virtual void receive(const bmsg::GroupEmpty &msg) noexcept override{send(msg);}
+    virtual void receive(const bmsg::AddChannels &msg) noexcept override{send(msg);}
+    virtual void receive(const bmsg::ChannelReset &msg) noexcept override{send(msg);}
+    virtual void receive(const bmsg::NewSession &msg) noexcept override{send(msg);}
+    virtual void receive(const bmsg::AddToGroup &msg) noexcept override{send(msg);}
+    virtual void receive(const bmsg::CloseGroup &msg) noexcept override{send(msg);}
+    virtual void receive(const bmsg::NoRoute &msg) noexcept override{send(msg);}
+    virtual void receive(const bmsg::UpdateSerial &msg) noexcept override{send(msg);}
+    virtual void receive(const bmsg::Announce &msg) noexcept override{send(msg);}
 
 
 };

@@ -1,5 +1,6 @@
 #include "bridge.hpp"
 
+#include <algorithm>
 namespace zerobus {
 
 Bridge::Bridge(Bus bus, std::unique_ptr<AbstractTransport> transport, BridgeOpMode mode)
@@ -77,7 +78,7 @@ void Bridge::on_channels_update_lk(bool force) noexcept {
     if (srl.serial != _serial_id || force) {
         _serial_id = srl.serial;
         if (srl.source != this) {
-            _target->on_message(bmsg::UpdateSerial{_serial_id});
+            _target->receive(bmsg::UpdateSerial{_serial_id});
         }
     }
 
@@ -89,8 +90,8 @@ void Bridge::on_channels_update_lk(bool force) noexcept {
     //if cycle detected, do not propagate channels to other side
     if (_cycle_status.load(std::memory_order_relaxed) == false
             && (mode == BridgeOpMode::bidirectional|| mode == BridgeOpMode::inbound)) {
-        _bus.get_public_channels(this,_tmp_list);
-        new_lst = _tmp_list.make_ordered();
+        new_lst = _bus.get_public_channels(this,_tmp_list);
+        std::sort(new_lst.begin(), new_lst.end());
     }
 
     ChannelList old_lst;
@@ -98,59 +99,66 @@ void Bridge::on_channels_update_lk(bool force) noexcept {
         old_lst = _cur_list.get_stored();
     }
 
-    ChannelList added = _diff_list.set_difference(new_lst, old_lst);
-    if (!added.empty()) {
-        _target->on_message(bmsg::AddChannels{added});
+    _diff_list.clear();
+    std::set_difference(new_lst.begin(), new_lst.end(),
+                        old_lst.begin(),old_lst.end(), std::back_inserter(_diff_list));
+
+    if (!_diff_list.empty()) {
+        _target->receive(bmsg::AddChannels{ChannelList(_diff_list)});
     }
-    ChannelList removed = _diff_list.set_difference(old_lst, new_lst);
-    if (!removed.empty()) {
-        _target->on_message(bmsg::EraseChannels{removed});
+    _diff_list.clear();
+    std::set_difference(old_lst.begin(), old_lst.end(),
+                        new_lst.begin(),new_lst.end(), std::back_inserter(_diff_list));
+    if (!_diff_list.empty()) {
+        _target->receive(bmsg::EraseChannels{ChannelList(_diff_list)});
     }
+
     std::swap(_cur_list, _tmp_list);
 }
 
 void Bridge::on_close_group(ChannelID group_name) noexcept {
-    _target->on_message(bmsg::CloseGroup{group_name});
+    _target->receive(bmsg::CloseGroup{group_name});
 }
 
 void Bridge::on_no_route(ChannelID sender, ChannelID receiver, ConversationID cid) noexcept{
-    _target->on_message(bmsg::NoRoute{sender, receiver,cid});
+    _target->receive(bmsg::NoRoute{sender, receiver,cid});
 }
 
 void Bridge::on_group_empty(ChannelID group_name) noexcept{
-    _target->on_message(bmsg::GroupEmpty{group_name});
+    _target->receive(bmsg::GroupEmpty{group_name});
 }
 
 void Bridge::on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept{
-    _target->on_message(bmsg::AddToGroup{group_name, target_id});
+    _target->receive(bmsg::AddToGroup{group_name, target_id});
 }
 
-void Bridge::on_message(const Message &message, bool pm) noexcept{
-    if (!pm) {
-        _target->on_message(message);
-    }
-    else _bus.clear_path(message.get_sender(), message.get_channel(), message.get_conversation());
+void Bridge::on_message(const Message &message) noexcept{
+    _target->receive(message);
 }
 
-void Bridge::on_message(const Message &msg) noexcept{
+void Bridge::on_direct_message(const Message &message) noexcept {
+    _bus.clear_path(message.get_sender(), message.get_channel(), message.get_conversation());
+}
+
+void Bridge::receive(const Message &msg) noexcept{
     if (!_bus.forward_message(this, msg)) {
         _bus.clear_path(msg.get_sender(), msg.get_channel(), msg.get_conversation());
     }
 }
 
 
-void Bridge::on_message(const bmsg::AddChannels &msg) noexcept {
+void Bridge::receive(const bmsg::AddChannels &msg) noexcept {
     if (_cycle_status.load(std::memory_order_relaxed)) {
         return;
     }
     _bus.subscribe(this, msg.lst);
 }
 
-void Bridge::on_message(const bmsg::EraseChannels &msg) noexcept {
+void Bridge::receive(const bmsg::EraseChannels &msg) noexcept {
     _bus.unsubscribe(this, msg.lst);
 }
 
-void Bridge::on_message(const bmsg::UpdateSerial &msg) noexcept {
+void Bridge::receive(const bmsg::UpdateSerial &msg) noexcept {
     auto st = _bus.update_serial(this,SerialID(msg.serial));
     bool is_cycle = false;
     bool make_reply = false;
@@ -169,51 +177,53 @@ void Bridge::on_message(const bmsg::UpdateSerial &msg) noexcept {
         make_reply = false;
     }
     if (make_reply) {
-        _target->on_message(bmsg::UpdateSerial{_bus.get_serial().serial});
+        _target->receive(bmsg::UpdateSerial{_bus.get_serial().serial});
     }
 
 }
 
-void Bridge::on_message(const bmsg::ChannelReset &) noexcept {
+void Bridge::receive(const bmsg::ChannelReset &) noexcept {
     //request to need reset channels
     _lk_flag.fetch_or(chan_need_reset, std::memory_order_relaxed);
     //perform update
     on_channels_update();
 }
 
-void Bridge::on_message(const bmsg::NewSession &) noexcept {
-    on_message(bmsg::ChannelReset{});
+void Bridge::receive(const bmsg::NewSession &) noexcept {
+    receive(bmsg::ChannelReset{});
 }
 
-void Bridge::on_message(const bmsg::NoRoute &msg) noexcept {
+void Bridge::receive(const bmsg::NoRoute &msg) noexcept {
     _bus.clear_path(msg.sender, msg.receiver, msg.cid);
 }
 
-void Bridge::on_message(const bmsg::CloseGroup &msg) noexcept {
+void Bridge::receive(const bmsg::CloseGroup &msg) noexcept {
     _bus.close_group(this, msg.group);
 }
 
-void Bridge::on_message(const bmsg::GroupEmpty &msg) noexcept {
+void Bridge::receive(const bmsg::GroupEmpty &msg) noexcept {
     _bus.unsubscribe(this, msg.group);
 }
 
-void Bridge::on_message(const bmsg::AddToGroup &msg) noexcept {
+void Bridge::receive(const bmsg::AddToGroup &msg) noexcept {
     _bus.add_to_group(this, msg.group, msg.target);
 }
 
 void Bridge::send_reset() {
-    _target->on_message(bmsg::ChannelReset{});
+    _target->receive(bmsg::ChannelReset{});
 }
 
 void Bridge::send_new_session(unsigned long version) {
-    _target->on_message(bmsg::NewSession{version});
+    _target->receive(bmsg::NewSession{version});
 }
 
-void Bridge::on_message(const bmsg::Announce&a) noexcept {
+void Bridge::receive(const bmsg::Announce&a) noexcept {
     _bus.announce(this, a.request_id, a.sender);
 }
 
-void Bridge::on_announce(ConversationID reqid, ChannelID chan) noexcept {
-    _target->on_message(bmsg::Announce{chan, reqid});
+void Bridge::on_announce(IListener *sender, ConversationID reqid, ChannelID chan) noexcept {
+    if (sender != this) {
+        _target->receive(bmsg::Announce{chan, reqid});
+    }
 }
 }

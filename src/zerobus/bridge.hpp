@@ -119,39 +119,40 @@ protected:
 
     //IChannelNotifyListener
     virtual void on_channels_update() noexcept override;
-    virtual void on_announce(ConversationID reqid, ChannelID chan) noexcept override;
+    virtual void on_announce(IListener *sender, ConversationID reqid, ChannelID chan) noexcept override;
 
     //IListener
     virtual void on_close_group(ChannelID group_name) noexcept override;
     virtual void on_no_route(ChannelID sender,ChannelID receiver, ConversationID cid) noexcept override;
     virtual void on_group_empty(ChannelID group_name) noexcept override;
     virtual void on_add_to_group(ChannelID group_name,ChannelID target_id) noexcept override;
-    virtual void on_message(const Message &message, bool pm) noexcept override;
+    virtual void on_message(const Message &message) noexcept override;
+    virtual void on_direct_message(const Message &message) noexcept override;
 
     //IProtocol
-    virtual void on_message(const Message &msg) noexcept override;
-    virtual void on_message(const bmsg::AddChannels &msg) noexcept override;
-    virtual void on_message(const bmsg::EraseChannels &msg) noexcept override;
-    virtual void on_message(const bmsg::UpdateSerial &msg) noexcept override;
-    virtual void on_message(const bmsg::ChannelReset &msg) noexcept override;
-    virtual void on_message(const bmsg::NewSession &msg) noexcept override;
-    virtual void on_message(const bmsg::NoRoute &msg) noexcept override;
-    virtual void on_message(const bmsg::CloseGroup &msg) noexcept override;
-    virtual void on_message(const bmsg::GroupEmpty &msg) noexcept override;
-    virtual void on_message(const bmsg::AddToGroup &msg) noexcept override;
-    virtual void on_message(const bmsg::Announce &) noexcept override;
+    virtual void receive(const Message &msg) noexcept override;
+    virtual void receive(const bmsg::AddChannels &msg) noexcept override;
+    virtual void receive(const bmsg::EraseChannels &msg) noexcept override;
+    virtual void receive(const bmsg::UpdateSerial &msg) noexcept override;
+    virtual void receive(const bmsg::ChannelReset &msg) noexcept override;
+    virtual void receive(const bmsg::NewSession &msg) noexcept override;
+    virtual void receive(const bmsg::NoRoute &msg) noexcept override;
+    virtual void receive(const bmsg::CloseGroup &msg) noexcept override;
+    virtual void receive(const bmsg::GroupEmpty &msg) noexcept override;
+    virtual void receive(const bmsg::AddToGroup &msg) noexcept override;
+    virtual void receive(const bmsg::Announce &) noexcept override;
 
 
 protected:
 
     Bus _bus;
-    std::unique_ptr<AbstractTransport> _transport;
-    IProtocol *_target;
+    std::unique_ptr<AbstractTransport> _transport = {};
+    IProtocol *_target = nullptr;
 
     std::string _serial_id;
     ChannelListStorage _cur_list;
     ChannelListStorage _tmp_list;
-    ChannelListStorage _diff_list;
+    std::vector<ChannelID> _diff_list;
     unsigned long _version = 0;
     std::atomic<unsigned char> _lk_flag = {0};
     std::atomic<bool> _cycle_status = {false};
