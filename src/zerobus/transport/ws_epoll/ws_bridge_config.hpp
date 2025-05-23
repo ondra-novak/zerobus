@@ -1,8 +1,14 @@
 #pragma once
 
+
 #include "../../bridge.hpp"
 
+#include <filesystem>
+#include <functional>
+#include <optional>
+
 namespace zerobus {
+
 
 
 struct WsBridgeConfig {
@@ -10,10 +16,11 @@ struct WsBridgeConfig {
     BridgeOpMode mode = BridgeOpMode::bidirectional;
     ///Specifies count of threads created for this bridge
     unsigned int threads = 1;
-    ///Specifies how much seconds inactivity causes removing of dead context
-    /** For client this specifies value set for server, so it also
-     * defines period of pings
-     */
-    unsigned int housekeeping_sec = 300;
+    ///allows to specify filter for messages
+    MsgFilterFactory filter = {};
+    ///path must match GET request
+    std::string_view endpoint_path = "/";
+    ///specifies www document root, for non ws requests (optional)
+    std::optional<std::filesystem::path> document_root;
 };
 }

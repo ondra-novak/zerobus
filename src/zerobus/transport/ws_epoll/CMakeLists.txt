@@ -1,10 +1,7 @@
 
 
 add_library(zerobus_epoll 
-        compile.cpp 
-        ws_endpoint.cpp
+        ws_bridge.cpp 
         ../utils/ws_defs.cpp 
-        ws_bridge_server.cpp
-#        ws_bridge_client.cpp
         )
 

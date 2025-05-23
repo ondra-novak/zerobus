@@ -115,6 +115,9 @@ public:
      */
     void refresh(bool force);
 
+    ///Disconnect from the bus (unsubscribe all)
+    void disconnect();
+
 protected:
 
     //IChannelNotifyListener

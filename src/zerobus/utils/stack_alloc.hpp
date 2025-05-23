@@ -35,7 +35,6 @@ inline auto stack_reserve_dynamic(std::size_t sz, Callback &&cb) {
     return cb(_ptr.get());
 }
 
-
 template<std::invocable<void *> Callback>
 inline auto stack_reserve(std::size_t sz, Callback &&cb) {
     if (sz > stack_reserve_max) {
@@ -70,29 +69,31 @@ auto stack_alloc(std::size_t count, Callback &&callback, Args && ... construct_a
     return stack_reserve(count * sizeof(T), [&](void *ptr){
         std::size_t idx = 0;
         T *new_data = reinterpret_cast<T *>(ptr);
-        try {
-            while (idx < count) {
-                std::construct_at(new_data+idx, std::forward<Args>(construct_args)...);
-                ++idx;
+        if constexpr(sizeof...(Args) != 0 || !std::is_trivially_default_constructible_v<T>) {
+            try {
+                while (idx < count) {
+                    std::construct_at(new_data+idx, std::forward<Args>(construct_args)...);
+                    ++idx;
+                }
+            } catch (...) {
+                while (idx > 0) {
+                    --idx;
+                    std::destroy_at(new_data+idx);
+                }
+                throw;
             }
-        } catch (...) {
-            while (idx > 0) {
-                --idx;
-                std::destroy_at(new_data+idx);
-            }
-            throw;
+        }
+        if constexpr(!std::is_trivially_destructible_v<T>) {
+
+            auto deleter = [count](T *r)  {std::destroy_n(r, count);};
+
+            std::unique_ptr<T, decltype(deleter)> hld(new_data, std::move(deleter));
+
+            return callback(new_data);
+        } else {
+            return callback(new_data);
         }
 
-        auto deleter = [count](T *r) mutable {
-            while (count) {
-                --count;
-                std::destroy_at(r+count);
-            }
-        };
-
-        std::unique_ptr<T, decltype(deleter)> hld(new_data, std::move(deleter));
-
-        return callback(new_data);
     });
 };
 

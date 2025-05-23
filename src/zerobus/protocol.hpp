@@ -1,8 +1,7 @@
 #pragma once
 
 #include "message.hpp"
-#include <variant>
-#include <tuple>
+#include <functional>
 
 namespace zerobus {
 
@@ -98,6 +97,8 @@ public:
     virtual void set_target(IProtocol *target) = 0;
 
 };
+
+using MsgFilterFactory = std::function<std::unique_ptr<AbstractTransport>(std::unique_ptr<AbstractTransport>)>;
 
 
 

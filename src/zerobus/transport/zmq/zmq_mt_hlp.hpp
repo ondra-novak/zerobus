@@ -19,12 +19,12 @@ public:
         if (!_thread_selector.load()) {
             if (threads != 1) ++threads;
         }
-        _mthr.add_threads(threads, [this](std::stop_token tkn, const bool &kf){
+        _mthr.add_threads(threads, [this](std::stop_token tkn){
             if (_thread_selector.exchange(true)) {
                 _have_slaves.store(true);
-                worker_slave(tkn, kf);
+                worker_slave(tkn);
             } else {
-                worker_master(tkn, kf);
+                worker_master(tkn);
             }
         });
     }
@@ -42,7 +42,7 @@ protected:
     utils::MultiThread _mthr;
 
 
-    void worker_slave(std::stop_token tkn, const bool &kf) {
+    void worker_slave(std::stop_token tkn) {
         std::stop_callback __(tkn, [this]{
             _qcond.notify_all();
         });
@@ -55,13 +55,13 @@ protected:
                 _rcv_queue.pop();
                 lk.unlock();
                 _control.on_message(m.first.to_string_view(), m.second.to_string_view());
-                if (kf) return;
+                if (tkn.stop_requested()) return;
                 lk.lock();
             }
         }
     }
 
-    void worker_master(std::stop_token tkn, const bool &kf) {
+    void worker_master(std::stop_token tkn) {
         std::stop_callback __(tkn, [this]{
             _endpoint.stop();
         });
@@ -78,18 +78,18 @@ protected:
                         _qcond.notify_one();
                     } else {
                         _control.on_message(msg.data.to_string_view(), msg.ident.to_string_view());
-                        if (kf) return;
+                        if (tkn.stop_requested()) return;
                     }
                     break;
                 case ZmqEndpoint::RecStatus::timeout:
                     tm = _control.on_timeout();
-                    if (kf) return;
+                    if (tkn.stop_requested()) return;
                     break;
                 case ZmqEndpoint::RecStatus::stop_signal:
                     return;
                 case ZmqEndpoint::RecStatus::error_send:
                     _control.on_error(msg.ident.to_string_view());
-                    if (kf) return;
+                    if (tkn.stop_requested()) return;
                     break;
             }
         }

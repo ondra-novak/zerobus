@@ -226,4 +226,8 @@ void Bridge::on_announce(IListener *sender, ConversationID reqid, ChannelID chan
         _target->receive(bmsg::Announce{chan, reqid});
     }
 }
+
+void Bridge::disconnect() {
+    _bus.unsubscribe_all(this);
+}
 }
