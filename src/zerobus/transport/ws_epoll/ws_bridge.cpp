@@ -10,6 +10,7 @@
 #include <sys/timerfd.h>
 #include <unistd.h>
 #include <netdb.h>
+#include <string>
 namespace zerobus {
 
 

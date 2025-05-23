@@ -213,6 +213,31 @@ public:
         return _bus.announce(this, reqid, name);
     }
 
+
+    ///Send serialized param pack
+    /**
+     * @param name name of channel
+     * @param cid conversation id
+     * @param args parameter pack. Basic types are only supported such a
+     *   - integral types
+     *   - trivial copyable types
+     *   - strings / string_views
+     *   - tuple
+     *   - variant
+     *   - optional
+     *   - containers, such a vector, map, unordered_map, etc..
+     *   - custom types must define Serializer<T> template specialization
+     * @return
+     */
+    template<typename ... Args>
+    bool send_pack(ChannelID name, ConversationID cid, const Args & ... args) {
+        std::string buff;
+        auto iter = std::back_inserter(buff);
+        auto dummy = [](const auto &...) {};
+        dummy(iter = bin::Serializer<Args>::srl(args)...);
+        return send_message(name, buff, cid);
+    }
+
 protected:
     Bus _bus;
     ChannelListStorage _storage;

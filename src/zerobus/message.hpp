@@ -1,4 +1,5 @@
 #pragma once
+#include "utils/serializer.hpp"
 #include <cstdint>
 #include <memory>
 #include <string_view>
@@ -86,6 +87,14 @@ public:
         data.resize(size_bytes());
         return copy(data.data());
 
+    }
+
+    ///Unpack binary message into type T
+    template<typename T>
+    T unpack() const {
+        auto iter = content.data();
+        auto end = iter+content.size();
+        return bin::Serializer<T>::desrl(iter, end);
     }
 
     ChannelID get_sender() const {return sender;}
