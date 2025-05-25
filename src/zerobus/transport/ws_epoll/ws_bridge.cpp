@@ -210,6 +210,7 @@ bool WsBridge::Peer::flush_buffer() {
 
 bool WsBridge::Peer::send_message(std::unique_lock<std::mutex> &lk,
         const ws::Message &msg, Importance imp) {
+
     uint8_t masking[4];
     uint8_t *masking_ptr = { };
     if (_mask_rnd) {
@@ -219,6 +220,7 @@ bool WsBridge::Peer::send_message(std::unique_lock<std::mutex> &lk,
             masking_ptr[i] = static_cast<std::uint8_t>(dist(*_mask_rnd));
         }
     }
+
     ws::build(msg, [&](char c) {_output_buffer.push_back(c);}, masking_ptr);
 
     auto tm = std::chrono::system_clock::now()
@@ -282,6 +284,7 @@ bool WsBridge::Peer::on_epoll_in() noexcept {
         } else {
             ok = _ws_parser.push_data(data);
         }
+        _kl = 0;
         while (ok) {
             auto msg = _ws_parser.get_message();
             switch (msg.type) {
@@ -291,13 +294,13 @@ bool WsBridge::Peer::on_epoll_in() noexcept {
                 case ws::Type::connClose: {
                     std::unique_lock lk(_send_mx);
                     send_message(lk, { "", ws::Type::connClose,
-                            ws::Base::closeNormal }, Importance::high);
+                            ws::Base::closeNormal }, Importance::normal);
                     return conn_error();
                 }
                 case ws::Type::ping: {
                     std::unique_lock lk(_send_mx);
                     send_message(lk, { msg.payload, ws::Type::pong },
-                            Importance::high);
+                            Importance::normal);
                     break;
                 }
                 default:
@@ -534,6 +537,7 @@ WsBridge::WsBridge(Bus bus, WsBridgeConfig config)
         :_bus(std::move(bus))
         ,_shared(std::make_shared<Shared>(std::move(config))) {
     _shared->_epoll.add(_shared->_wakeup.get_fd(), EPOLLIN, 0);
+
 }
 
 WsBridge::~WsBridge() {
@@ -578,9 +582,17 @@ std::pair<int, int> WsBridge::Server::get_epoll_info() const {
 }
 
 void WsBridge::worker(std::stop_token stp) {
+    auto tm = _next_hk.exchange(std::chrono::system_clock::time_point::min());
     while (!stp.stop_requested()) {
-        auto wt = _shared->_epoll.wait();
-        if (!wt || wt->ident == 0)
+        auto wt = _shared->_epoll.wait(tm);
+        if (!wt) {
+            if (_shared->_config.send_timeout_ms) {
+                housekeeping();
+                tm = std::chrono::system_clock::now()+std::chrono::seconds(_shared->_config.keep_alive_interval_sec);
+            }
+            continue;
+        }
+        if (wt->ident == 0)
             continue;
         PHandleData hdata;
         {
@@ -634,4 +646,28 @@ std::unique_ptr<AbstractTransport> WsBridge::create_transport(Peer *peer,
     }
 }
 
+void WsBridge::housekeeping() {
+    std::vector<PHandleData> to_destroy ={};
+    std::lock_guard _(_mx);
+    for (auto iter = _handles.begin(); iter !=_handles.end();) {
+        std::visit([&](auto &v){
+            if (!v->keep_alive()) {
+                to_destroy.push_back(std::move(iter->_value));
+                iter = _handles.erase(iter);
+            } else {
+                ++iter;
+            }
+        },iter->_value);
+    }
 }
+
+bool WsBridge::Peer::keep_alive() {
+    std::unique_lock lk(_send_mx);
+    if (_mode == PeerOpMode::reconnect) return true;
+    if (_kl == 2) return false;
+    if (++_kl == 2) send_message(lk, ws::Message("",ws::Type::ping), Importance::normal);
+    return true;
+}
+
+}
+

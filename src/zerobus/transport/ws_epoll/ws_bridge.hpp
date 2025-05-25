@@ -93,14 +93,14 @@ protected:
 
         void connect(std::string address);
 
-        bool send_ws_request();
+        bool keep_alive();
 
-
-        bool conn_error();
-        bool flush_buffer();
     protected:
         bool on_epoll_in() noexcept;
         bool on_epoll_out() noexcept;
+        bool conn_error();
+        bool flush_buffer();
+        bool send_ws_request();
 
         PShared _shared;
         Socket _sock = {};
@@ -117,6 +117,7 @@ protected:
         std::optional<std::default_random_engine> _mask_rnd;
         BinaryTransport<OutputTypeProxy<Peer *> > *_bridge_parser;
         std::atomic_flag _in_handler = {false};
+        int _kl = 0;
     };
 
     class Server { // @suppress("Miss copy constructor or assignment operator")
@@ -125,6 +126,7 @@ protected:
         Server(WsBridge &owner, int socket);
         int on_epoll_event(int event);
         std::pair<int, int> get_epoll_info() const;
+        bool keep_alive() {return true;}
 
     protected:
 
@@ -144,6 +146,7 @@ protected:
     PShared _shared;
 
     HandleHashMap<PHandleData> _handles;
+    std::atomic<std::chrono::system_clock::time_point> _next_hk = {};
 
     utils::MultiThread _pool;
 
@@ -152,7 +155,7 @@ protected:
     void create_peer(int socket);
     void ensure_threads_running();
     void worker(std::stop_token stp);
-
+    void housekeeping();
 
 
 };
