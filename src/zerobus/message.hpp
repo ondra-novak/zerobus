@@ -1,22 +1,15 @@
 #pragma once
+#include "types.hpp"
+#include "importance.hpp"
 #include "utils/serializer.hpp"
-#include <cstdint>
 #include <memory>
 #include <string_view>
-#include <span>
 #include <vector>
 
 namespace zerobus {
 
 
-using ChannelID = std::string_view;
-///messages are string
-using MessageContent = std::string_view;
-///conversation id - using number is enough
-using ConversationID = std::uint32_t;
 
-using ChannelList = std::span<ChannelID>;
-using ChannelListMutable = std::span<ChannelID>;
 
 
 class Message {
@@ -38,8 +31,13 @@ public:
      *  request is copied to the response, allowing individual requests and responses to be matched.
      */
     ConversationID cid;
-
-
+    ///Specifies message importance
+    /**
+     * This enum controls how message is carried over bridges with
+     * finite transfer speed and latency. It helps to controls the flow
+     * of the trafic
+     */
+    Importance importance;
 
     ///Returns size in bytes of underlying data.
     /**
@@ -70,6 +68,7 @@ public:
         ret.sender = copydata(sender);
         ret.channel = copydata(channel);
         ret.content = copydata(content);
+        ret.importance = importance;
         ret.cid = cid;
         return ret;
     }

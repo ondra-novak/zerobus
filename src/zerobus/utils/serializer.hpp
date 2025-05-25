@@ -16,15 +16,20 @@ namespace zerobus {
 namespace bin {
 
 
+template<typename Struct>
+concept HasMemberList = std::is_class_v<Struct> && (requires(Struct s) {
+    {members(s, [](auto &...){})};
+});
+
 template<typename T>
-concept CompressedUnsigned = std::is_unsigned_v<T> && sizeof(T) > 1;
+concept CompressedUnsigned = std::is_unsigned_v<T> && sizeof(T) > 1 ;
 
 template<typename T>
 concept CompressedSigned = std::is_signed_v<T> && sizeof(T) > 1;
 
 template<typename T>
 concept UnsupportedTriviallyCopyable = std::is_trivially_copyable_v<T>
-        && !CompressedUnsigned<T> && !CompressedSigned<T>;
+        && !CompressedUnsigned<T> && !CompressedSigned<T> && !HasMemberList<T>;
 
 
 template<typename T>
@@ -50,6 +55,32 @@ concept Container = requires(const Cont& c) {
 
 template<typename T>
 struct Serializer;
+
+template<HasMemberList T>
+struct Serializer<T> {
+    template<typename Iter>
+    static Iter srl(const T &obj, Iter iter) {
+        T &mobj = const_cast<T &>(obj);
+        auto do_srl = [](auto &mb, Iter &iter) {
+            iter =  Serializer<std::decay_t<decltype(mb)> >::srl(
+                                const_cast<const std::decay_t<decltype(mb)> &>(mb), iter);
+        };
+
+        members(obj, [&](auto &...mbs) {
+            (do_srl(mbs),...);
+        });
+        return iter;
+    }
+
+    template<typename Iter>
+    static T desrl(Iter &iter, Iter end) {
+        T res;
+        members(res, [&](auto &...mbs) {
+            ((mbs = Serializer<std::decay_t<decltype(mbs)> >::desrl(iter, end)),...);
+        });
+        return res;
+    }
+};
 
 
 template<UnsupportedTriviallyCopyable T>
@@ -90,6 +121,25 @@ struct Serializer<T> {
     template<typename Iter>
     static Iter srl(const T &v, Iter iter) {
         using U = std::make_unsigned_t<T>;
+        U u = v<T(0)?(static_cast<U>(-v)<<1) + 1:static_cast<U>(v)<<1;
+        return serialize(u, iter);
+    }
+    template<typename Iter>
+    static T desrl(Iter &iter, Iter end) {
+        using U = std::make_unsigned_t<T>;
+        U v = deserialize<U>(iter, end);
+        return (v & 1)?-static_cast<T>(v >> 1):static_cast<T>(v>>1);
+    }
+};
+
+template<typename T>
+requires(std::is_enum_v<T>)
+struct Serializer<T> {
+
+    using U = std::underlying_type_t<T>;
+
+    template<typename Iter>
+    static Iter srl(const T &v, Iter iter) {
         U u = v<T(0)?(static_cast<U>(-v)<<1) + 1:static_cast<U>(v)<<1;
         return serialize(u, iter);
     }

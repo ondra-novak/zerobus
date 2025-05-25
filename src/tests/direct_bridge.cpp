@@ -168,7 +168,7 @@ void groups() {
 
 
     auto sn = slave2.new_client([&](Client &c, const ChannelMessage &msg){
-            c.add_to_group("test_group", msg.get_sender());
+            c.add_to_group("test_group", msg.get_sender(), msg.get_conversation());
             std::string s ( msg.get_content());
             std::reverse(s.begin(), s.end());
             c.send_message("test_group", s);
@@ -198,7 +198,7 @@ void clear_path_group_test() {
     auto sn = slave2.new_client([&](Client &c, const ChannelMessage &msg){
             std::string s ( msg.get_content());
             std::reverse(s.begin(), s.end());
-            c.add_to_group("gr", msg.get_sender());
+            c.add_to_group("gr", msg.get_sender(), msg.get_conversation());
             c.send_message("gr", s, msg.get_conversation());
     });
     auto cn= slave1.new_client([&](Client &, const ChannelMessage &msg){

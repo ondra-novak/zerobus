@@ -1,6 +1,7 @@
 #pragma once
 
 #include "message.hpp"
+#include "undelivered.hpp"
 #include <functional>
 
 namespace zerobus {
@@ -37,12 +38,6 @@ struct NewSession {
     unsigned long version = 1; ///< Version of the new session.
 };
 
-/// @brief Represents a message indicating no route exists between sender and receiver.
-struct NoRoute {
-    ChannelID sender;   ///< The sender channel ID.
-    ChannelID receiver; ///< The receiver channel ID.
-    ConversationID cid;
-};
 
 /// @brief Represents a message to close a specific group.
 struct CloseGroup {
@@ -58,6 +53,7 @@ struct GroupEmpty {
 struct AddToGroup {
     ChannelID group;  ///< The group ID.
     ChannelID target; ///< The target channel ID to add to the group.
+    ConversationID cid; ///< Conversation ID identified conversation or subscribe message
 };
 
 ///Request anounce
@@ -74,12 +70,12 @@ public:
 
 
     virtual void receive(const Message &) noexcept = 0;
+    virtual void receive(const Undelivered &) noexcept = 0;
     virtual void receive(const bmsg::AddChannels &) noexcept = 0;
     virtual void receive(const bmsg::EraseChannels &) noexcept = 0;
     virtual void receive(const bmsg::UpdateSerial &) noexcept = 0;
     virtual void receive(const bmsg::ChannelReset &) noexcept = 0;
     virtual void receive(const bmsg::NewSession &) noexcept = 0;
-    virtual void receive(const bmsg::NoRoute &) noexcept = 0;
     virtual void receive(const bmsg::CloseGroup &) noexcept = 0;
     virtual void receive(const bmsg::GroupEmpty &) noexcept = 0;
     virtual void receive(const bmsg::AddToGroup &) noexcept = 0;

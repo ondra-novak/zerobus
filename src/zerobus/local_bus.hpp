@@ -19,11 +19,11 @@ public:
     bool subscribe(IListener *listener, ChannelList channel);
     void unsubscribe(IListener *listener, ChannelList channel);
     bool send_message(IListener *listener, ChannelID channel,
-            MessageContent msg, ConversationID cid);
+            MessageContent msg, ConversationID cid, Importance imptc);
     bool forward_message(IListener *sender, const Message &msg);
-    bool is_channel(ChannelID id) const;
+    bool is_group(IListener *owner, ChannelID id) const;
     UpdateSerialStatus update_serial(IListener *lsn, const SerialID &serialId);
-    void clear_path(ChannelID sender, ChannelID receiver, ConversationID cid);
+    void delivery_error(const Undelivered &msg);
     ChannelList get_public_channels(IListener *listener,
             ChannelListStorage &storage) const;
     ChannelList get_subscribed_channels(IListener *listener,
@@ -33,7 +33,7 @@ public:
     void close_private_channel(IListener *listener);
     void unsubscribe_all(IListener *listener);
     void close_group(IListener *owner, ChannelID group_name);
-    bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid);
+    bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid, ConversationID cid);
     void channel_notify(IChannelNotifyListener *mon, bool enable);
     SerialStatus get_serial() const;
     void close_all_groups(IListener *owner);

@@ -1,8 +1,7 @@
 #pragma once
-#include "listener.hpp"
-#include "channel_list_storage.hpp"
-#include "channel_notify_listener.hpp"
+
 #include "utils/recursive_dispatcher.hpp"
+#include "message.hpp"
 
 #include <chrono>
 #include <memory>
@@ -12,8 +11,11 @@
 namespace zerobus {
 
 class LocalBus;
-
 class Client;
+class IListener;
+class IChannelNotifyListener;
+class ChannelListStorage;
+class Undelivered;
 
 using SerialID = std::string;
 
@@ -35,20 +37,15 @@ enum class UpdateSerialStatus {
     cycle
 };
 
-/// Notification that a previous message was not delivered
-/**
- * The message contains the "channel" and "conversation_id" of the
- * failed message to help identify it.
- */
-struct Undelivered {
-    ChannelID target;
-    ConversationID cid;
-};
+
 /// Notification that the recipient has been added to a group
 /**
  * The value contains the name of the group.
  */
-class AddedToGroup: public ChannelID {};
+struct AddedToGroup {
+    ChannelID group_name;
+    ConversationID cid;
+};
 /// Notification that a group the recipient was a member of has been closed
 /**
  * * The value contains the name of the group.
@@ -198,7 +195,7 @@ public:
      * channel name was used as member identification
      *
      * @note any message routed to this private channel after the channel is closed
-     * may be returned to the sender through on_no_route().
+     * may be returned to the sender through on_delivery_error().
      */
     void close_private_channel(IListener *listener);
 
@@ -228,7 +225,7 @@ public:
      *               specified local listener does not own the group, the group
      *               name is reserved, or the group name is invalid.
      */
-    bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid);
+    bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid, ConversationID cid);
 
     ///Closes the group, removes all members
     /**
@@ -265,7 +262,8 @@ public:
      *                 in cases where multiple conversations are active on the same channel. The
      *                 number is carried along with the message and can also be used as an arbitrary
      *                 identifier for further tracking.
-     *
+     * @param importance Specifies message importance, see Importance for list of options
+
      * @retval true    The message was successfully sent. Note that this does not guarantee delivery.
      *
      * @retval false   The message could not be sent due to various reasons, such as the target
@@ -274,9 +272,9 @@ public:
      *
      * @note If the specified channel is a private channel that has already been closed, the function
      *       may still return true. However, the listener may asynchronously receive an error through
-     *       the `on_no_route()` callback.
+     *       the `on_delivery_error()` callback.
      */
-    bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid = 0);
+    bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid = 0, Importance importance = Importance::normal);
     ///Forward message
     /**
      * Forwards a message to its intended recipient using the bus's routing system.
@@ -326,6 +324,14 @@ public:
     bool is_channel(ChannelID id) const;
 
 
+    ///Determines, whether group exists and is owned by an owner
+    /**
+     * @param owner owner of group
+     * @param group_id name of group
+     * @retval true group exists and it is owned by owner
+     * @retval false group doesn't exist, it is not group, or it is not owned by this owner
+     */
+    bool is_group(IListener *owner, ChannelID group_id) const;
     ///Determines type of channel
     /**
      * @param id name of channel
@@ -421,14 +427,14 @@ public:
      * @retval false
      *
      * @note The function deletes the recipient ID from the routing table
-     *      and calls the on_no_route() function on the bridge that
+     *      and calls the on_delivery_error() function on the bridge that
      *       receives messages for the sender. The bridge should forward
      *      the information to the other side, which should call
      *      this method to clean up the information on its side.
-     *      If the sender is on the local bus, the on_no_route()
+     *      If the sender is on the local bus, the on_delivery_error()
      *      function is called directly on the sender instance.
      */
-    void clear_path(ChannelID sender, ChannelID receiver, ConversationID cid);
+    void delivery_error(const Undelivered &msg);
 
     ///Retrieves serial ID of whole network
     /**

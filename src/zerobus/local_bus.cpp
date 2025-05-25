@@ -1,8 +1,11 @@
+#include "listener.hpp"
 #include "local_bus.hpp"
+#include "undelivered.hpp"
+#include "channel_notify_listener.hpp"
+#include "channel_list_storage.hpp"
 #include "utils/random_channel_gen.hpp"
 #include "utils/recursive_dispatcher.hpp"
 #include "utils/stack_alloc.hpp"
-
 namespace zerobus {
 
 
@@ -95,7 +98,7 @@ ChannelType LocalBus::get_channel_type(ChannelID id) const {
     return ChannelType::not_used;
 }
 
-std::string LocalBus::add_mailbox(zerobus::IListener *listener) {
+std::string LocalBus::add_mailbox(IListener *listener) {
     std::string id("@");
     //sender has no mailbox, it must be created, switch to exclusive lock
     std::unique_lock _(_mx);
@@ -104,9 +107,8 @@ std::string LocalBus::add_mailbox(zerobus::IListener *listener) {
     return id;
 }
 
-bool LocalBus::send_message(zerobus::IListener *listener,
-        zerobus::ChannelID channel, zerobus::MessageContent content,
-        zerobus::ConversationID cid) {
+bool LocalBus::send_message(IListener *listener, ChannelID channel, MessageContent content,
+        ConversationID cid, Importance imptc) {
 
     std::string id;
     if (channel.empty()) return false;
@@ -132,7 +134,7 @@ bool LocalBus::send_message(zerobus::IListener *listener,
 
     lk.unlock();
     //continue by forwarding message
-    do_forward_message(listener, {sender, channel, content, cid});
+    do_forward_message(listener, {sender, channel, content, cid, imptc});
     return true;
 
 }
@@ -264,7 +266,9 @@ void LocalBus::do_forward_message(IListener *sender, const Message &msg) {
             trg = _private_channels.find(msg_ptr->sender);
             //if there is such targe
             if (trg) {
-                trg->on_no_route(msg_ptr->sender, chan, msg_ptr->cid);
+                trg->on_delivery_error(Undelivered{
+                    msg_ptr->sender, chan, msg_ptr->cid, DeliveryError::no_route,msg_ptr->importance
+                });
                 return;
             }
             //discard message
@@ -276,26 +280,32 @@ void LocalBus::do_forward_message(IListener *sender, const Message &msg) {
 
 
 
-bool LocalBus::is_channel(ChannelID id) const {
+bool LocalBus::is_group(IListener *owner, ChannelID id) const {
     std::shared_lock lk(_mx);
-    auto c = _public_channels.find_channel_for_broadcast(id, nullptr);
-    return static_cast<bool>(c);
+    auto iter =_public_channels.find(id);
+    return iter != _public_channels.end() && iter->second->get_owner() == owner;
 }
 
-void LocalBus::clear_path(ChannelID sender, ChannelID receiver, ConversationID cid) {
+void LocalBus::delivery_error(const Undelivered &msg) {
     Dispatcher &disp = Dispatcher::get_instance();
     disp.finish();    //finish pending, unlock all locks
     std::unique_lock lk(_mx);
 
-    IListener *lsn = _private_channels.find(sender);
-    if (!lsn) lsn = _routing_cache.find_path(sender);
-    _routing_cache.clear_path(receiver);
+    IListener *lsn = _private_channels.find(msg.sender);
+    if (!lsn) lsn = _routing_cache.find_path(msg.sender);
+    if (!lsn) {
+        auto iter = _public_channels.find(msg.sender);
+        if (iter != _public_channels.end()) lsn = iter->second->get_owner();
+    }
+    if (msg.error == DeliveryError::invalid_target ||  msg.error == DeliveryError::no_route)  {
+        _routing_cache.clear_path(msg.target);
+    }
     if (lsn) {
-        disp.enqueue([lsn, &sender, &receiver, cid, lk = std::move(lk)]() mutable{
+        disp.enqueue([lsn, &msg, lk = std::move(lk)]() mutable{
             if (!lsn) return;
             auto l = lsn;
             lsn = nullptr;
-            l->on_no_route(sender, receiver,cid);
+            l->on_delivery_error(msg);
         });
         disp.dispatch();
     }
@@ -410,7 +420,7 @@ void LocalBus::close_group(IListener *owner, ChannelID group_name) {
 
 }
 
-bool LocalBus::add_to_group(IListener *owner, ChannelID group_name, ChannelID uid) {
+bool LocalBus::add_to_group(IListener *owner, ChannelID group_name, ChannelID uid, ConversationID cid) {
     Dispatcher &disp=Dispatcher::get_instance();
     disp.finish();
     std::unique_lock lk(_mx);
@@ -425,7 +435,7 @@ bool LocalBus::add_to_group(IListener *owner, ChannelID group_name, ChannelID ui
             return;
         }
         once = true;
-        trg->on_add_to_group(group_name, uid);
+        trg->on_add_to_group(group_name, uid, cid);
     });
     disp.dispatch();
     return true;

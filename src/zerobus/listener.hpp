@@ -1,10 +1,12 @@
 #pragma once
 
-#include "message.hpp"
+#include "types.hpp"
 
 namespace zerobus {
 
 class IListener;
+class Undelivered;
+class Message;
 
 ///Message listener
 class IListener {
@@ -45,7 +47,7 @@ public:
      * function send_message simply returns false. This message appear only when
      * message cannot be delivered after the send_message returned true
      */
-    virtual void on_no_route(ChannelID sender, ChannelID receiver, ConversationID cid) noexcept  = 0;
+    virtual void on_delivery_error(const Undelivered &msg) noexcept  = 0;
 
     ///add group
     /**
@@ -59,7 +61,7 @@ public:
      * @param group_name name of the group
      * @param target_id target id. For ordinary listener, there is ID of this listener
      */
-    virtual void on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept = 0;
+    virtual void on_add_to_group(ChannelID group_name, ChannelID target_id, ConversationID cid) noexcept = 0;
 
     ///close group
     /**

@@ -4,6 +4,7 @@
 #include "listener.hpp"
 #include "utils/overloaded.hpp"
 
+#include "channel_list_storage.hpp"
 
 namespace zerobus {
 
@@ -96,7 +97,7 @@ public:
      * channel name was used as member identification
      *
      * @note any message routed to this private channel after the channel is closed
-     * may be returned to the sender through on_no_route().
+     * may be returned to the sender through on_delivery_error().
      */
     void close_private_channel() {_bus.close_private_channel(this);}
 
@@ -124,8 +125,8 @@ public:
      *               specified local listener does not own the group, the group
      *               name is reserved, or the group name is invalid.
      */
-    bool add_to_group(ChannelID group_name, ChannelID uid) {
-        return _bus.add_to_group(this, group_name, uid);
+    bool add_to_group(ChannelID group_name, ChannelID uid, ConversationID cid) {
+        return _bus.add_to_group(this, group_name, uid, cid);
     }
 
     ///Closes the group, removes all members
@@ -162,6 +163,8 @@ public:
      *                 number is carried along with the message and can also be used as an arbitrary
      *                 identifier for further tracking.
      *
+     * @param importance Specifies message importance, see Importance for list of options
+     *
      * @retval true    The message was successfully sent. Note that this does not guarantee delivery.
      *
      * @retval false   The message could not be sent due to various reasons, such as the target
@@ -170,10 +173,10 @@ public:
      *
      * @note If the specified channel is a private channel that has already been closed, the function
      *       may still return true. However, the listener may asynchronously receive an error through
-     *       the `on_no_route()` callback.
+     *       the `on_delivery_error()` callback.
      */
-    bool send_message( ChannelID channel, MessageContent msg, ConversationID cid = 0) {
-        return _bus.send_message(this, channel, msg, cid);
+    bool send_message( ChannelID channel, MessageContent msg, ConversationID cid = 0, Importance importance = Importance::normal) {
+        return _bus.send_message(this, channel, msg, cid, importance);
     }
 
     /// Retrieves the list of channels subscribed by a specific listener.
@@ -259,9 +262,9 @@ public:
             _cb(*this, static_cast<const GroupClosed &>(group_name));
         }
     }
-    virtual void on_no_route(ChannelID, ChannelID receiver, ConversationID cid) noexcept override{
+    virtual void on_delivery_error(const Undelivered &msg ) noexcept override{
         if constexpr(std::invocable<Callback, Client &, const Undelivered &>) {
-            _cb(*this, Undelivered{receiver, cid});
+            _cb(*this, msg);
         }
     }
     virtual void on_group_empty(ChannelID group_name) noexcept override{
@@ -279,9 +282,9 @@ public:
             _cb(*this, static_cast<const DirectMessage &>(message));
         }
     }
-    virtual void on_add_to_group(ChannelID group_name, ChannelID) noexcept override{
+    virtual void on_add_to_group(ChannelID group_name, ChannelID, ConversationID cid) noexcept override{
         if constexpr(std::invocable<Callback, Client &, const AddedToGroup &>) {
-            _cb(*this, static_cast<const AddedToGroup &>(group_name));
+            _cb(*this, AddedToGroup{group_name, cid});
         }
 
     }

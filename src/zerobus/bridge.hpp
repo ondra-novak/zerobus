@@ -1,7 +1,10 @@
 #pragma once
 #include "protocol.hpp"
-
 #include "bus.hpp"
+#include "listener.hpp"
+#include "channel_notify_listener.hpp"
+
+#include "channel_list_storage.hpp"
 
 #include <atomic>
 namespace zerobus {
@@ -126,9 +129,9 @@ protected:
 
     //IListener
     virtual void on_close_group(ChannelID group_name) noexcept override;
-    virtual void on_no_route(ChannelID sender,ChannelID receiver, ConversationID cid) noexcept override;
+    virtual void on_delivery_error(const Undelivered &error) noexcept override;
     virtual void on_group_empty(ChannelID group_name) noexcept override;
-    virtual void on_add_to_group(ChannelID group_name,ChannelID target_id) noexcept override;
+    virtual void on_add_to_group(ChannelID group_name,ChannelID target_id, ConversationID cid) noexcept override;
     virtual void on_message(const Message &message) noexcept override;
     virtual void on_direct_message(const Message &message) noexcept override;
 
@@ -139,7 +142,7 @@ protected:
     virtual void receive(const bmsg::UpdateSerial &msg) noexcept override;
     virtual void receive(const bmsg::ChannelReset &msg) noexcept override;
     virtual void receive(const bmsg::NewSession &msg) noexcept override;
-    virtual void receive(const bmsg::NoRoute &msg) noexcept override;
+    virtual void receive(const Undelivered &msg) noexcept override;
     virtual void receive(const bmsg::CloseGroup &msg) noexcept override;
     virtual void receive(const bmsg::GroupEmpty &msg) noexcept override;
     virtual void receive(const bmsg::AddToGroup &msg) noexcept override;

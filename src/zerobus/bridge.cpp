@@ -120,16 +120,16 @@ void Bridge::on_close_group(ChannelID group_name) noexcept {
     _target->receive(bmsg::CloseGroup{group_name});
 }
 
-void Bridge::on_no_route(ChannelID sender, ChannelID receiver, ConversationID cid) noexcept{
-    _target->receive(bmsg::NoRoute{sender, receiver,cid});
+void Bridge::on_delivery_error(const Undelivered &msg) noexcept{
+    _target->receive(msg);
 }
 
 void Bridge::on_group_empty(ChannelID group_name) noexcept{
     _target->receive(bmsg::GroupEmpty{group_name});
 }
 
-void Bridge::on_add_to_group(ChannelID group_name, ChannelID target_id) noexcept{
-    _target->receive(bmsg::AddToGroup{group_name, target_id});
+void Bridge::on_add_to_group(ChannelID group_name, ChannelID target_id, ConversationID cid) noexcept{
+    _target->receive(bmsg::AddToGroup{group_name, target_id, cid});
 }
 
 void Bridge::on_message(const Message &message) noexcept{
@@ -137,12 +137,16 @@ void Bridge::on_message(const Message &message) noexcept{
 }
 
 void Bridge::on_direct_message(const Message &message) noexcept {
-    _bus.clear_path(message.get_sender(), message.get_channel(), message.get_conversation());
+    _bus.delivery_error(Undelivered{
+        message.get_sender(), message.get_channel(),
+       message.get_conversation(), DeliveryError::invalid_target, message.importance});
 }
 
 void Bridge::receive(const Message &msg) noexcept{
     if (!_bus.forward_message(this, msg)) {
-        _bus.clear_path(msg.get_sender(), msg.get_channel(), msg.get_conversation());
+        _bus.delivery_error(Undelivered{
+            msg.get_sender(), msg.get_channel(),
+            msg.get_conversation(), DeliveryError::no_route, msg.importance});
     }
 }
 
@@ -193,8 +197,8 @@ void Bridge::receive(const bmsg::NewSession &) noexcept {
     receive(bmsg::ChannelReset{});
 }
 
-void Bridge::receive(const bmsg::NoRoute &msg) noexcept {
-    _bus.clear_path(msg.sender, msg.receiver, msg.cid);
+void Bridge::receive(const Undelivered &msg) noexcept {
+    _bus.delivery_error(msg);
 }
 
 void Bridge::receive(const bmsg::CloseGroup &msg) noexcept {
@@ -206,7 +210,18 @@ void Bridge::receive(const bmsg::GroupEmpty &msg) noexcept {
 }
 
 void Bridge::receive(const bmsg::AddToGroup &msg) noexcept {
-    _bus.add_to_group(this, msg.group, msg.target);
+    if (!_bus.add_to_group(this, msg.group, msg.target, msg.cid)) {
+        DeliveryError err = DeliveryError::no_route;
+        if (!_bus.is_group(this, msg.group)) {
+            _target->receive(bmsg::GroupEmpty{msg.group});
+        } else {
+            auto type = _bus.get_channel_type(msg.group);
+            if (type != ChannelType::not_used) {
+                err = DeliveryError::name_collision;
+            }
+        }
+        _target->receive(Undelivered{msg.group, msg.target, msg.cid, err, Importance::normal});
+    }
 }
 
 void Bridge::send_reset() {

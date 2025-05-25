@@ -66,6 +66,9 @@ public:
         t.append(msg.group);
         t.append(" <= ");
         t.append(msg.target);
+        t.append(" (");
+        t.append(std::to_string(msg.cid));
+        t.append(") ");
         _output(t);
         _target->receive(msg);
 
@@ -78,9 +81,24 @@ public:
         _target->receive(msg);
 
     }
+
+    static void append_importance(Importance importance, std::string &t) {
+        switch (importance) {
+            default: break;
+            case Importance::high: t.append("<high> ");break;
+            case Importance::normal: t.append("<norm> ");break;
+            case Importance::low: t.append("<low>");break;
+            case Importance::high_ntf: t.append("<high,ntf> ");break;
+            case Importance::normal_ntf: t.append("<norm,ntf> ");break;
+            case Importance::low_ntf: t.append("<low,ntf>");break;
+        }
+
+    }
+
     virtual void receive(const Message &msg) noexcept override {
         auto t = _prefix;
-        t.append("MESSAGE  ");
+        t.append("MESSAGE ");
+        append_importance(msg.importance, t);
         t.append(msg.get_sender());
         t.append(" => ");
         t.append(msg.get_channel());
@@ -92,15 +110,23 @@ public:
         _target->receive(msg);
 
     }
-    virtual void receive(const bmsg::NoRoute &msg) noexcept override {
+    virtual void receive(const Undelivered &msg) noexcept override {
         auto t = _prefix;
-        t.append("NO_ROUTE ");
+        t.append("UNDELIVERED ");
+        append_importance(msg.importance, t);
         t.append(msg.sender);
         t.append(" => ");
-        t.append(msg.receiver);
-        t.append(": (");
+        t.append(msg.target);
+        t.append(" (");
         t.append(std::to_string(msg.cid));
-        t.append(") ");;
+        t.append("): ");;
+        switch (msg.error) {
+            case DeliveryError::invalid_target: t.append("Invalid target");break;
+            case DeliveryError::high_traffic: t.append("Discarded because high traffic");break;
+            case DeliveryError::no_route: t.append("No route to target");break;
+            case DeliveryError::send_timeout: t.append("Send timeout");break;
+            default: t.append("Unknown error");break;
+        }
         _output(t);
         _target->receive(msg);
 
