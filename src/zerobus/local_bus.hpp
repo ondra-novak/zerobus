@@ -55,7 +55,6 @@ protected:
     std::atomic_flag _channels_no_change = { false };
     std::string _node_serial = { };
     SerialStatus _cur_serial = { };
-    mutable std::mutex _serial_mx;
 
     void do_forward_message(Message &&msg, IListener *owner);
 

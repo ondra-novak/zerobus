@@ -26,6 +26,9 @@ struct Serialize<Msg> {
         std::memcpy(&msg, from, sz);
         return fn(msg);
     }
+    static Importance importance(const Msg &) {
+        return Importance::normal;
+    }
 };
 template<typename Msg>
 requires(std::is_base_of_v<bmsg::ChannelsBase, Msg>) struct Serialize<Msg> {
@@ -53,6 +56,9 @@ requires(std::is_base_of_v<bmsg::ChannelsBase, Msg>) struct Serialize<Msg> {
         });
 
     }
+    static Importance importance(const Msg &) {
+        return Importance::high;
+    }
 
 };
 
@@ -62,6 +68,9 @@ template<> struct Serialize<bmsg::ChannelReset>{
     template<typename Fn>
     static auto from_binary(Fn &&fn, const char *, const char *) {
         fn(bmsg::ChannelReset{});
+    }
+    static Importance importance(const auto &) {
+        return Importance::high;
     }
 };
 template<> struct Serialize<bmsg::AddToGroup> {
@@ -82,6 +91,9 @@ template<> struct Serialize<bmsg::AddToGroup> {
         from = bin::decode_string(msg.target, from, to);
         return fn(msg);
     }
+    static Importance importance(const Msg &) {
+        return Importance::high;
+    }
 };
 template<> struct Serialize<bmsg::CloseGroup> {
     using Msg = bmsg::CloseGroup;
@@ -98,6 +110,9 @@ template<> struct Serialize<bmsg::CloseGroup> {
         from = bin::decode_string(msg.group, from, to);
         return fn(msg);
     }
+    static Importance importance(const Msg &) {
+        return Importance::high;
+    }
 };
 template<> struct Serialize<bmsg::GroupEmpty> {
     using Msg = bmsg::GroupEmpty;
@@ -113,6 +128,9 @@ template<> struct Serialize<bmsg::GroupEmpty> {
         Msg msg;
         from = bin::decode_string(msg.group, from, to);
         return fn(msg);
+    }
+    static Importance importance(const Msg &) {
+        return Importance::high;
     }
 };
 
@@ -142,6 +160,9 @@ template<> struct Serialize<Undelivered> {
         from = bin::decode_number(msg.cid, from, to);
         return fn(msg);
     }
+    static Importance importance(const Msg &msg) {
+        return msg.importance;
+    }
 };
 template<> struct Serialize<bmsg::Announce> {
     using Msg = bmsg::Announce;
@@ -160,6 +181,9 @@ template<> struct Serialize<bmsg::Announce> {
         from = bin::decode_string(msg.sender, from, to);
         from = bin::decode_number(msg.request_id, from, to);
         return fn(msg);
+    }
+    static Importance importance(const Msg &) {
+        return Importance::normal;
     }
 };
 
@@ -189,6 +213,9 @@ template<> struct Serialize<Message> {
         from = bin::decode_number(msg.cid, from, to);
         return fn(msg);
     }
+    static Importance importance(const Msg &msg) {
+        return msg.importance;
+    }
 };
 template<> struct Serialize<bmsg::UpdateSerial> {
     using Msg = bmsg::UpdateSerial;
@@ -205,6 +232,9 @@ template<> struct Serialize<bmsg::UpdateSerial> {
         from = bin::decode_string(msg.serial, from, to);
         return fn(msg);
     }
+    static Importance importance(const Msg &) {
+        return Importance::high;
+    }
 };
 template<> struct Serialize<bmsg::NewSession> {
     using Msg = bmsg::NewSession;
@@ -220,6 +250,9 @@ template<> struct Serialize<bmsg::NewSession> {
         Msg msg;
         from = bin::decode_number(msg.version, from, to);
         return fn(msg);
+    }
+    static Importance importance(const Msg &) {
+        return Importance::high;
     }
 };
 
@@ -263,24 +296,24 @@ static constexpr auto visit_by_id(std::uint8_t id, Fn &&fn) {
 }
 
 template<typename T>
-concept OutputType = requires(T &&v, std::size_t sz) {
-    {v.start(sz)} -> std::same_as<char *>;
-    {v.commit(sz)} -> std::same_as<void>;
+concept OutputType = requires(T &&v, std::size_t sz, Importance imp) {
+    {v.start(sz, imp)} -> std::same_as<char *>;
+    {v.commit(sz, imp)} -> std::same_as<DeliveryError>;
 };
 
 struct OutputTypeTest {
-    char *start(std::size_t sz);
-    void commit(std::size_t sz);
+    char *start(std::size_t sz, Importance imp);
+    bool commit(std::size_t sz, Importance imp);
 };
 
 template<typename Ptr>
 struct OutputTypeProxy {
     Ptr ptr;
-    char *start(std::size_t sz) {
-        return ptr->output_start(sz);
+    char *start(std::size_t sz, Importance imp) {
+        return ptr->output_start(sz, imp);
     }
-    void commit(std::size_t sz) {
-        return ptr->output_commit(sz);
+    DeliveryError commit(std::size_t sz, Importance imp) {
+        return ptr->output_commit(sz, imp);
     }
 };
 
@@ -323,13 +356,14 @@ public:
     }
 
     template<typename Msg>
-    void send_message(std::uint8_t type, const Msg &msg) {
+    DeliveryError send_message(std::uint8_t type, const Msg &msg) {
         std::size_t sz = Serialize<Msg>::bin_size(msg);
         ++sz;
-        char *buffer = _output.start(sz);
+        char *buffer = _output.start(sz, Serialize<Msg>::importance(msg));
+        if (!buffer) return DeliveryError::high_traffic;
         *buffer = type;++buffer;
         Serialize<Msg>::to_binary(msg, buffer);
-        _output.commit(sz);
+        return _output.commit(sz, Serialize<Msg>::importance(msg));
     }
 
 protected:
@@ -339,7 +373,20 @@ protected:
 
     template<typename Msg>
     void send(const Msg &msg) {
-        send_message(message_id<Msg>, msg);
+        auto st = send_message(message_id<Msg>, msg);
+        if (st != DeliveryError::not_used) {
+            if constexpr(std::is_same_v<Msg, Message>) {
+                if ((msg.importance & Importance::notify) == Importance::notify)  {
+                    _target->receive(Undelivered{
+                        msg.sender,
+                        msg.channel,
+                        msg.cid,
+                        st,
+                        msg.importance
+                    });
+                }
+            }
+        }
     }
 
     virtual void set_target(IProtocol *target) override {_target = target;}

@@ -12,6 +12,7 @@
 #include "../../utils/multithreads.hpp"
 #include "../utils/eventfd.hpp"
 
+#include <condition_variable>
 #include <filesystem>
 #include <memory>
 #include <mutex>
@@ -59,16 +60,26 @@ protected:
         reconnect
     };
 
+    struct Shared {
+        WsBridgeConfig _config;
+        EPoll<Handle> _epoll;
+        EventFd _wakeup;
+
+        Shared(WsBridgeConfig config):_config(std::move(config)) {}
+    };
+
+    using PShared = std::shared_ptr<Shared>;
+
     class Peer: public Bridge { // @suppress("Miss copy constructor or assignment operator")
     public:
 
         static constexpr int write_timeout = 1500;
 
-        char *output_start(std::size_t sz);
-        void output_commit(std::size_t sz);
-        bool on_epoll_event(int event);
+        char *output_start(std::size_t sz, Importance imp);
+        DeliveryError output_commit(std::size_t sz, Importance imp);
+        int on_epoll_event(int event) noexcept;
 
-        void send_message(const ws::Message &msg);
+        bool send_message(std::unique_lock<std::mutex> &lk, const ws::Message &msg, Importance impl);
         std::optional<std::string_view> read_http_header(std::string_view data);
 
         Peer(WsBridge &owner);
@@ -78,32 +89,41 @@ protected:
 
         std::pair<int, int> get_epoll_info() const;
 
+        void set_handle(Handle h){_h = h;}
+
         void connect(std::string address);
 
         bool send_ws_request();
 
-        bool send_buffer(std::string_view data);
 
         bool conn_error();
+        bool flush_buffer();
     protected:
-        WsBridge &_owner;
+        bool on_epoll_in() noexcept;
+        bool on_epoll_out() noexcept;
+
+        PShared _shared;
         Socket _sock = {};
+        Handle _h = 0;
         PeerOpMode _mode = {};
         std::vector<char> _input_buffer;
         std::vector<char> _output_buffer;
+        std::vector<char> _build_buffer;
         ws::Parser<std::vector<char> > _ws_parser;
-        std::recursive_mutex _send_mx;
+        std::mutex _send_mx;
+        std::condition_variable _cv;
         std::string _reconnect_addr;
         std::string _ws_accept;
         std::optional<std::default_random_engine> _mask_rnd;
         BinaryTransport<OutputTypeProxy<Peer *> > *_bridge_parser;
+        std::atomic_flag _in_handler = {false};
     };
 
     class Server { // @suppress("Miss copy constructor or assignment operator")
     public:
 
         Server(WsBridge &owner, int socket);
-        bool on_epoll_event(int event);
+        int on_epoll_event(int event);
         std::pair<int, int> get_epoll_info() const;
 
     protected:
@@ -119,12 +139,11 @@ protected:
     using PHandleData = std::variant<PPeer, PServer>;
 
     Bus _bus;
-    WsBridgeConfig _config;
-    HandleHashMap<PHandleData> _handles;
     std::mutex _mx;
 
-    EventFd _wakeup;
-    EPoll<Handle> _epoll;
+    PShared _shared;
+
+    HandleHashMap<PHandleData> _handles;
 
     utils::MultiThread _pool;
 
@@ -133,6 +152,8 @@ protected:
     void create_peer(int socket);
     void ensure_threads_running();
     void worker(std::stop_token stp);
+
+
 
 };
 

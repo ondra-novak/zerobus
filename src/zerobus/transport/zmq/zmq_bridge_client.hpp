@@ -40,8 +40,8 @@ protected:
     ZmqMtHelp<ZmqBridgeClient &> _pool;
 
 
-    char *output_start(std::size_t sz);
-    void output_commit(std::size_t sz);
+    char *output_start(std::size_t sz, Importance imp);
+    DeliveryError output_commit(std::size_t sz, Importance imp);
 
     friend struct OutputTypeProxy<ZmqBridgeClient *>;
 

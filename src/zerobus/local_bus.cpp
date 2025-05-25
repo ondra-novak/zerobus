@@ -460,7 +460,8 @@ void LocalBus::channel_notify(IChannelNotifyListener *mon, bool enable) {
 
 
  UpdateSerialStatus LocalBus::update_serial(IListener *lsn, const SerialID &serialId) {
-    std::unique_lock lk(_serial_mx);
+    Dispatcher::get_instance().finish();
+    std::unique_lock lk(_mx);
     UpdateSerialStatus st = UpdateSerialStatus::not_changed;
     if (_cur_serial.serial == serialId) {
         st = _cur_serial.source != lsn?UpdateSerialStatus::cycle:UpdateSerialStatus::same;
@@ -482,7 +483,7 @@ void LocalBus::channel_notify(IChannelNotifyListener *mon, bool enable) {
 }
 
 SerialStatus LocalBus::get_serial() const {
-    std::unique_lock _(_serial_mx);
+    std::shared_lock _(_mx);
     return _cur_serial;
 }
 

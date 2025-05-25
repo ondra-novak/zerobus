@@ -19,6 +19,9 @@ namespace zerobus {
  *   if the message is discarded.
  */
 enum class Importance: std::uint8_t {
+    ///Importance is not set
+    /** Depends on bridge how to treat this message */
+    not_set = 0,
     ///Messages with low importance
     /** These messages can be discarded when the TCP buffer is full.
      * They are not put into the output buffer, so if the TCP buffer is full, they are discarded.
@@ -44,11 +47,14 @@ enum class Importance: std::uint8_t {
     high_ntf = 7
 };
 
+
 constexpr Importance operator|(Importance a, Importance b) {
     return static_cast<Importance>(static_cast<std::uint8_t>(a) | static_cast<std::uint8_t>(b));
 }
 constexpr Importance operator&(Importance a, Importance b) {
     return static_cast<Importance>(static_cast<std::uint8_t>(a) & static_cast<std::uint8_t>(b));
 }
+
+constexpr Importance importance_mask  = Importance::low | Importance::normal | Importance::high;
 
 }

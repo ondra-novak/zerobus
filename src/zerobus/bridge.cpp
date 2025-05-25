@@ -73,6 +73,8 @@ void Bridge::refresh(bool force) {
 
 }
 
+std::atomic<int> _cntr_add = 0;
+
 void Bridge::on_channels_update_lk(bool force) noexcept {
     auto srl = _bus.get_serial();
     if (srl.serial != _serial_id || force) {
@@ -187,6 +189,7 @@ void Bridge::receive(const bmsg::UpdateSerial &msg) noexcept {
 }
 
 void Bridge::receive(const bmsg::ChannelReset &) noexcept {
+
     //request to need reset channels
     _lk_flag.fetch_or(chan_need_reset, std::memory_order_relaxed);
     //perform update
