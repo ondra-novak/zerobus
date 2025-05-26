@@ -3,7 +3,10 @@
 #include "bus.hpp"
 #include "utils/channel.hpp"
 #include "utils/routing_cache.h"
+#include "utils/callable_variant.hpp"
 #include "utils/recursive_shared_lock.hpp"
+#include "utils/hybrid_unique_ptr.hpp"
+#include "utils/recursive_dispatcher.hpp"
 #include <unordered_map>
 #include <queue>
 #include <atomic>
@@ -39,12 +42,93 @@ public:
     void close_all_groups(IListener *owner);
     void announce(IListener *listener, ConversationID req_id, ChannelID chan);
     ChannelType get_channel_type(ChannelID id) const;
-    void set_ttl(std::chrono::seconds timeout);
+    void defer_small_fn(SmallFunction &&fn);
 
 protected:
 
     using MyChannel = Channel<IListener *>;
     using PChannel = std::unique_ptr<MyChannel>;
+
+
+
+    template<typename Derived>
+    class NotifyMonitorsBaseQI {
+    public:
+        NotifyMonitorsBaseQI(LocalBus *owner);
+        void operator()();
+
+    protected:
+        LocalBus *_owner;
+        std::size_t *pos = nullptr;
+        std::shared_lock<recursive_shared_mutex> _lk;
+    };
+
+    class NotifyChannelUpdateQI: public NotifyMonitorsBaseQI<NotifyChannelUpdateQI> {
+    public:
+        NotifyChannelUpdateQI(LocalBus *owner);
+        void run(IChannelNotifyListener *p);
+    };
+
+    class NotifyAnounceQI: public NotifyMonitorsBaseQI<NotifyAnounceQI> {
+    public:
+        NotifyAnounceQI(LocalBus *owner,IListener *sender, ConversationID reqid, std::string chan);
+        void run(IChannelNotifyListener *p);
+    protected:
+        IListener *_sender;
+        ConversationID _reqid;
+        std::string _chan;
+    };
+
+
+    class ForwardMsgQI {
+    public:
+        ForwardMsgQI(LocalBus *owner, IListener *sender, HybridUniquePtr<const Message> mptr);
+        void operator()();
+    protected:
+        LocalBus *_owner;
+        IListener *_sender;
+        HybridUniquePtr<const Message> _mptr;
+        MyChannel *_c = nullptr;
+        std::size_t *_pos = nullptr;
+        HybridUniquePtr<const Message> *_mptr_lnk = nullptr;
+        std::shared_lock<recursive_shared_mutex> _lk;
+    };
+
+    class DeliveryErrorQI {
+    public:
+        DeliveryErrorQI(IListener *lsn, const Undelivered &msg,
+                    std::unique_lock<recursive_shared_mutex> lk);
+        void operator()();
+    protected:
+        IListener *_lsn;
+        const Undelivered &_msg;
+        std::unique_lock<recursive_shared_mutex> _lk;
+
+    };
+
+    class AddToGroupQI {
+    public:
+        AddToGroupQI(IListener *trg, const ChannelID &group_name,
+                const ChannelID &uid,  ConversationID cid,
+                std::unique_lock<recursive_shared_mutex> lk);
+        void operator()();
+    protected:
+        IListener *_trg;
+        const ChannelID &_group_name;
+        const ChannelID &_uid;
+        ConversationID _cid;
+        std::unique_lock<recursive_shared_mutex> _lk;
+        bool _once = false;
+
+    };
+
+    using DispMsg = CallableVariant<void(),
+            NotifyChannelUpdateQI,
+            NotifyAnounceQI,
+            ForwardMsgQI,
+            DeliveryErrorQI,
+            AddToGroupQI,
+            SmallFunction>;
 
 
     PublicChannelMap<IListener*> _public_channels;
@@ -69,12 +153,9 @@ protected:
 
     void do_forward_message(IListener *sender, const Message &msg);
 
-    template<typename ... Args>
-    void notify_monitors(void (IChannelNotifyListener::*fn)(Args ...),
-            Args ... args);
-
-private:
     std::string add_mailbox(zerobus::IListener *listener);
+
+    static thread_local utils::RecursiveDispatcher<DispMsg> _disp;
 };
 }
 

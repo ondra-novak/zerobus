@@ -1,6 +1,6 @@
 #pragma once
 
-#include "utils/recursive_dispatcher.hpp"
+#include "utils/inline_function.hpp"
 #include "message.hpp"
 
 #include <chrono>
@@ -18,6 +18,8 @@ class ChannelListStorage;
 class Undelivered;
 
 using SerialID = std::string;
+
+using SmallFunction = InlineFunction<void(), 9*sizeof(void *)>;
 
 struct SerialStatus { // @suppress("Miss copy constructor or assignment operator")
     ///contains current serial
@@ -498,16 +500,12 @@ public:
      *
      * @param fn function to execute. Note the function must be movable
      *
+     * @note the function's closure is limited up to 32/64 bytes
+     *
      */
     template<typename Fn>
-    static void defer(Fn &&fn) {
-        auto &disp = utils::ThreadRecursiveDispatcher::get_instance();
-        disp.enqueue([fn = std::move(fn), once = false]()mutable{
-            if (once) return;
-            once = true;
-            fn();
-        });
-        disp.dispatch_if_needed();
+    void defer(Fn &&fn) {
+        defer_small_fn(SmallFunction(std::move(fn)));
     }
 
     ///Creates new client
@@ -543,25 +541,10 @@ public:
     std::shared_ptr<Client> new_client_shared(Callback &&cb);
 
 
-    /// Sets the time-to-live (TTL) for routing table entries.
-    /**
-     * Whenever a message passes through the node, routing information about
-     * the return path is stored in the routing table. This function sets the
-     * duration for which such information is retained.
-     *
-     * If no activity is observed from the source node within the given time,
-     * the corresponding routing entry is removed. To maintain a valid entry
-     * for a longer period, the source node should periodically generate activity,
-     * such as sending ping messages or invoking the `announce()` function.
-     *
-     * @param timeout Duration to keep routing information active.
-     *                Default is 300 seconds.
-     */
-    void set_ttl(std::chrono::seconds ttl);
-
 protected:
     std::shared_ptr<LocalBus> _ptr;
 
+    void defer_small_fn(SmallFunction &&fn);
 };
 
 

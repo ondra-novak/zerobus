@@ -6,6 +6,11 @@
 #include <unordered_map>
 #include <string>
 
+
+#include <queue>
+using std::string_view;
+
+#include <string_view>
 namespace zerobus {
 
 namespace utils {
@@ -14,63 +19,94 @@ template<typename Bridge>
 class RoutingCache {
 public:
 
-    void set_ttl(std::chrono::system_clock::duration timeout) {
-        _record_ttl = timeout;
-    }
+    static constexpr std::uint8_t max_lru = 3;
+
+    RoutingCache():_limit(100) {}
 
     bool register_path(std::string_view target, Bridge bridge, std::optional<std::uint32_t> rqid = std::nullopt) {
-        auto f = _cache_map.find(target);
-        if (f != _cache_map.end()) {
+        auto f = _cache.find(target);
+        if (f != _cache.end()) {
             if (rqid) {
-                if (f->second->_rqid == *rqid) return false;
-                f->second->_rqid = *rqid;
+                if (f->second._rqid == *rqid) return false;
+                f->second._rqid = *rqid;
             }
-            f->second->_bridge = bridge;
-            f->second->_expiration = std::chrono::system_clock::now()+_record_ttl;
+            f->second._bridge = bridge;
+            f->second._lru = max_lru;
         } else {
-            auto p = std::make_unique<Record>();
-            p->_bridge = bridge;
-            if (rqid) f->second->_rqid = *rqid;
-            p->_expiration = std::chrono::system_clock::now()+_record_ttl;
-            p->_target.append(target);
-            _cache_map.emplace(std::string_view(p->_target), std::move(p));
+            auto t = strdup(target);
+            auto key = std::string_view(t.get(), target.size());
+            auto r = _cache.emplace(key, Record{
+                std::move(t),
+                bridge,
+                rqid?*rqid:0U, max_lru
+            });
+            _clock.push(r.first);
         }
         return true;
     }
 
     Bridge find_path(std::string_view target) const {
-        auto f = _cache_map.find(target);
-        if (f != _cache_map.end()) return f->second->_bridge;
+        auto f = _cache.find(target);
+        if (f != _cache.end() && f->second._lru) return f->second._bridge;
         else return nullptr;
     }
 
     void clear_path(std::string_view target) {
-        _cache_map.erase(target);
+        auto iter = _cache.find(target);
+        if (iter != _cache.end()) {
+            iter->second._lru = 0;
+        }
     }
 
     void clear_bridge(Bridge bridge) {
-        auto iter = _cache_map.begin();
-        while (iter != _cache_map.end()) {
-            if (iter->second->_bridge == bridge) {
-                iter = _cache_map.erase(iter);
+        auto iter = _cache.begin();
+        while (iter != _cache.end()) {
+            if (iter->second._bridge == bridge) {
+                iter->second._lru = 0;
             } else {
                 ++iter;
             }
         }
     }
 
+    void set_limit(std::size_t limit) {
+        _limit = limit;
+    }
+
 protected:
 
+
     struct Record {
-        Bridge _bridge;
-        std::chrono::system_clock::time_point _expiration;
-        std::string _target;
-        std::uint32_t _rqid = 0;
+        std::unique_ptr<char[]> _key_data;
+        mutable Bridge _bridge = {};
+        mutable std::uint32_t _rqid = 0;
+        std::uint8_t _lru=0;
     };
 
-    std::unordered_map<std::string_view, std::unique_ptr<Record> > _cache_map;
+    using Map =std::unordered_map<std::string_view, Record>;
+    Map _cache;
+    std::queue<typename Map::iterator> _clock;
+    std::size_t _limit;
 
-    std::chrono::system_clock::duration _record_ttl = std::chrono::seconds(300);
+    static std::unique_ptr<char[]> strdup(std::string_view text) {
+        auto r = std::make_unique<char[]>(text.size());
+        std::copy(text.begin(), text.end(), r.get());
+        return r;
+    }
+
+    void erase_old() {
+        std::size_t cnt = _clock.size();
+        while (cnt > _limit) {
+            typename Map::iterator &iter = _clock.front();
+            if (iter->second._lru > 1) {
+                --iter->second._lru;
+                _clock.push(std::move(iter));
+                ++cnt;
+            }
+            _clock.pop();
+            --cnt;
+        }
+    }
 
 };
 

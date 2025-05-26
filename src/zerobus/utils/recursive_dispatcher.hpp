@@ -1,31 +1,33 @@
 #pragma once
+#include <queue>
 
-#include "dispatch_queue.hpp"
 
 namespace zerobus {
 
 namespace utils {
 
 /**
- * @class ThreadRecursiveDispatcher
- * @brief Thread-local function dispatcher with recursive dispatching support.
+ * @class RecursiveDispatcher
  *
  * This class provides a thread-local singleton dispatcher that manages a queue of functions
- * to be executed in a thread-safe manner. It supports recursive dispatching, ensuring that
- * functions enqueued during dispatch are handled correctly without causing stack overflows
- * or reentrancy issues.
+ * to be executed in a thread-safe manner. It supports correct dispatching order
+ * even if dispatch() is called recursively.
+ *
+ * When dispatch() is called recursively, current task function is called again, which
+ * allows it to continue in its operation. The next function is dispatched once the
+ * current function is exited by its return (doesn't necessery need to exit all
+ * recursive levels).
+ *
+ * The reentrant function must handle correctly its state. Once the function exits
+ * by return, its closure is destroyed. If it still need to manage state while
+ * returning from its recursion, it needs to move its state to the stack and maintain
+ * link to this state for every futher recursion.
+ *
+ *
  */
-class ThreadRecursiveDispatcher {
+template<typename Subj>
+class RecursiveDispatcher {
 public:
-
-    /// Retrieves the thread-local singleton instance of the dispatcher.
-    /**
-     * @return Reference to the thread-local ThreadRecursiveDispatcher instance.
-     */
-    static ThreadRecursiveDispatcher &get_instance() {
-        static thread_local ThreadRecursiveDispatcher disp;
-        return disp;
-    }
 
     /// Increments the recursion level counter.
     /**
@@ -63,10 +65,10 @@ public:
         auto _=inc_level();
 
         if (_in_progress) {
-            _queue.front();
+            _queue.front()();
             if (_in_progress) {
                 _in_progress = false;
-                _queue.pop_discard();
+                _queue.pop();
             }
         }
     }
@@ -101,24 +103,33 @@ public:
     }
 
     /**
-     * @brief Checks if a dispatch is currently in progress.
-     * @return True if dispatch is in progress, false otherwise.
+     * @brief Checks whether top most function is still considered as running
+     * @retval true current function is running
+     * @retval false current function has exited. If is_dispatching is true, we
+     * still waiting to leave some recursion to continue in dispatching
      */
     auto is_in_progress() const {
         return _in_progress;
     }
 
+    ///Returns true, if dispatcher is dispatching
+    /**
+     * @retval true dispatching
+     * @retval false idle
+     */
     auto is_dispatching() const {
         return _dispatching;
     }
 
+    RecursiveDispatcher() = default;
+
+
 protected:
-    DispatchQueue<void()> _queue;
+    std::queue<Subj> _queue;
     unsigned int _level = 0;
     bool _in_progress = false;
     bool _dispatching = false;
 
-    ThreadRecursiveDispatcher() = default;
 };
 
 

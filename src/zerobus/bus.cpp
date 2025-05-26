@@ -99,8 +99,8 @@ bool Bus::is_group(IListener *owner, ChannelID group_id) const {
     return _ptr->is_group(owner, group_id);
 }
 
-void Bus::set_ttl(std::chrono::seconds timeout) {
-    _ptr->set_ttl(timeout);
+void Bus::defer_small_fn(SmallFunction &&fn) {
+    _ptr->defer_small_fn(std::move(fn));
 }
 
 }
