@@ -418,6 +418,7 @@ std::optional<std::string_view> WsBridge::Peer::read_http_header(
 
     extra = hdr_data.substr(pos + 4);
     hdr_data = hdr_data.substr(0, pos + 2);
+    auto hdr_data_saved = hdr_data;
 
     bool upgrade = false;
     bool conn_upgrade = false;
@@ -456,6 +457,7 @@ std::optional<std::string_view> WsBridge::Peer::read_http_header(
     } else {
         auto method = HeaderKey(split_at(fline, " "));
         auto path = split_at(fline, " ");
+        bool err = false;
 
         if (method != "GET")
             return std::nullopt;
@@ -467,29 +469,32 @@ std::optional<std::string_view> WsBridge::Peer::read_http_header(
 
             if (key == "Connection") {
                 if (HeaderKey(val) != "Upgrade")
-                    return std::nullopt;
+                    err = true;
                 conn_upgrade = true;
             } else if (key == "Upgrade") {
                 if (HeaderKey(val) != "websocket")
-                    return std::nullopt;
+                    err = true;
                 upgrade = true;
             } else if (key == "Sec-WebSocket-Key") {
                 sock_key = val;
             } else if (key == "Sec-WebSocket-Version") {
                 auto ver = std::strtoul(val.data(), nullptr, 10);
                 if (ver < 13)
-                    return std::nullopt;
+                    err = true;
                 version = true;
             }
         }
-        if (!upgrade || !conn_upgrade || sock_key.empty() || !version
+        if (!upgrade || !conn_upgrade || sock_key.empty() || !version || err
                 || path != _shared->_config.endpoint_path) {
             try {
                 if (_shared->_config.document_root) {
-                    handle_http_request(data, [&](std::string_view txt) {
+                    if (handle_http_request(hdr_data_saved, [&](std::string_view txt) {
                         if (!send_with_timeout(_sock.get(), txt, 2000))
                             throw false;
-                    }, *_shared->_config.document_root);
+                    }, *_shared->_config.document_root)) {
+                        _input_buffer.erase(_input_buffer.begin(), _input_buffer.begin()+hdr_data_saved.size()+2);
+                        return std::string_view();
+                    }
                 }
             } catch (...) {
             }
