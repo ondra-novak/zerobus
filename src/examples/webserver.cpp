@@ -11,7 +11,10 @@ int main(int argc, char **argv) {
     auto bus = zerobus::Bus::create();
     zerobus::WsBridge bridge(bus, {
             .mode = zerobus::BridgeOpMode::isolated,
-            .document_root = std::filesystem::path(argv[2])
+            .document_root = std::filesystem::path(argv[2]),
+            .use_tls = true,
+            .certificate_pem = "webserver_cert.pem",
+            .private_key_pem = "webserver_key.pem",
     });
     bridge.bind(addrport);
     std::printf("WebServer running at: %s\n", addrport.c_str());

@@ -4,6 +4,11 @@
 #include "../../utils/random_channel_gen.hpp"
 #include "webserver.hpp"
 
+#ifdef WITH_TLS
+#include <openssl/ssl.h>
+#include <openssl/err.h>
+#endif
+
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -13,6 +18,53 @@
 #include <string>
 #include <format>
 namespace zerobus {
+
+void WsBridge::Shared::SSL_CTX_Deleter::operator ()([[maybe_unused]] SSL_CTX *  _) {
+#ifdef WITH_TLS
+    SSL_CTX_free(_);
+#endif
+}
+void WsBridge::Peer::SSL_Deleter::operator()([[maybe_unused]] SSL *_){
+#ifdef WITH_TLS
+    SSL_free(_);
+#endif
+}
+#ifdef WITH_TLS
+
+void keylog_callback(const SSL *, const char *line) {
+    static FILE* keylog = nullptr;
+    static std::once_flag init_flag;
+    std::call_once(init_flag, [] {
+        const char* path = std::getenv("SSLKEYLOGFILE");
+        if (path) {
+            keylog = fopen(path, "a");
+        }
+    });
+
+    if (keylog) {
+        fprintf(keylog, "%s\n", line);
+        fflush(keylog);
+    }
+}
+
+
+SSLError::SSLError(const std::string& msg)
+    : std::runtime_error(msg + ": " + getOpenSSLErrors()) {}
+std::string SSLError::getOpenSSLErrors() {
+    std::string errors;
+    unsigned long errCode = 0;
+    while ((errCode = ERR_get_error()) != 0) {
+        char buf[256];
+        ERR_error_string_n(errCode, buf, sizeof(buf));
+        if (!errors.empty()) errors += "\n";
+        errors += buf;
+    }
+    return errors.empty() ? "No OpenSSL error" : errors;
+}
+
+#endif
+
+
 
 int create_listening_socket(const std::string &address_port) {
     std::string host;
@@ -158,6 +210,15 @@ WsBridge::Peer::Peer(WsBridge &owner, int socket) :
         Peer(owner) {
     _sock.reset(socket);
     _mode = PeerOpMode::await_request;
+
+    if (_shared->_ssl_server_ctx) {
+#ifdef WITH_TLS
+        _ssl_sock.reset(SSL_new(_shared->_ssl_server_ctx.get()));
+        SSL_set_fd(_ssl_sock.get(), _sock.get());
+        SSL_set_accept_state(_ssl_sock.get());
+        _need_handshake = true;
+#endif
+    }
 }
 WsBridge::Peer::Peer(WsBridge &owner, std::string address) :
         Peer(owner) {
@@ -193,8 +254,19 @@ DeliveryError WsBridge::Peer::output_commit(std::size_t sz, Importance imp) {
 }
 
 bool WsBridge::Peer::flush_buffer() {
-    int r = ::send(_sock.get(), _output_buffer.data(), _output_buffer.size(),
-            MSG_DONTWAIT|MSG_NOSIGNAL);
+    int r;
+#ifdef WITH_TLS
+    if (_ssl_sock) {
+        //no need lock, send is always locked
+        r = SSL_write(_ssl_sock.get(),_output_buffer.data(), _output_buffer.size());
+        int s = process_ssl_error(r);
+        if (s <= 0) return s == 0;
+    } else
+#endif
+    {
+        r = ::send(_sock.get(), _output_buffer.data(), _output_buffer.size(),
+           MSG_DONTWAIT|MSG_NOSIGNAL);
+    }
     if (r == 0)
         return false;
     if (r < 0) {
@@ -223,30 +295,21 @@ bool WsBridge::Peer::send_message(std::unique_lock<std::mutex> &lk,
 
     ws::build(msg, [&](char c) {_output_buffer.push_back(c);}, masking_ptr);
 
-    auto tm = std::chrono::system_clock::now()
-            + std::chrono::milliseconds(_shared->_config.send_timeout_ms);
-
-    if (!flush_buffer()) return false;
-
-    if (!_in_handler.test_and_set()) {
-        auto [s, e] = get_epoll_info();
-        _shared->_epoll.mod(s, e, _h);
-       _in_handler.clear();
-    }
-    if (imp != Importance::high) return true;
-    bool r = _cv.wait_until(lk, tm, [&] {
-        return _output_buffer.size() < _shared->_config.hwm_bytes;
-    });
-    return r;
+    return finish_send(lk, imp);
 }
 
 bool WsBridge::Peer::conn_error() {
+    std::unique_lock<std::mutex> lk(_send_mx);
+    return conn_error(lk);
+}
+bool WsBridge::Peer::conn_error(std::unique_lock<std::mutex> &lk) {
     if (_reconnect_addr.empty())
         return false;
     {
-        std::scoped_lock _(_send_mx);
+        if (!lk.owns_lock()) lk.lock();
         _mode = PeerOpMode::reconnect;
         _sock.reset(create_reconnect_timer());
+        lk.unlock();
     }
     this->disconnect();
     return true;
@@ -261,55 +324,71 @@ bool WsBridge::Peer::on_epoll_in() noexcept {
             return conn_error();
         }
     }
-    char buff[1500];
-    int r = ::recv(_sock.get(), buff, sizeof(buff), MSG_DONTWAIT|MSG_NOSIGNAL);
-    if (r < 0) {
-        int e = errno;
-        if (e == EWOULDBLOCK)
-            return true;
-        return conn_error();
-    } else if (r == 0) {
-        return conn_error();
-    } else {
-        bool ok = false;
-        auto data = std::string_view(buff, r);
-        if (_mode != PeerOpMode::message) {
-            auto extra = read_http_header(data);
-            if (!extra) {
-                return conn_error();
+    while (true) {
+        char buff[4096];
+        int r;
+    #ifdef WITH_TLS
+        if (_ssl_sock) {
+            int s;
+            {
+                std::lock_guard _(_send_mx);
+                r = SSL_read(_ssl_sock.get(), buff, sizeof(buff));
+                s = process_ssl_error(r);
             }
-            if (!extra->empty()) {
-                ok = _ws_parser.push_data(*extra);
-            }
-        } else {
-            ok = _ws_parser.push_data(data);
+            if (s < 0) return conn_error();
+            if (s == 0) return true;
+        } else
+    #endif
+        {
+            r = ::recv(_sock.get(), buff, sizeof(buff), MSG_DONTWAIT|MSG_NOSIGNAL);
         }
-        _kl = 0;
-        while (ok) {
-            auto msg = _ws_parser.get_message();
-            switch (msg.type) {
-                case ws::Type::binary:
-                    _bridge_parser->parse(msg.payload);
-                    break;
-                case ws::Type::connClose: {
-                    std::unique_lock lk(_send_mx);
-                    send_message(lk, { "", ws::Type::connClose,
-                            ws::Base::closeNormal }, Importance::normal);
+        if (r < 0) {
+            int e = errno;
+            if (e == EWOULDBLOCK)
+                return true;
+            return conn_error();
+        } else if (r == 0) {
+            return conn_error();
+        } else {
+            bool ok = false;
+            auto data = std::string_view(buff, r);
+            if (_mode != PeerOpMode::message) {
+                auto extra = read_http_header(data);
+                if (!extra) {
                     return conn_error();
                 }
-                case ws::Type::ping: {
-                    std::unique_lock lk(_send_mx);
-                    send_message(lk, { msg.payload, ws::Type::pong },
-                            Importance::normal);
-                    break;
+                if (!extra->empty()) {
+                    ok = _ws_parser.push_data(*extra);
                 }
-                default:
-                    break;
+            } else {
+                ok = _ws_parser.push_data(data);
             }
-            ok = _ws_parser.reset_parse_next();
+            _kl = 0;
+            while (ok) {
+                auto msg = _ws_parser.get_message();
+                switch (msg.type) {
+                    case ws::Type::binary:
+                        _bridge_parser->parse(msg.payload);
+                        break;
+                    case ws::Type::connClose: {
+                        std::unique_lock lk(_send_mx);
+                        send_message(lk, { "", ws::Type::connClose,
+                                ws::Base::closeNormal }, Importance::normal);
+                        return conn_error();
+                    }
+                    case ws::Type::ping: {
+                        std::unique_lock lk(_send_mx);
+                        send_message(lk, { msg.payload, ws::Type::pong },
+                                Importance::normal);
+                        break;
+                    }
+                    default:
+                        break;
+                }
+                ok = _ws_parser.reset_parse_next();
+            }
         }
     }
-    return true;
 
 }
 
@@ -331,15 +410,51 @@ bool WsBridge::Peer::on_epoll_out() noexcept {
     }
     return 1;
 }
+
+#ifdef WITH_TLS
+int WsBridge::Peer::process_ssl_error(int ret_code) noexcept {
+    _ssl_want_mode = 0;
+    int err = SSL_get_error(_ssl_sock.get(), ret_code);
+    switch (err) {
+        case SSL_ERROR_NONE: return 1;
+        case SSL_ERROR_WANT_WRITE:
+        case SSL_ERROR_WANT_READ: _ssl_want_mode = err; return 0;
+        default:return -1;
+    }
+}
+#endif
+
 int WsBridge::Peer::on_epoll_event(int event) noexcept {
     if (_in_handler.test_and_set())
         return 0;
     int r = 1;
-    if (event & EPOLLIN) {
-        r = on_epoll_in() ? 1 : -1;
-    }
-    if (event & EPOLLOUT) {
-        r = on_epoll_out() ? 1 : -1;
+#ifdef WITH_TLS
+    if (_need_handshake) {
+        std::unique_lock lk(_send_mx);
+        r = process_ssl_error(SSL_do_handshake(_ssl_sock.get()));
+        if (r > 0) {
+            _need_handshake = false;
+            if (_mode == PeerOpMode::connecting) {
+                long verify_result = SSL_get_verify_result(_ssl_sock.get());
+                if (verify_result != X509_V_OK) {
+                    r = conn_error(lk)?1:-1;
+                }
+            }
+        } else if (r < 0) {
+            r =  conn_error(lk)?1:-1;
+        } else {
+            r = 1;
+        }
+    } else
+#endif
+    {
+
+        if (event & EPOLLIN) {
+            r = on_epoll_in() ? 1 : -1;
+        }
+        if (event & EPOLLOUT) {
+            r = on_epoll_out() ? 1 : -1;
+        }
     }
     _in_handler.clear();
     return r;
@@ -354,6 +469,15 @@ void WsBridge::Peer::connect(std::string address) {
     _mode = PeerOpMode::connecting;
     _reconnect_addr = std::move(address);
     _sock.reset(connectToAddress(_reconnect_addr));
+    if (_shared->_ssl_client_ctx) {
+#ifdef WITH_TLS
+        _ssl_sock.reset(SSL_new(_shared->_ssl_client_ctx.get()));
+        SSL_set_fd(_ssl_sock.get(), _sock.get());
+        SSL_set_connect_state(_ssl_sock.get());
+        _need_handshake = true;
+#endif
+    }
+
 }
 
 
@@ -373,37 +497,30 @@ bool WsBridge::Peer::send_ws_request() {
     return flush_buffer();
 }
 
-static bool send_with_timeout(int s, std::string_view data, int timeout_ms) {
-    size_t total_sent = 0;
-    const char* buf = data.data();
-    size_t len = data.size();
-
-    while (total_sent < len) {
-        struct pollfd pfd;
-        pfd.fd = s;
-        pfd.events = POLLOUT;
-
-        int ret = poll(&pfd, 1, timeout_ms);
-        if (ret <= 0) {
-            // timeout or error
-            return false;
-        }
-
-        if (pfd.revents & POLLOUT) {
-            ssize_t sent = send(s, buf + total_sent, len - total_sent, MSG_NOSIGNAL);
-            if (sent <= 0) {
-                // socket error
-                return false;
-            }
-            total_sent += static_cast<size_t>(sent);
-        } else {
-            // socket not ready
-            return false;
-        }
-    }
-
-    return true;
+bool WsBridge::Peer::direct_send(std::string_view data) {
+    std::unique_lock<std::mutex> lk(_send_mx);
+    _output_buffer.insert(_output_buffer.end(), data.begin(), data.end());
+    return finish_send(lk, Importance::high);
 }
+bool WsBridge::Peer::finish_send(std::unique_lock<std::mutex> &lk, Importance imp) {
+    auto tm = std::chrono::system_clock::now()
+            + std::chrono::milliseconds(_shared->_config.send_timeout_ms);
+
+    if (!flush_buffer()) return false;
+
+    if (!_in_handler.test_and_set()) {
+        auto [s, e] = get_epoll_info();
+        _shared->_epoll.mod(s, e, _h);
+       _in_handler.clear();
+    }
+    if (imp != Importance::high) return true;
+    bool r = _cv.wait_until(lk, tm, [&] {
+        return _output_buffer.size() < _shared->_config.hwm_bytes;
+    });
+    return r;
+
+}
+
 
 std::optional<std::string_view> WsBridge::Peer::read_http_header(
         std::string_view data) {
@@ -489,8 +606,7 @@ std::optional<std::string_view> WsBridge::Peer::read_http_header(
             try {
                 if (_shared->_config.document_root) {
                     if (handle_http_request(hdr_data_saved, [&](std::string_view txt) {
-                        if (!send_with_timeout(_sock.get(), txt, 2000))
-                            throw false;
+                        return direct_send(txt);
                     }, *_shared->_config.document_root)) {
                         _input_buffer.erase(_input_buffer.begin(), _input_buffer.begin()+hdr_data_saved.size()+2);
                         return std::string_view();
@@ -520,10 +636,20 @@ std::optional<std::string_view> WsBridge::Peer::read_http_header(
 }
 
 std::pair<int, int> WsBridge::Peer::get_epoll_info() const {
+#ifdef WITH_TLS
+    if (_ssl_sock) {
+        std::lock_guard _(_send_mx);
+        switch (_ssl_want_mode){
+            case SSL_ERROR_WANT_READ: return {_sock.get(), EPOLLONESHOT|EPOLLIN};
+            case SSL_ERROR_WANT_WRITE: return {_sock.get(), EPOLLONESHOT|EPOLLOUT};
+            default:break;
+        }
+    }
+#endif
     return {_sock.get(),
         EPOLLONESHOT |
         (_mode == PeerOpMode::connecting ? EPOLLOUT : EPOLLIN)
-        |(_output_buffer.empty() ? 0 : EPOLLOUT)
+        |(_output_buffer.empty() ? static_cast<EPOLL_EVENTS>(0) : EPOLLOUT)
     };
 }
 
@@ -543,6 +669,49 @@ WsBridge::WsBridge(Bus bus, WsBridgeConfig config)
         ,_shared(std::make_shared<Shared>(std::move(config))) {
     _shared->_epoll.add(_shared->_wakeup.get_fd(), EPOLLIN, 0);
 
+    if (_shared->_config.use_tls) {
+#ifdef WITH_TLS
+        static std::once_flag ssl_init;
+        std::call_once(ssl_init, []{
+                SSL_library_init();
+                SSL_load_error_strings();
+                OpenSSL_add_all_algorithms();
+        });
+
+
+        _shared->_ssl_client_ctx.reset(SSL_CTX_new(TLS_client_method()));
+        if (_shared->_config.certificate_pem) {
+            if(!SSL_CTX_load_verify_locations(_shared->_ssl_client_ctx.get(),
+                    _shared->_config.certificate_pem->c_str(),NULL))
+                    throw SSLError("SSL_CTX_load_verify_locations");
+        } else {
+            if (!SSL_CTX_set_default_verify_paths(_shared->_ssl_client_ctx.get()))
+                throw SSLError("SSL_CTX_set_default_verify_paths");
+        }
+        SSL_CTX_set_verify(_shared->_ssl_client_ctx.get(), SSL_VERIFY_PEER, nullptr);
+        SSL_CTX_set_keylog_callback(_shared->_ssl_client_ctx.get(), keylog_callback);
+
+        if (_shared->_config.private_key_pem) {
+            if (!_shared->_config.certificate_pem) throw SSLError("Missing certificate (in config)");
+            _shared->_ssl_server_ctx.reset(SSL_CTX_new(TLS_server_method()));
+
+            if (!SSL_CTX_use_certificate_file(_shared->_ssl_server_ctx.get(),
+                    _shared->_config.certificate_pem->c_str(), SSL_FILETYPE_PEM))
+                throw SSLError("Failed to load certificate");
+
+            if (!SSL_CTX_use_PrivateKey_file(_shared->_ssl_server_ctx.get(),
+                     _shared->_config.private_key_pem->c_str(), SSL_FILETYPE_PEM))
+                throw SSLError("Failed to load private key");
+
+            if (!SSL_CTX_check_private_key(_shared->_ssl_server_ctx.get()))
+                throw SSLError("Private key does not match the certificate");
+            SSL_CTX_set_keylog_callback(_shared->_ssl_server_ctx.get(), keylog_callback);
+        }
+
+#else
+        throw std::invalid_argument("Cannot use TLS: SSL support not compiled in.");
+#endif
+    }
 }
 
 WsBridge::~WsBridge() {

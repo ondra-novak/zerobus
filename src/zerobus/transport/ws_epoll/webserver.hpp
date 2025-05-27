@@ -55,6 +55,7 @@ template<std::invocable<std::string_view> Fn>
 inline bool handle_http_request(std::string_view http_header,
                         Fn&& callback,
                         const fs::path& root_dir) {
+    static_assert(std::is_same_v<std::invoke_result_t<Fn, std::string_view>,bool>);
     size_t first_line_end = http_header.find("\r\n");
     if (first_line_end == std::string_view::npos) {
         callback(response400);
@@ -137,7 +138,7 @@ inline bool handle_http_request(std::string_view http_header,
                          "Content-Length: {}\r\n"
                          "\r\n",
                          get_content_type(file_path),file_size);
-    callback(header);
+    if (!callback(header)) return false;
 
     // Čtení a odesílání obsahu souboru po částech
     constexpr size_t buffer_size = 8192;
@@ -146,7 +147,7 @@ inline bool handle_http_request(std::string_view http_header,
         file.read(buffer.data(), buffer_size);
         std::streamsize bytes_read = file.gcount();
         if (bytes_read > 0) {
-            callback(std::string_view(buffer.data(), bytes_read));
+            if (!callback(std::string_view(buffer.data(), bytes_read))) return false;
         }
     }
     return true;

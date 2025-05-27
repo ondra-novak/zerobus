@@ -12,6 +12,7 @@
 #include "../../utils/multithreads.hpp"
 #include "../utils/eventfd.hpp"
 
+
 #include <condition_variable>
 #include <filesystem>
 #include <memory>
@@ -19,6 +20,10 @@
 #include <random>
 #include <shared_mutex>
 #include <string>
+
+typedef struct ssl_ctx_st SSL_CTX;
+typedef struct ssl_st SSL;
+
 namespace zerobus {
 
 
@@ -30,7 +35,7 @@ public:
 
 
     WsBridge(Bus bus, WsBridgeConfig config);
-    virtual ~WsBridge();
+    ~WsBridge();
 
     ///bind to port
     Handle bind(const std::string& address_port);
@@ -57,13 +62,16 @@ protected:
         ///waiting for connect
         connecting,
         ///in reconnect mode
-        reconnect
+        reconnect,
     };
 
     struct Shared {
         WsBridgeConfig _config;
         EPoll<Handle> _epoll;
         EventFd _wakeup;
+        struct SSL_CTX_Deleter {void operator()(SSL_CTX *_);};
+        std::unique_ptr<SSL_CTX, SSL_CTX_Deleter> _ssl_client_ctx;
+        std::unique_ptr<SSL_CTX, SSL_CTX_Deleter> _ssl_server_ctx;
 
         Shared(WsBridgeConfig config):_config(std::move(config)) {}
     };
@@ -98,9 +106,13 @@ protected:
     protected:
         bool on_epoll_in() noexcept;
         bool on_epoll_out() noexcept;
+        bool conn_error(std::unique_lock<std::mutex> &lk);
         bool conn_error();
         bool flush_buffer();
         bool send_ws_request();
+
+        bool finish_send(std::unique_lock<std::mutex> &lk, Importance imp);
+        bool direct_send(std::string_view data);
 
         PShared _shared;
         Socket _sock = {};
@@ -110,7 +122,7 @@ protected:
         std::vector<char> _output_buffer;
         std::vector<char> _build_buffer;
         ws::Parser<std::vector<char> > _ws_parser;
-        std::mutex _send_mx;
+        mutable std::mutex _send_mx;
         std::condition_variable _cv;
         std::string _reconnect_addr;
         std::string _ws_accept;
@@ -118,6 +130,12 @@ protected:
         BinaryTransport<OutputTypeProxy<Peer *> > *_bridge_parser;
         std::atomic_flag _in_handler = {false};
         int _kl = 0;
+        struct SSL_Deleter {void operator()(SSL *_);};
+        std::unique_ptr<SSL, SSL_Deleter> _ssl_sock;
+        bool _need_handshake = false;
+        int _ssl_want_mode = 0;
+
+        int process_ssl_error(int r) noexcept;
     };
 
     class Server { // @suppress("Miss copy constructor or assignment operator")
@@ -132,7 +150,6 @@ protected:
 
         WsBridge &_owner;
         Socket _sock = {};
-
     };
 
 
@@ -140,9 +157,9 @@ protected:
     using PServer = std::shared_ptr<Server>;
     using PHandleData = std::variant<PPeer, PServer>;
 
+
     Bus _bus;
     std::mutex _mx;
-
     PShared _shared;
 
     HandleHashMap<PHandleData> _handles;
@@ -160,5 +177,13 @@ protected:
 
 };
 
+#ifdef WITH_TLS
+class SSLError : public std::runtime_error {
+public:
+    SSLError(const std::string& msg);
+private:
+    static std::string getOpenSSLErrors();
+};
+#endif
 
 }

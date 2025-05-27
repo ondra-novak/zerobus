@@ -10,6 +10,9 @@
 namespace zerobus {
 
 
+struct TLSCertificate {
+};
+
 
 struct WsBridgeConfig {
     ///Specifies bridge mode (direction)
@@ -48,7 +51,11 @@ struct WsBridgeConfig {
     std::string_view endpoint_path = "/";
     ///specifies www document root, for non ws requests (optional)
     std::optional<std::filesystem::path> document_root;
-
-
+    ///set this option true to inicialize TLS
+    bool use_tls = false;
+    ///set certificate for server node / client node to verify if set otherwise system store
+    std::optional<std::filesystem::path> certificate_pem = {};
+    ///set private key for server node (mandatory for server node)
+    std::optional<std::filesystem::path> private_key_pem = {};
 };
 }

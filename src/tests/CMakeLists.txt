@@ -1,6 +1,8 @@
 set(CMAKE_RUNTIME_OUTPUT_DIRECTORY ${CMAKE_BINARY_DIR}/tests/)
 
-  find_package(cppzmq)
+find_package(OpenSSL)
+
+
 
 set(testFiles
             local_bus.cpp
@@ -13,12 +15,19 @@ set(testFiles
 #            stream.cpp
 )
 
-
+message(STATUS "OpenSSL include dir: ${OpenSSL_INCLUDE_DIR}")
+message(STATUS "OpenSSL libraries: ${OpenSSL_LIBRARIES}")
+message(STATUS "OpenSSL libraries: ${OpenSSL_FOUND}")
 
 foreach (testFile ${testFiles})
     string(REGEX MATCH "([^\/]+$)" filename ${testFile})
     string(REGEX MATCH "[^.]*" executable_name test_${filename})
     add_executable(${executable_name} ${testFile})
-    target_link_libraries(${executable_name} zerobus_epoll zerobus  ${ZeroMQ_LIBRARY} ${STANDARD_LIBRARIES} )
+    if (OpenSSL_FOUND) 
+         Set(OpenSSL_LIBS OpenSSL::SSL OpenSSL::Crypto)
+         target_compile_definitions(${executable_name} PRIVATE -DWITH_TLS)
+         target_include_directories(${executable_name} PRIVATE ${OpenSSL_INCLUDE_DIR})
+    endif()
+    target_link_libraries(${executable_name} zerobus_epoll zerobus ${OpenSSL_LIBS} ${STANDARD_LIBRARIES} )
     add_test(NAME ${executable_name} COMMAND ${executable_name})
 endforeach ()
