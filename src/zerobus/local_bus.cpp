@@ -573,9 +573,8 @@ Bus Bus::create() {
     return Bus(std::make_shared<LocalBus>());
 }
 
-
-void LocalBus::defer_small_fn(SmallFunction &&fn) {
-    _disp.enqueue(std::move(fn));
+void LocalBus::defer(FunctionView<void()> fn) {
+    _disp.enqueue(UserFunction(std::move(fn)));
     _disp.dispatch_if_needed();
 }
 }

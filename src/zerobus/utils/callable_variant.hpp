@@ -20,6 +20,22 @@ public:
             return subj(std::forward<Args>(args)...);
         });
     }
-
-
 };
+
+template<typename CalllableVariant>
+struct MaxSizeOfCallableVarian;
+
+
+template<typename Ret, typename ... Ts, typename ... Args>
+struct MaxSizeOfCallableVarian<CallableVariant<Ret(Args...), Ts...> > {
+    static constexpr std::size_t value = (...+sizeof(Ts));
+};
+
+template<typename CalllableVariant, typename NewType>
+struct AddToCallableVariant;
+
+template<typename Ret, typename ... Ts, typename ... Args, typename NewType>
+struct AddToCallableVariant<CallableVariant<Ret(Args...), Ts...>, NewType> {
+  using type = CallableVariant<Ret(Args...), Ts..., NewType>;
+};
+

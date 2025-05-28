@@ -43,7 +43,7 @@ public:
     void close_all_groups(IListener *owner);
     void announce(IListener *listener, ConversationID req_id, ChannelID chan);
     ChannelType get_channel_type(ChannelID id) const;
-    void defer_small_fn(SmallFunction &&fn);
+    void defer(FunctionView<void()> fn);
 
 protected:
 
@@ -140,14 +140,28 @@ protected:
 
     };
 
+<<<<<<< Upstream, based on branch 'redesign' of https://github.com/ondra-novak/zerobus.git
 
     using DispMsg = CallableVariant<void(),
+=======
+    //List of events in the dispatcher
+    using DispMsgBase = CallableVariant<void(),
+>>>>>>> 17bce52 improve defer
             NotifyChannelUpdateQI,
             NotifyAnounceQI,
             ForwardMsgQI,
             DeliveryErrorQI,
-            AddToGroupQI,
-            SmallFunction>;
+            AddToGroupQI>;
+
+    //declare user function, calculate required space
+    using UserFunction = Function<void(),
+            //max occupied space
+            MaxSizeOfCallableVarian<DispMsgBase>::value
+                //substract extra cost for Function itself
+                - sizeof(Function<void(),sizeof(void *)>) - sizeof(void *)>;
+
+    //create new list which includes UserFunction
+    using DispMsg = typename AddToCallableVariant<DispMsgBase, UserFunction>::type;
 
 
     PublicChannelMap<IListener*> _public_channels;

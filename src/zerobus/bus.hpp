@@ -19,7 +19,6 @@ class Undelivered;
 
 using SerialID = std::string;
 
-using SmallFunction = InlineFunction<void(), 9*sizeof(void *)>;
 
 struct SerialStatus { // @suppress("Miss copy constructor or assignment operator")
     ///contains current serial
@@ -510,14 +509,8 @@ public:
      * 2) it is executed immediately otherwise.
      *
      * @param fn function to execute. Note the function must be movable
-     *
-     * @note the function's closure is limited up to 32/64 bytes
-     *
      */
-    template<typename Fn>
-    void defer(Fn &&fn) {
-        defer_small_fn(SmallFunction(std::move(fn)));
-    }
+    void defer(FunctionView<void()> fn);
 
     ///Creates new client
     /**
@@ -554,8 +547,6 @@ public:
 
 protected:
     std::shared_ptr<LocalBus> _ptr;
-
-    void defer_small_fn(SmallFunction &&fn);
 };
 
 

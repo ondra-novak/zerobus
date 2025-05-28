@@ -102,8 +102,8 @@ bool Bus::is_group(IListener *owner, ChannelID group_id) const {
     return _ptr->is_group(owner, group_id);
 }
 
-void Bus::defer_small_fn(SmallFunction &&fn) {
-    _ptr->defer_small_fn(std::move(fn));
+void Bus::defer(FunctionView<void()> fn) {
+    _ptr->defer(fn);
 }
 
 }
