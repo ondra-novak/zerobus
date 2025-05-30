@@ -1,6 +1,6 @@
 #pragma once
 #include "types.hpp"
-#include "importance.hpp"
+#include "message_flags.hpp"
 #include "utils/serializer.hpp"
 #include <memory>
 #include <string_view>
@@ -31,13 +31,13 @@ public:
      *  request is copied to the response, allowing individual requests and responses to be matched.
      */
     ConversationID cid;
-    ///Specifies message importance
+    ///Specifies message flags
     /**
      * This enum controls how message is carried over bridges with
      * finite transfer speed and latency. It helps to controls the flow
      * of the trafic
      */
-    Importance importance;
+    MsgFlags flags;
 
     ///Returns size in bytes of underlying data.
     /**
@@ -68,7 +68,7 @@ public:
         ret.sender = copydata(sender);
         ret.channel = copydata(channel);
         ret.content = copydata(content);
-        ret.importance = importance;
+        ret.flags = flags;
         ret.cid = cid;
         return ret;
     }

@@ -83,11 +83,11 @@ protected:
 
         static constexpr int write_timeout = 1500;
 
-        char *output_start(std::size_t sz, Importance imp);
-        DeliveryError output_commit(std::size_t sz, Importance imp);
+        char *output_start(std::size_t sz, MsgFlags imp);
+        DeliveryError output_commit(std::size_t sz, MsgFlags imp);
         int on_epoll_event(int event) noexcept;
 
-        bool send_message(std::unique_lock<std::mutex> &lk, const ws::Message &msg, Importance impl);
+        bool send_message(std::unique_lock<std::mutex> &lk, const ws::Message &msg, MsgFlags impl);
         std::optional<std::string_view> read_http_header(std::string_view data);
 
         Peer(WsBridge &owner);
@@ -111,7 +111,7 @@ protected:
         bool flush_buffer();
         bool send_ws_request();
 
-        bool finish_send(std::unique_lock<std::mutex> &lk, Importance imp);
+        bool finish_send(std::unique_lock<std::mutex> &lk, MsgFlags imp);
         bool direct_send(std::string_view data);
 
         PShared _shared;

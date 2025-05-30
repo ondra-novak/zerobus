@@ -42,8 +42,8 @@ void Bus::close_all_groups(IListener *owner) {
     _ptr->close_all_groups(owner);
 }
 
-bool Bus::send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid, Importance importance) {
-    return _ptr->send_message(listener, channel, msg, cid, importance);
+bool Bus::send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid, MsgFlags flags) {
+    return _ptr->send_message(listener, channel, msg, cid, flags);
 }
 
 bool Bus::forward_message(IListener *sender, const Message &msg) {

@@ -21,7 +21,7 @@ public:
 
     static constexpr std::uint8_t max_lru = 3;
 
-    RoutingCache():_limit(100) {}
+    RoutingCache():_limit(256) {}
 
     bool register_path(std::string_view target, Bridge bridge, std::optional<std::uint32_t> rqid = std::nullopt) {
         auto f = _cache.find(target);
@@ -41,6 +41,7 @@ public:
                 rqid?*rqid:0U, max_lru
             });
             _clock.push(r.first);
+            erase_old();
         }
         return true;
     }
@@ -63,9 +64,8 @@ public:
         while (iter != _cache.end()) {
             if (iter->second._bridge == bridge) {
                 iter->second._lru = 0;
-            } else {
-                ++iter;
             }
+            ++iter;
         }
     }
 
@@ -102,6 +102,8 @@ protected:
                 --iter->second._lru;
                 _clock.push(std::move(iter));
                 ++cnt;
+            } else {
+                _cache.erase(iter);
             }
             _clock.pop();
             --cnt;

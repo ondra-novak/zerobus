@@ -36,8 +36,8 @@ protected:
 
         PeerContext(ZmqBridgeServer &owner, std::string_view ident);
 
-        char *output_start(std::size_t sz, Importance );
-        DeliveryError output_commit(std::size_t sz, Importance);
+        char *output_start(std::size_t sz, MsgFlags );
+        DeliveryError output_commit(std::size_t sz, MsgFlags);
 
         void on_incoming_message(std::string_view msg);
 

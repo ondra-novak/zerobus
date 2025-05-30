@@ -31,11 +31,19 @@ public:
 
     void add(Listener lsn)
     {
-        if (!is_subscribed_lk(lsn))
-        {
+        auto iter =  std::find(_listeners.begin(), _listeners.end(), lsn);
+        if (iter == _listeners.end()) {
             _listeners.push_back(lsn);
         }
     }
+
+    Listener pop() {
+        Listener ret = _listeners[0];
+        _listeners.erase(_listeners.begin());
+        return ret;
+    }
+
+    void push(Listener lsn) {return add(std::move(lsn));}
 
     bool contains(Listener lsn) const {
         return std::find(_listeners.begin(), _listeners.end(), lsn) != _listeners.end();
@@ -106,11 +114,6 @@ protected:
     std::vector<Listener > _listeners;
     std::string _name;
     Listener _owner;
-
-    bool is_subscribed_lk(Listener lsn) const
-    {
-        return std::find(_listeners.begin(), _listeners.end(), lsn) != _listeners.end();
-    }
 };
 
 

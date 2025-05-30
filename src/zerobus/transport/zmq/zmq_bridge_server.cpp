@@ -79,13 +79,13 @@ ZmqBridgeServer::PeerContext::PeerContext(ZmqBridgeServer &owner, std::string_vi
     _br.emplace(_owner._bus, create_binary_transport(this, _parser), _owner._mode);
 }
 
-char* ZmqBridgeServer::PeerContext::output_start(std::size_t sz, Importance ) {
+char* ZmqBridgeServer::PeerContext::output_start(std::size_t sz, MsgFlags ) {
     _mx.lock();
     _out_buffer.resize(sz);
     return _out_buffer.data();
 }
 
-DeliveryError ZmqBridgeServer::PeerContext::output_commit(std::size_t sz, Importance) {
+DeliveryError ZmqBridgeServer::PeerContext::output_commit(std::size_t sz, MsgFlags) {
     _out_buffer.resize(sz);
      if (_sleeping) {
          _q.push(std::string(_out_buffer.begin(), _out_buffer.end()));

@@ -163,7 +163,7 @@ public:
      *                 number is carried along with the message and can also be used as an arbitrary
      *                 identifier for further tracking.
      *
-     * @param importance Specifies message importance, see Importance for list of options
+     * @param importance Specifies message importance, see MsgFlags for list of options
      *
      * @retval true    The message was successfully sent. Note that this does not guarantee delivery.
      *
@@ -175,8 +175,8 @@ public:
      *       may still return true. However, the listener may asynchronously receive an error through
      *       the `on_delivery_error()` callback.
      */
-    bool send_message( ChannelID channel, MessageContent msg, ConversationID cid = 0, Importance importance = Importance::normal) {
-        return _bus.send_message(this, channel, msg, cid, importance);
+    bool send_message( ChannelID channel, MessageContent msg, ConversationID cid = 0, MsgFlags flags = MsgFlags::priorityNormal) {
+        return _bus.send_message(this, channel, msg, cid, flags);
     }
 
     /// Retrieves the list of channels subscribed by a specific listener.

@@ -227,14 +227,13 @@ WsBridge::Peer::Peer(WsBridge &owner, std::string address) :
     connect(address);
 }
 
-char* WsBridge::Peer::output_start(std::size_t sz, Importance imp) {
+char* WsBridge::Peer::output_start(std::size_t sz, MsgFlags imp) {
     std::unique_lock lk(_send_mx);
-    imp = imp & importance_mask;
     if (_mode != PeerOpMode::message)
         return nullptr;
-    if (imp == Importance::low && !_output_buffer.empty())
+    if (contains<MsgFlags::priorityLow>(imp) && !_output_buffer.empty())
         return nullptr;
-    if (imp == Importance::normal
+    if (!contains<MsgFlags::priorityHigh>(imp)
             && _output_buffer.size() >= _shared->_config.hwm_bytes)
         return nullptr;
     _build_buffer.clear();
@@ -243,7 +242,7 @@ char* WsBridge::Peer::output_start(std::size_t sz, Importance imp) {
     return _build_buffer.data();
 }
 
-DeliveryError WsBridge::Peer::output_commit(std::size_t sz, Importance imp) {
+DeliveryError WsBridge::Peer::output_commit(std::size_t sz, MsgFlags imp) {
     std::unique_lock lk(_send_mx, std::adopt_lock);
     _build_buffer.resize(sz);
     std::string_view data(_build_buffer.data(), _build_buffer.size());
@@ -281,7 +280,7 @@ bool WsBridge::Peer::flush_buffer() {
 }
 
 bool WsBridge::Peer::send_message(std::unique_lock<std::mutex> &lk,
-        const ws::Message &msg, Importance imp) {
+        const ws::Message &msg, MsgFlags imp) {
 
     uint8_t masking[4];
     uint8_t *masking_ptr = { };
@@ -373,13 +372,13 @@ bool WsBridge::Peer::on_epoll_in() noexcept {
                     case ws::Type::connClose: {
                         std::unique_lock lk(_send_mx);
                         send_message(lk, { "", ws::Type::connClose,
-                                ws::Base::closeNormal }, Importance::normal);
+                                ws::Base::closeNormal }, MsgFlags::priorityNormal);
                         return conn_error();
                     }
                     case ws::Type::ping: {
                         std::unique_lock lk(_send_mx);
                         send_message(lk, { msg.payload, ws::Type::pong },
-                                Importance::normal);
+                                MsgFlags::priorityHigh);
                         break;
                     }
                     default:
@@ -500,9 +499,9 @@ bool WsBridge::Peer::send_ws_request() {
 bool WsBridge::Peer::direct_send(std::string_view data) {
     std::unique_lock<std::mutex> lk(_send_mx);
     _output_buffer.insert(_output_buffer.end(), data.begin(), data.end());
-    return finish_send(lk, Importance::high);
+    return finish_send(lk, MsgFlags::priorityHigh);
 }
-bool WsBridge::Peer::finish_send(std::unique_lock<std::mutex> &lk, Importance imp) {
+bool WsBridge::Peer::finish_send(std::unique_lock<std::mutex> &lk, MsgFlags imp) {
     auto tm = std::chrono::system_clock::now()
             + std::chrono::milliseconds(_shared->_config.send_timeout_ms);
 
@@ -513,7 +512,7 @@ bool WsBridge::Peer::finish_send(std::unique_lock<std::mutex> &lk, Importance im
         _shared->_epoll.mod(s, e, _h);
        _in_handler.clear();
     }
-    if (imp != Importance::high) return true;
+    if (!contains<MsgFlags::priorityHigh>(imp)) return true;
     bool r = _cv.wait_until(lk, tm, [&] {
         return _output_buffer.size() < _shared->_config.hwm_bytes;
     });
@@ -839,7 +838,7 @@ bool WsBridge::Peer::keep_alive() {
     std::unique_lock lk(_send_mx);
     if (_mode == PeerOpMode::reconnect) return true;
     if (_kl == 2) return false;
-    if (++_kl == 2) send_message(lk, ws::Message("",ws::Type::ping), Importance::normal);
+    if (++_kl == 2) send_message(lk, ws::Message("",ws::Type::ping), MsgFlags::priorityHigh);
     return true;
 }
 

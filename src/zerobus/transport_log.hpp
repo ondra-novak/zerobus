@@ -82,23 +82,12 @@ public:
 
     }
 
-    static void append_importance(Importance importance, std::string &t) {
-        switch (importance) {
-            default: break;
-            case Importance::high: t.append("<high> ");break;
-            case Importance::normal: t.append("<norm> ");break;
-            case Importance::low: t.append("<low>");break;
-            case Importance::high_ntf: t.append("<high,ntf> ");break;
-            case Importance::normal_ntf: t.append("<norm,ntf> ");break;
-            case Importance::low_ntf: t.append("<low,ntf>");break;
-        }
-
-    }
 
     virtual void receive(const Message &msg) noexcept override {
         auto t = _prefix;
-        t.append("MESSAGE ");
-        append_importance(msg.importance, t);
+        t.append("MESSAGE (");
+        to_string(msg.flags, t);
+        t.append(") ");
         t.append(msg.get_sender());
         t.append(" => ");
         t.append(msg.get_channel());
@@ -112,8 +101,9 @@ public:
     }
     virtual void receive(const Undelivered &msg) noexcept override {
         auto t = _prefix;
-        t.append("UNDELIVERED ");
-        append_importance(msg.importance, t);
+        t.append("UNDELIVERED (");
+        to_string(msg.flags, t);
+        t.append(") ");
         t.append(msg.sender);
         t.append(" => ");
         t.append(msg.target);

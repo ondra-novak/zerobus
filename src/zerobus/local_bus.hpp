@@ -22,7 +22,7 @@ public:
     bool subscribe(IListener *listener, ChannelList channel);
     void unsubscribe(IListener *listener, ChannelList channel);
     bool send_message(IListener *listener, ChannelID channel,
-            MessageContent msg, ConversationID cid, Importance imptc);
+            MessageContent msg, ConversationID cid, MsgFlags imptc);
     bool forward_message(IListener *sender, const Message &msg);
     bool is_group(IListener *owner, ChannelID id) const;
     UpdateSerialStatus update_serial(IListener *lsn, const SerialID &serialId);
@@ -80,18 +80,30 @@ protected:
     };
 
 
+    struct ForwardState {
+        HybridUniquePtr<MyChannel> _channel;
+        std::size_t _pos;
+        HybridUniquePtr<const Message> _mptr;
+
+    };
+
+    template<bool single_recv>
     class ForwardMsgQI {
     public:
         ForwardMsgQI(LocalBus *owner, IListener *sender, HybridUniquePtr<const Message> mptr);
         void operator()();
     protected:
+
+        using scope_lock = std::conditional_t<single_recv,
+                std::unique_lock<recursive_shared_mutex>,
+                std::shared_lock<recursive_shared_mutex>>;
+
+
         LocalBus *_owner;
         IListener *_sender;
         HybridUniquePtr<const Message> _mptr;
-        MyChannel *_c = nullptr;
-        std::size_t *_pos = nullptr;
-        HybridUniquePtr<const Message> *_mptr_lnk = nullptr;
-        std::shared_lock<recursive_shared_mutex> _lk;
+        ForwardState *_state = nullptr;
+        scope_lock _lk;
     };
 
     class DeliveryErrorQI {
@@ -125,7 +137,8 @@ protected:
     using DispMsg = CallableVariant<void(),
             NotifyChannelUpdateQI,
             NotifyAnounceQI,
-            ForwardMsgQI,
+            ForwardMsgQI<false>,
+            ForwardMsgQI<true>,
             DeliveryErrorQI,
             AddToGroupQI,
             SmallFunction>;

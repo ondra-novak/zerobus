@@ -51,58 +51,106 @@ void LocalBus::NotifyAnounceQI::run(IChannelNotifyListener *p) {
     p->on_announce(_sender, _reqid, _chan);
 }
 
-LocalBus::ForwardMsgQI::ForwardMsgQI(LocalBus *owner, IListener *sender, HybridUniquePtr<const Message> mptr)
+template<bool single_recv>
+LocalBus::ForwardMsgQI<single_recv>::ForwardMsgQI(LocalBus *owner, IListener *sender, HybridUniquePtr<const Message> mptr)
     :_owner(owner)
     ,_sender(sender)
     ,_mptr(std::move(mptr))
     ,_lk(_owner->_mx, std::defer_lock) {}
 
-void LocalBus::ForwardMsgQI::operator()() {
+template<bool single_recv>
+void LocalBus::ForwardMsgQI<single_recv>::operator()() {
     //if we already broadcasting
-    if (_c) {
-        //finish broadcasting
-        _c->broadcast(_sender, *(*_mptr_lnk), *_pos);
+    if (_state && _state->_channel) {
+        if constexpr(!single_recv) {
+            //finish broadcasting
+            _state->_channel->broadcast(_sender, *_state->_mptr, _state->_pos);
+        } else {
+            //reset channel pointer
+            //because pointer can be marked as owned,
+            //it can cause release of the channel,
+            //which can cause calling the callback on_close_group()
+            //which can re-enter here
+            //so on next re-enter the _state->_channel is nullptr;
+            _state->_channel.reset();
+        }
     //test first call
     } else if (!_lk.owns_lock()){
-        //copy pointer to stack
-        auto msg_ptr = std::move(_mptr);
-        //link this pointer
-        _mptr_lnk = &msg_ptr;
+
+        ForwardState state{{nullptr, false}, 0, std::move(_mptr)};
+        _state = &state;
         //retrieve channel
-        auto chan = msg_ptr->get_channel();
+        auto chan = state._mptr->get_channel();
         //lock the mutex (shared)
         _lk.lock();
         //is it private channel?
         auto trg = _owner->_private_channels.find(chan);
         if (trg) {
             //send as private message
-            trg->on_direct_message(*msg_ptr);
+            trg->on_direct_message(*state._mptr);
             return;
         }
-        //is it channel or group?
-        _c = _owner->_public_channels.find_channel_for_broadcast(chan, _sender);
-        if (_c) {
-            //create broadcast status
-            std::size_t stpos = 0;
-            //set pointer to this status
-            _pos = &stpos;
-            //perform broadcast
-            _c->broadcast(_sender, *msg_ptr, *_pos);
-            return;
+
+        //not for single receiver (flag)
+        if constexpr(!single_recv) {
+           //is it channel or group?
+            state._channel.reset(_owner->_public_channels.find_channel_for_broadcast(chan, _sender));
+            if (state._channel) {
+                //perform broadcast
+                state._channel->broadcast(_sender, *state._mptr, state._pos);
+                return;
+            }
+        //is for single receiver (this should be locked exclusively)
+        } else {
+            //find channel
+            auto iter = _owner->_public_channels.find(chan);
+            //if found - continue onward
+            if (iter != _owner->_public_channels.end()) {
+                //pick owner
+                auto chan_owner = iter->second->get_owner();
+                //if channel can be used for broadcast
+                if (chan_owner == nullptr || chan_owner == _sender) {
+                    //pop listener
+                    auto lsn = iter->second->pop();
+                    //if public channel, or there isn't flag kickOutReceiver
+                    if (chan_owner == nullptr
+                       || !contains<MsgFlags::kickOutReceiver>(state._mptr->flags)) {
+                        //push listener back
+                        iter->second->push(lsn);
+                    } else {
+                        //otherwise check whether is empty
+                        if (iter->second->empty()) {
+                            //if empty, steal its pointer and
+                            //store it for destruction at the end
+                            state._channel = HybridUniquePtr<MyChannel>{
+                                iter->second.release(), true
+                            };
+                            //remove empty channel
+                            _owner->_public_channels.erase(iter);
+                        }
+                    }
+                    //now deliver message (may be re-entrant
+                    lsn->on_message(*state._mptr);
+                    //we are done here
+                    return;
+                }
+            }
         }
         //target is external?
         trg = _owner->_routing_cache.find_path(chan);
         if (trg) {
             //otherwise forward the message to the bridge
-            trg->on_message(*msg_ptr);
+            trg->on_message(*state._mptr);
             return;
         }
         //message cannot be delivered - send it back
-        trg = _owner->_private_channels.find(msg_ptr->sender);
+        trg = _owner->_private_channels.find(state._mptr->sender);
         //if there is such targe
         if (trg) {
             trg->on_delivery_error(Undelivered{
-                msg_ptr->sender, chan, msg_ptr->cid, DeliveryError::no_route,msg_ptr->importance
+                state._mptr->sender, chan,
+                state._mptr->cid, DeliveryError::no_route,
+                state._mptr->flags
             });
             return;
         }
@@ -201,7 +249,7 @@ std::string LocalBus::add_mailbox(IListener *listener) {
 }
 
 bool LocalBus::send_message(IListener *listener, ChannelID channel, MessageContent content,
-        ConversationID cid, Importance imptc) {
+        ConversationID cid, MsgFlags imptc) {
 
     std::string id;
     if (channel.empty()) return false;
@@ -290,7 +338,11 @@ void LocalBus::do_forward_message(IListener *sender, const Message &msg) {
         msg_ptr.reset(&msg);
     }
 
-    _disp.enqueue(ForwardMsgQI(this, sender,std::move(msg_ptr)));
+    if (contains<MsgFlags::singleReceiver>(msg_ptr->flags)) {
+        _disp.enqueue(ForwardMsgQI<true>(this, sender,std::move(msg_ptr)));
+    } else {
+        _disp.enqueue(ForwardMsgQI<false>(this, sender,std::move(msg_ptr)));
+    }
     if (!indisp) _disp.dispatch();
 }
 

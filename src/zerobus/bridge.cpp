@@ -141,14 +141,14 @@ void Bridge::on_message(const Message &message) noexcept{
 void Bridge::on_direct_message(const Message &message) noexcept {
     _bus.delivery_error(Undelivered{
         message.get_sender(), message.get_channel(),
-       message.get_conversation(), DeliveryError::invalid_target, message.importance});
+       message.get_conversation(), DeliveryError::invalid_target, message.flags});
 }
 
 void Bridge::receive(const Message &msg) noexcept{
     if (!_bus.forward_message(this, msg)) {
         _bus.delivery_error(Undelivered{
             msg.get_sender(), msg.get_channel(),
-            msg.get_conversation(), DeliveryError::no_route, msg.importance});
+            msg.get_conversation(), DeliveryError::no_route, msg.flags});
     }
 }
 
@@ -223,7 +223,7 @@ void Bridge::receive(const bmsg::AddToGroup &msg) noexcept {
                 err = DeliveryError::name_collision;
             }
         }
-        _target->receive(Undelivered{msg.group, msg.target, msg.cid, err, Importance::normal});
+        _target->receive(Undelivered{msg.group, msg.target, msg.cid, err, MsgFlags::priorityNormal});
     }
 }
 

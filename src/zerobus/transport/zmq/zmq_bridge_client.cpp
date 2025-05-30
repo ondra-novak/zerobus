@@ -46,14 +46,14 @@ ZmqBridgeClient::~ZmqBridgeClient() {
 
 
 
-char* ZmqBridgeClient::output_start(std::size_t sz, Importance ) {
+char* ZmqBridgeClient::output_start(std::size_t sz, MsgFlags ) {
     _mx.lock();
     _out_buffer.clear();
     _out_buffer.resize(sz);
     return _out_buffer.data();
 }
 
-DeliveryError ZmqBridgeClient::output_commit(std::size_t sz, Importance ) {
+DeliveryError ZmqBridgeClient::output_commit(std::size_t sz, MsgFlags ) {
     _out_buffer.resize(sz);
     _endpoint.send({_out_buffer.data(), _out_buffer.size()},{});
     _mx.unlock();

@@ -1,7 +1,7 @@
 #pragma once
 
 #include "types.hpp"
-#include "importance.hpp"
+#include "message_flags.hpp"
 
 namespace zerobus {
 
@@ -20,7 +20,7 @@ enum class DeliveryError {
     /**
      * A message with low or normal importance was discarded because the high-water mark (HWM) limit was reached.
      *
-     * @note This error can appear only when Importance is set with notify
+     * @note This error can appear only when MsgFlags is set with notify
      */
     high_traffic = 2,
 
@@ -28,7 +28,7 @@ enum class DeliveryError {
     /**
      * A high-importance message failed to be delivered within the timeout period.
      *
-     * @note This error can appear only when Importance is set with notify
+     * @note This error can appear only when MsgFlags is set with notify
      *
      */
     send_timeout = 3,
@@ -41,7 +41,7 @@ enum class DeliveryError {
 
     ///Attempt to send message to disconnected route
     /**
-     * @note This error can appear only when Importance is set with notify
+     * @note This error can appear only when MsgFlags is set with notify
      */
     not_connected = 6
 };
@@ -54,7 +54,7 @@ public:
     ChannelID target;
     ConversationID cid;
     DeliveryError error;
-    Importance importance;
+    MsgFlags flags;
 
 
 };
