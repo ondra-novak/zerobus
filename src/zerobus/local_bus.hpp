@@ -140,13 +140,8 @@ protected:
 
     };
 
-<<<<<<< Upstream, based on branch 'redesign' of https://github.com/ondra-novak/zerobus.git
 
-    using DispMsg = CallableVariant<void(),
-=======
-    //List of events in the dispatcher
     using DispMsgBase = CallableVariant<void(),
->>>>>>> 17bce52 improve defer
             NotifyChannelUpdateQI,
             NotifyAnounceQI,
             ForwardMsgQI,
