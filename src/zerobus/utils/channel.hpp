@@ -4,6 +4,7 @@
 #include <mutex>
 #include <vector>
 #include <algorithm>
+#include <atomic>
 #include <unordered_map>
 
 namespace zerobus
@@ -37,13 +38,11 @@ public:
         }
     }
 
-    Listener pop() {
-        Listener ret = _listeners[0];
-        _listeners.erase(_listeners.begin());
-        return ret;
-    }
 
-    void push(Listener lsn) {return add(std::move(lsn));}
+    Listener select_one() {
+        auto n = _selector.fetch_add(1,std::memory_order_relaxed);
+        return _listeners[n % _listeners.size()];
+    }
 
     bool contains(Listener lsn) const {
         return std::find(_listeners.begin(), _listeners.end(), lsn) != _listeners.end();
@@ -113,6 +112,7 @@ public:
 protected:
     std::vector<Listener > _listeners;
     std::string _name;
+    std::atomic<std::size_t> _selector = {};
     Listener _owner;
 };
 

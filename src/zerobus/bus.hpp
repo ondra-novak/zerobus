@@ -181,6 +181,17 @@ public:
      */
     void unsubscribe_all(IListener *listener);
 
+    ///Creates private channel for the listener
+    /**
+     * @param listener newly created listener
+     * @return new channel name for peer-to-peer messages
+     * @note returns existing channel name if already created
+     *
+     * @note acquires exclusive lock
+     *
+     */
+    ChannelID create_private_channel(IListener *listener);
+
     ///Close private channel
     /**
      * Disassociates the listener from its private channel and closes the channel.

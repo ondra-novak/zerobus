@@ -26,6 +26,9 @@ void Bus::unsubscribe_all(IListener *listener) {
     _ptr->unsubscribe_all(listener);
 }
 
+ChannelID Bus::create_private_channel(IListener *listener) {
+    return _ptr->create_private_channel(listener);
+}
 void Bus::close_private_channel(IListener *listener) {
     _ptr->close_private_channel(listener);
 }

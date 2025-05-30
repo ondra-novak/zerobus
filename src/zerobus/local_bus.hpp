@@ -33,6 +33,7 @@ public:
             ChannelListStorage &storage) const;
     ChannelList get_subscribed_groups(IListener *listener,
             ChannelListStorage &storage) const;
+    ChannelID create_private_channel(IListener *listener);
     void close_private_channel(IListener *listener);
     void unsubscribe_all(IListener *listener);
     void close_group(IListener *owner, ChannelID group_name);
@@ -80,30 +81,35 @@ protected:
     };
 
 
+    //state held during broadcasting
     struct ForwardState {
-        HybridUniquePtr<MyChannel> _channel;
+        //channel involved in broadcasting - nullptr if none
+        MyChannel *_channel;
+        //position in channel
         std::size_t _pos;
+        //pointer to message
         HybridUniquePtr<const Message> _mptr;
+        //listener to be removed from the target channel on exit
+        IListener *_remove = nullptr;
 
     };
 
-    template<bool single_recv>
     class ForwardMsgQI {
     public:
         ForwardMsgQI(LocalBus *owner, IListener *sender, HybridUniquePtr<const Message> mptr);
         void operator()();
     protected:
 
-        using scope_lock = std::conditional_t<single_recv,
-                std::unique_lock<recursive_shared_mutex>,
-                std::shared_lock<recursive_shared_mutex>>;
-
-
+        //pointer to owning instance
         LocalBus *_owner;
+        //send of the message
         IListener *_sender;
+        //message itself
         HybridUniquePtr<const Message> _mptr;
+        //pointer to state (only valid on enter)
         ForwardState *_state = nullptr;
-        scope_lock _lk;
+        //shared lock guard
+        std::shared_lock<recursive_shared_mutex> _lk;
     };
 
     class DeliveryErrorQI {
@@ -134,11 +140,11 @@ protected:
 
     };
 
+
     using DispMsg = CallableVariant<void(),
             NotifyChannelUpdateQI,
             NotifyAnounceQI,
-            ForwardMsgQI<false>,
-            ForwardMsgQI<true>,
+            ForwardMsgQI,
             DeliveryErrorQI,
             AddToGroupQI,
             SmallFunction>;
@@ -153,7 +159,7 @@ protected:
     std::string _node_serial = { };
     SerialStatus _cur_serial = { };
 
-    void do_forward_message(Message &&msg, IListener *owner);
+    bool do_forward_message(Message &&msg, IListener *owner);
 
     bool is_valid_target_lk(const ChannelID &chan, IListener *sender);
     void notify_channel_change();
