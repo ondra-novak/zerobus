@@ -1,11 +1,26 @@
 # ZEROBUS
 
-Send messages between parts of the system, wherever they are. They can be in the same process, in another process or on another network. The basic communication between components are communication channels. Each node in the system can listen to any number of channels and can also send messages to any number of channels. In addition, you can also send direct messages between nodes or create multicast groups
+This library implements a communication system based on nodes called `Bus`, which are interconnected using `Bridge` objects. The end nodes are referred to as `Terminal`.
+
+Individual terminals can communicate with each other by sending messages to communication channels. Messages are broadcast to all terminals subscribed to the given channel. In addition, peer-to-peer communication and multicast group messaging are also supported.
+
+From the perspective of a single terminal, it does not matter where its counterpart is located. It can be in the same program or on the other side of the network. As long as there is a connection between these points—either direct or through transit nodes—the message is always delivered, and a response can be sent back in the opposite direction.
+
+This library is written in C++20.
 
 ## Supported platform
 
 - Linux (GCC-14, CLANG-18) - uses linux sockets, epoll, posix_spawn
 - Windows (MSC 17.9) - uses WSA Sockets, IOCP, named pipes and CreateProcess (console)
+
+## Supported Communication Patterns
+
+- Many-to-many (broadcast)
+- Request-Response
+- Publisher-Subscriber
+- Round-Robin sending (not yet implemented)
+
+All of these can be implemented within a single network. There is no need to create separate networks for each communication pattern.
 
 
 ## Basic usage
@@ -15,106 +30,120 @@ Send messages between parts of the system, wherever they are. They can be in the
 
 int main() {
     auto bus = zerobus::Bus::create();      //now we have a bus instance
+
+    auto t1 = bus.new_terminal(callback);   //create terminal
+
     //...
     //...
 
-    //subscribe a listener
-    bus.subscribe("channel_name", listener);
+    //subscribe terminal
+    t1.subscribe("channel_name");
 
     //broadcast an anonymous message
     bus.send_message(nullptr, "channel_name", "message");
 
-     //broadcast a message and set listener as a sender
-    bus.send_message(listener, "other_channel", "message");
+    //broadcast a message and set t1 as sender
+    t1.send_message(listener, "other_channel", "message");
 ```
 
 
-## Listener
+## Terminal
 
-You need create listeners by implementing `IListener interface`
+A terminal is an object implemented as the `Terminal` class. Typically, you need to inherit from this class and implement methods for receiving messages.
+
+Alternatively, you can use the `Bus::new_terminal` function, which allows you to define a terminal using a callback function. This function is then called for various events. To handle different events, you can use `zerobus::overloaded` (or any implementation of the overloaded pattern).
+
+
+Example of use overloaded
 
 ```
-#include <zerobus/listener.h>
-class MyListener: public IListener {
-public:
-    //....
-    //....
-    virtual void on_message(const Message &message, bool pm) noexcept {
-        //...
-    }
-};
-// NOTE - not complete declaration, see doxygen documentation
+    //terminal reverses content of message and sents it back as a response
+    auto sn = bus.new_terminal(zerobus::overloaded{
+        //when channel message
+        [&](Terminal &c, const ChannelMessage &msg){
+            std::string s ( msg.get_content());
+            rp = msg.get_sender();
+            std::reverse(s.begin(), s.end());
+            c.send_message(msg.get_sender(), s, msg.get_conversation());
+        //when response not delivered
+        },[&](Terminal &, const Undelivered &) {
+            recvd_error = true;
+        }
+    });
+
+    //subscribe to listen on channel "reverse"
+    sn.subscribe("reverse");
 ```
 
-The listener can receive messages through the method `on_message`. It receives a `Message` object and `pm` flag which specifies, whether the message is direct (personal) message (Personal Message), if this flag is false, the message was broadcasted to a subscribed channel
+# Message
 
-The message has following attributes
+this also covers `DirectMessage` and `ChannelMessage`.
+
+- `Message` generic message with no extra specification
+- `DirectMessage` peer-to-peer direct message / reply
+- `ChannelMessage` message posted to channel or group, may have more receivers
+
 
 ```
 class Message {
 public:
-    ChannelID get_sender() const {return _sender;}
-    ChannelID get_channel() const {return _channel;}
-    MessageContent get_content() const {return _content;}
-    ConversationID get_conversation() const {return _cid;}
+
+    ChannelID sender;
+    ChannelID channel;
+    MessageContent content;
+    ConversationID cid;
+    Importance importance;
+};
 ```
-* **sender** - ID of sender, it can be used as **channel** name to post direct messages. Anonymous messages have "" as sender
-* **channel** - ID of channel where message was broadcasted. Personal messages have ID of received (this listener)
-* **content** - content of message.
+* **sender** - ID of sender, it can be used as **channel** name to post direct messages. Anonymous messages have "" as sender. Assumed encoding UTF-8
+* **channel** - ID of channel where message was broadcasted. Personal messages have ID of received (this listener). 
+Assumed encoding UTF-8
+* **content** - content of message. No encoding assumed, it is allowed to be binary. 
 * **conversation** - Conversation ID (UINT), this is a free to use number to distinguish different conversations within a communication
+* **importance** - defines importance and other flags. There are three levels of importance: `low`, `normal`, `high`. Only high
+messages are considered as critical for delivery. Failing to deliver causes disconnecting of the peer. Other messages can be discarded if condition of the network prevents delivery. Low importance messages can be discarded erlier than normal messages. You can also request a notification about such event.
 
-**NOTE** - routing informations (sender and channel) should be UTF-8 strings. The message content can be binary. The strings are transfered as octet-stream with no additional encoding. However the javascript client is able to work only with a binary content
+From a programmer's perspective, you should treat objects of the `Message` class as references. The data for these objects is typically allocated in the sender's context. If you need to make a copy of a message, you cannot use the copy constructor, as this would still only copy the reference. For this reason, there is a `Message::copy()` method. Otherwise, the message becomes invalid once the current scope is exited.
 
-### Listening using the callback
 
-```
-#include <zerobus/bus.h>
-#include <zerobus/client.h>
 
-int main() {
-    auto bus = zerobus::Bus::create();      //now we have a bus instance
-
-    zerobus::ClientCallback client(bus, [&](zerobus::AbstractClient &c, const zerobus::Message &msg, bool pm) {
-            //c - this client
-            //msg - received message
-            //pm - whether personal message
-    });
-    //....
-}
-
-```
 
 ## Extending a bus over network
 
-To connect buses of two applications, you need select which application is **server** and which **client**. This distinction is only used to determine how the initial connection will be made, i.e. who will connect and where.
+To enable network expansion, there is a mechanism for connecting via bridges (Bridge). A bridge is an entity, typically split into two halves, which are connected through some medium (for example, a TCP connection). Bridges register themselves with the Bus as a terminal, but their main purpose is to forward all messages to their other half. This allows the Bus object to extend its reach to other computers in the network.
 
-The **server** application uses `BridgeTCPServer`. The **client** application uses `BridgeTCPClient`
+Once the connection is established, all Terminals are able to communicate with each other regardless of their physical location. The Bus object, in cooperation with the Bridge, ensures reliable message routing, whether it is direct messages or messages intended for multicast channels and groups.
 
-```
-//SERVER
-int main() {
-    auto bus = zerobus::Bus::create();      //now we have a bus instance
-    zerobus::BridgeTCPServer(bus, "localhost:12345");   //address:port
-    ...
-    ...
-}
-```
+There are several types of bridges
+- `NullBridge` allows to connect two Bus instances in the same process. It doesn't perform serializing and parsing of messages, it directly carries messages between instances
+- `DebugNullBridge` allows to peek into protocol and debug it
+- `WsBridge` implements bridge server/client over WebSocket protocol. It sends messages as WebSocket binary frames. It also supports encryption by using TLS.
+- `ZmqBridge` implements bridge over ZMQ protocol
 
-```
-//CLIENT
-int main() {
-    auto bus = zerobus::Bus::create();      //now we have a bus instance
-    zerobus::BridgeTCPClient(bus, "localhost:12345");   //address:port
-    ...
-    ...
-}
+Example using WsBridge
+
+``` 
+    auto master = Bus::create();
+    WsBridge server(master, {/* additional configuration */});
+    server.bind(address);
+    /* client.connect(address) - in client mode */   
 ```
 
-You only need to keep the above instances to keep connection active. This connects two applications into single bus, where node (listener) from one application can communicate with node (listener) in other application.
+The `WsBridge` can be used in client or server mode (or both). In client mode, it connects to bridge running
+in server mode. It also reconnects if connection is lost. In server mode, the bridge waits and accepts 
+connections. You can combine client and server mode, so you can open port as server and also connect to other
+bridge as client. Each point-to-point connection is considered as bridge. So it is easy to create server Bus and 
+allows other clients to connect it and as result, you have `star network` where each terminal can send message
+to any other terminal in any branch of the network
 
-There is no limit how many connections are connected to the server. There is also no limits how many bridges can extends the bus instance in each application.
+## Cycles
 
-**NOTE**: **Avoid cycles!** The `zerobus` is able to detect cycle and solve such situation somehow, but such solution is never ideal. The `zerobus` is not ready fo cycles is connection topology.
+Creating cycles in the network is not recommended, but Zerobus can handle them. If there is a cycle in the network, it is internally disconnected to form an acyclic graph. This applies only to multicast channels. Since it is not guaranteed that the disconnection will be performed with regard to optimal transmission, it is better to avoid cycles so that these issues do not need to be addressed.
+
+However, the network can benefit from cycles if individual terminals advertise their position using the `anounce` function. This function can traverse even a cyclic graph and set up routing so that the shortest path to a given terminal exists. However, this function is limited to unicast routing.
+
+It is possible to create a cyclic graph and activate both `anounce` and multicast channels. While `anounce` will work without problems, for multicast channels a spanning tree of the graph will be created, even though it may not be in the ideal optimal state.
+
 
 ### Examples of topologies
 
@@ -142,7 +171,7 @@ Star
 ```
 
 
-Kaskade
+Cascade
 
 ```
                                       ┌───────────┐
@@ -202,83 +231,39 @@ Bridge between starts
            └┬─────┬─┘                           ▼  ▼   ▼                           └┬─────┬─┘
             ▼     ▼                                                                 ▼     ▼
 ```
+## Communication Tools
 
+- Multicast channels
+- Direct messages
+- Groups
+- Round-robin
 
-## Direct messages
+### Multicast Channels
 
-Sending direct messages is easy, just send a message to the sender ID as a reply. This message will then arrive as a personal message directly to the original sender's node. They can then send a reply back to the original recipient and this way you can communicate back and forth as many times as you like
+Any terminal can subscribe to any channel. If the channel does not exist, it is created (and conversely, if the last participant unsubscribes, the channel is removed).
 
-Only a node that knows the ID from the "sender" field can send a direct message. If the ID is obtained by any other method, the message may not be delivered.
+Any other terminal can send a message to this channel by specifying the channel name as the recipient. The message is broadcast to all terminals subscribed to the channel. The message is not sent to the sender if they are also subscribed to the channel.
 
-Typical use is for RPC. The server listens for RPC requests on the selected channel and responds by sending direct messages to the request senders
+### Direct Messages
 
+A direct message can be used when sending a reply, for example as a response to a message sent to a channel. Sending a direct message is simple. Every message has a sender set (unless it is anonymous, then it has no sender). If we send a message and specify the sender of the original message as the recipient, this new message is delivered directly to the original sender—as if it were a reply.
 
-```
-    //RPC ping service
-    int main() {
-        auto bus = Bus::create();
-        ClientCallback rpc_ping(bus, [](AbstractClient &c, const Message &msg, bool ){
-            c.send_message(msg.get_sender(), msg.get_content(), msg.get_conversation());
-        });
-        rpc_ping.subscribe("ping"); //subscribe to channel "ping"
+Communication using direct messages can then continue if the recipient sends another reply. The number of direct messages is not limited.
 
-     //...
-     //...
+If a terminal knows the address for a direct message—and the condition is that it learned it from the `sender` field—it can send a direct message at any later time, there is no time limit for how long the address is valid. However, if there are many terminals in the network, there may be a limit on the size of routing tables, where old entries are removed if they become full.
 
-    }
-```
+### Groups
 
-The above client acts as RPC server which responds with content of the request (ping). The sender receives response as personal message
+A group is a restricted channel, meaning it can have multiple recipients but only one sender. Unlike channels, you cannot directly subscribe to a group. Each group has an owner, and it is the owner who must add recipients to the group. Also, only the owner can send messages to the group. However, group members have the right to unsubscribe and leave the group at any time.
 
-In order to easily link requests and responses, it is possible to use `conversation_id`. The RPC server typically gets this number from the request and includes it in the response. This allows the client to number the requests and then associate responses with them
+The owner can also close the group, which unsubscribes all its members.
 
-- `c.send_message(msg.get_sender(), msg.get_content(), `**msg.get_conversation()**`)`;
+### Round-Robin
 
+This is an extension of messaging that allows you to require only a single recipient, even if the recipient is specified as a channel or group name. In this case, the message is sent to only one recipient from the group or channel, and recipients are rotated so that the next such message is sent to a different recipient. It is not possible to deterministically specify which recipient will ultimately receive the message.
 
+This is useful, for example, if channels are used to advertise services and there are multiple terminals providing those services. Then the client wants to ensure that their request is delivered to only one provider, who will respond to the message, regardless of which one is selected. If this extension were not active, all providers would respond.
 
-## Groups
-
-Groups allow messages from a single source to be sent to multiple recipients, as needed in the publisher-subscriber pattern.
-
-Unlike channels, groups cannot be subscribed to and messages cannot be sent to them. The owner adds the recipient to the group and is the only one who can send messages to the group. The recipient can only unsubscribe from the group.
-
-To add recipient to a group, the owner of group must call
-
-```
-bus.add_to_group (owner, group_name, recipient_id);
-```
-
-To send message to the group, you need to call
-
-```
-bus.send_message(owner, group_name, message)
-```
-
-
-In order to obtain a `recipient_id`, a request for a future recipient must first be received, as with the RPC. You use `sender_id` as recipient id. The initial request can be like request to a subscribe into group. The owner can for example check authorization of such request
-
-To close group, the owner need to call
-
-```
-bus.close_group(owner, group_name);
-```
-
-The recepient can unsubscribe self by calling
-
-```
-bus.unsubscribe(recipient, group_name)
-```
-
-## Before client is destroyed
-
-Every client should unsubscribe from all channels. This is performed by function
-
-```
-bus.unsubscribe_all(client)
-```
-This removes the client from all channels, groups and closes its personal channel. After this function, the client can be destroyed
-
-The `AbstractClient` and `ClientCallback` do this in destructor automatically
 
 ## The protocol
 
@@ -289,252 +274,109 @@ The `zerobus` uses **WebSocket** as underlying protocol. It uses `binary` messag
 
 there are several message types defined
 
+### #0 ChannelReset
 
-### Message type 0xFF - Message Packet
+To save bandwidth, only changes in subscribed channels are sent. This message requests the other side to clear its record of subscribed channels for this side, because all channels have been unsubscribed here. The other side responds to this request by sending an AddChannels message to re-add the existing channels.
 
-A message sent from one node to other
+This message has no additional data
 
-Contains:
-- conversation_id: uint
-- sender: string
-- channel: string
-- content: string
+### #1 Message
 
-(see `serialization rules` below)
-
-### Message type 0xFE - Channels (replace)
-
-List of channels listened by other side. Replace any existing subscribtion by new list
-
-Contains:
-- count of channels: uint
-- channels...: array of string
-
-(see `serialization rules` below)
+Contains actual message. 
+Format: 
+    -importance/flags (1 byte)
+    -sender (binary string)
+    -channel (binary string)
+    -content (binary string)
+    -conversation id (unsigned number)
 
 
-### Message type 0xFD - Channels (add)
+### #2 AddChannels
 
-List of channels listened by other side. Add new channels to existing list
+Used to add new channels to the existing subscription list. The message contains the list of channels to be added.
 
-Contains:
-- count of channels: uint
-- channels...: array of string
+### #3 EraseChannels
 
-(see `serialization rules` below)
+Used to remove specified channels from the subscription list. The message contains the list of channels to be removed.
 
+### #4 Announce
 
-### Message type 0xFC - Channels (erase)
+Used to announce the presence or position of a terminal in the network, typically for routing purposes.
 
-List of channels listened by other side. Unsubscribe specified list of channels
+### #5 Undelivered
 
-Contains:
-- count of channels: uint
-- channels...: array of string
+Indicates that a message could not be delivered to its intended recipient. Used for error handling and notification.
 
-(see `serialization rules` below)
+### #6 AddToGroup
 
+Sent by a group owner to add a recipient to a multicast group. Contains the group name and recipient ID.
 
-### Message type 0xFB - Reset
+### #7 CloseGroup
 
-Sent by other side that they has been unsubscribed from all channels. Mine side should
-use 0xFE message to refresh list of channels
+Sent by a group owner to close a group, unsubscribing all its members. Contains the group name.
 
-This message has no extra arguments
+### #8 GroupEmpty
 
-```
-   |                    |
-   * -----> RESET ----->|
-   |                    |
-   |< Channels replace -*
-   |                    |
-```
+Sent to the group owner when the last member leaves the group. Notifies that the group is now empty.
 
-### Message type 0xFA - No route
+### #9 UpdateSerial
 
-Sent from recepient's node when recipient is no longer available (has been destroyed)
-This message causes deletion of return path to the recepient while following
-path to the sender
+Sent by the master node to update the serial ID of the network. Used for cycle detection and network topology management.
 
-Contains:
-- sender id: string
-- recepient id: string
+### #10 NewSession
 
-(see `serialization rules` below)
+## Serialization
 
+### numbers
 
-### Message type 0xF9 - Add to group
+Number format:
+ - First byte:
+    - The 3 highest bits are reserved and specify the number of additional bytes (0–7).
+    - The 5 lowest bits contain the lowest 5 bits of the transmitted number.
+ - The following bytes (if needed) contain the remaining bits of the number in little-endian order.
 
-Sent from group owner to recepient's node when recepient is added to a multicast group
+ Examples:
+ - The number 30 is represented by a single byte (fits in 5 bits).
+ - The number 33 is represented by two bytes (the first 5 bits in the first byte, the rest in the next byte).
 
-Contains:
-- group name : string
-- recepient id: string
-
-(see `serialization rules` below)
-
-
-### Message type 0xF8 - Close group
-
-Sent from group owner to whole group when group is closed
-
-Contains:
-- group name : string
-
-(see `serialization rules` below)
-
-### Message type 0xF7 - Group empty
-
-Sent to group owner when last member left the group. The bridge is often
-owner of forwarded groups, so when last member left the group, the bridge
-itself can close forwarding and unsubscribe self from the upstream group.
-
-Contains:
-- group name : string
-
-(see `serialization rules` below)
-
-### Message type 0xF6 -  New session
-
-Specifies that other side established a new session, so current side must unsubscribe
-from all channels and groups. It also means channel reset
+Schema:
 
 ```
-(node1) ---- new session ----> (node2)
-                                  +---calls unsubscribe_all_channels( /* and groups */ )
++--------+----------------+-------------------+-------------------+
+| 7 6 5  | 4 3 2 1 0      | 8-15              | 16-23             |
+|--------+----------------+-------------------+-------------------+
+| # extra| lowest 5 bits  | next 8 bits       | next 8 bits       |
+| bytes  | of number      | (if needed)       | (if needed)       |
++--------+----------------+-------------------+-------------------+
 ```
 
-Contains 
- - version: uint  (currently always 1)
+Where:
+- Bits 7-5 of the first byte: number of extra bytes (0–7)
+- Bits 4-0 of the first byte: lowest 5 bits of the number
+- 2nd, 3rd, ... bytes: remaining bits of the number in little-endian order (if needed)
 
-### Message type 0xF5 - Serial ID
+Maximum is 2^61
 
-Sent by master node to set neighbor serial ID of the network. Master node is
-node with lowest ID (lexicographically). If received ID is higher, it is discarded.
-If received node is lower, it is remembered and rebroadcasted to other nodes
-except source node. Every network must have one path to master node. Multiple paths
-are detected as cycle and such path should be disabled.
+### strings
 
-Contains:
-- serial_id : string
+Strings are transfered as <number><data> where number as encoded as described above
 
-(see `serialization rules` below)
-
-### Serialization rules
-
-#### serialization UINT
-
-```
-+-------------------------------+-------------//------------------+
-| L | L | L | N | N | N | N | N | N | N | N |     | N | N | N | N |
-+-------------------------------+-------------//------------------+
-```
-L - count of additional bytes
-N - UINT number - big-endian
-
-Example: 12345h -> 41 23 45
-
-Max transferable number is 0x1FFFFFFFFFFFFFFF = 2305843009213693951
-
-#### serialization STRING
-
-- length: UINT
-- content: bytes[length]
-
-Example: `Hello` -> 05 'H' 'e' 'l' 'l' 'o'
-
-#### serialization or multiple arguments and arrays
-
-There is no separator, one arguments follow other, array elements are placed one right after the other
-
-
-## Filters
-
-Filters allows to filter messages by channel/group name if they are passed through bridges. Each bridge can have one filter.
-
-The filter can specify filter rules for incoming and outgoing messages.
+<5>Hello
 
 
 ```
-class Filter {
-public:
-
-    //incoming messages
-    virtual bool on_incoming(ChannelID id);
-
-    //outgoing messages
-    virtual bool on_outgoing(ChannelID id);
-
-    //incoming add to group message
-    virtual bool on_incoming_add_to_group(ChannelID group_name, ChannelID target_id);
-
-    //outgoing add to group message
-    virtual bool on_outgoing_add_to_group(ChannelID group_name, ChannelID target_id);
-
-    //incoming close group message
-    virtual bool on_incoming_close_group(ChannelID group_name);
-
-    //outgoing close group message
-    virtual bool on_outgoing_close_group(ChannelID group_name);
-
-};
++--------+----------------+------+-------+-------+-------+-------+
+| 7 6 5  | 4 3 2 1 0      | 8-15 | 16-23 |       |       |       |
+|--------+----------------+------+-------+-------+-------+-------+
+|   0    | 0 0 1 0 1      |   H  |   e   |   l   |   l   |   o   |
++--------+----------------+------+-------+-------+-------+-------+
 ```
 
-## Pipe bridge
-
-Pipe bridge allows to connect two processes by pipe. Typical usage is to
-spawn a new process and connect by bridge through stdin/stdout
-
+### Message
 
 ```
-//in parent process
-auto bridge = BridgePipe::connect_process(bus, command_line);
++--------+---------------------------------------------------------
+|  type  |                      message data
+|  (1b)  |                       (varianble)
++--------+---------------------------------------------------------
 ```
-
-```
-//in child process
-auto bridge = BridgePipe::connect_stdinout(bus)
-
-```
-
-You can futher control created processes by additional arguments to connect_process. You can
-for example supply a stop token, which causes child process termination once stop
-is requested
-
-```
-//in parent process
-auto bridge = BridgePipe::connect_process(bus, command_line, stop_token);
-```
-
-Additionaly you can define a callback function which is called once the process exits
-
-
-```
-//in parent process
-auto bridge = BridgePipe::connect_process(bus, command_line, stop_token, [&](int status){/*callback*/});
-```
-
-If you connect multiple processes, it is good idea to create shared network context to 
-control how many I/O  threads are used for asynchronous operations
-
-```
-//in parent process
-auto context = make_network_context(iothreads_count);
-auto bridge = BridgePipe::connect_process(bus, context, command_line, stop_token, [&](int status){/*callback*/});
-```
-
-
-### Pipe bridge protocol
-
-The protocol for pipe bridge is similar as for TCP, only websocket frames are not used. 
-Each message starts by length encoded as unsigned string. After it follows the message
-itself. 
-
-```
-<len><message><len><message>....
-```
-
-(so each message is transfered as binary string)
-
-The format of the message is the same as described above
-

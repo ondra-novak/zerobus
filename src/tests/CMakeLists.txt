@@ -9,10 +9,6 @@ set(testFiles
             direct_bridge.cpp
 #            zmq_bridge.cpp
             ws_bridge.cpp
-#            pipe_bridge.cpp
-#            spawn.cpp
-#            websocket.cpp
-#            stream.cpp
 )
 
 message(STATUS "OpenSSL include dir: ${OpenSSL_INCLUDE_DIR}")

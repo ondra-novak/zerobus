@@ -11,7 +11,7 @@
 namespace zerobus {
 
 class LocalBus;
-class Client;
+class Terminal;
 class IListener;
 class IChannelNotifyListener;
 class ChannelListStorage;
@@ -78,12 +78,12 @@ class ChannelMessage: public Message {};
 class DirectMessage: public Message {};
 
 template<typename Fn>
-concept ClientCallback =   std::is_invocable_v<Fn, Client &, const Undelivered &>
-                        || std::is_invocable_v<Fn, Client &, const ChannelMessage &>
-                        || std::is_invocable_v<Fn, Client &, const DirectMessage &>
-                        || std::is_invocable_v<Fn, Client &, const GroupEmpty &>
-                        || std::is_invocable_v<Fn, Client &, const GroupClosed &>
-                        || std::is_invocable_v<Fn, Client &, const AddedToGroup &>;
+concept TerminalCallback =   std::is_invocable_v<Fn, Terminal &, const Undelivered &>
+                        || std::is_invocable_v<Fn, Terminal &, const ChannelMessage &>
+                        || std::is_invocable_v<Fn, Terminal &, const DirectMessage &>
+                        || std::is_invocable_v<Fn, Terminal &, const GroupEmpty &>
+                        || std::is_invocable_v<Fn, Terminal &, const GroupClosed &>
+                        || std::is_invocable_v<Fn, Terminal &, const AddedToGroup &>;
 
 
 
@@ -537,12 +537,12 @@ public:
      * @return instance of new client
      * @note requires #include <client.hpp>
      */
-    template<ClientCallback Callback>
-    auto new_client(Callback &&cb);
-    template<ClientCallback Callback>
-    std::unique_ptr<Client> new_client_unique(Callback &&cb);
-    template<ClientCallback Callback>
-    std::shared_ptr<Client> new_client_shared(Callback &&cb);
+    template<TerminalCallback Callback>
+    auto new_terminal(Callback &&cb);
+    template<TerminalCallback Callback>
+    std::unique_ptr<Terminal> new_terminal_unique(Callback &&cb);
+    template<TerminalCallback Callback>
+    std::shared_ptr<Terminal> new_terminal_shared(Callback &&cb);
 
 
 protected:

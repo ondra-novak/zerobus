@@ -1,11 +1,11 @@
 #include "check.h"
 #include <iostream>
-#include <zerobus/client.hpp>
 #include <zerobus/transport/zmq/zmq_bridge_client.hpp>
 #include <zerobus/transport/zmq/zmq_bridge_server.hpp>
 #include <zerobus/channel_notify.hpp>
 
 #include <future>
+#include <../zerobus/terminal.hpp>
 using namespace zerobus;
 
 void direct_bridge_simple() {
@@ -19,12 +19,12 @@ void direct_bridge_simple() {
 
     std::promise<std::string> result;
 
-    auto sn = master.new_client([&](auto &c, const Message &msg){
+    auto sn = master.new_terminal([&](auto &c, const Message &msg){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
         c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave.new_client([&](auto &, const Message &msg){
+    auto cn= slave.new_terminal([&](auto &, const Message &msg){
         result.set_value(std::string(msg.get_content()));
     });
 
@@ -52,12 +52,12 @@ void two_hop_bridge() {
 
     std::promise<std::string> result;
 
-    auto sn = slave2.new_client([&](auto &c, const Message &msg){
+    auto sn = slave2.new_terminal([&](auto &c, const Message &msg){
         std::string s ( msg.get_content());
         std::reverse(s.begin(), s.end());
         c.send_message(msg.get_sender(), s, msg.get_conversation());
     });
-    auto cn= slave1.new_client([&](auto &, const Message &msg){
+    auto cn= slave1.new_terminal([&](auto &, const Message &msg){
         result.set_value(std::string(msg.get_content()));
     });
 
