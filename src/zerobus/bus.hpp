@@ -544,6 +544,15 @@ public:
     template<TerminalCallback Callback>
     std::shared_ptr<Terminal> new_terminal_shared(Callback &&cb);
 
+    ///Changes routing TTL
+    /**
+     * Cache which holds informations about return paths has default timeout 10 minutes, after
+     * which routing informations may be deleted. This function changes this value
+     * for newly added and updated records
+     *
+     * @param ttl new ttl values
+     */
+    void set_routing_ttl(std::chrono::system_clock::duration ttl);
 
 protected:
     std::shared_ptr<LocalBus> _ptr;

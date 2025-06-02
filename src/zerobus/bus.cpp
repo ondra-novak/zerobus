@@ -106,4 +106,8 @@ void Bus::defer(FunctionView<void()> fn) {
     _ptr->defer(fn);
 }
 
+void Bus::set_routing_ttl(std::chrono::system_clock::duration ttl) {
+    _ptr->set_routing_ttl(ttl);
+}
+
 }

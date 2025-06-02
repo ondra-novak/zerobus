@@ -44,7 +44,7 @@ public:
     void announce(IListener *listener, ConversationID req_id, ChannelID chan);
     ChannelType get_channel_type(ChannelID id) const;
     void defer(FunctionView<void()> fn);
-
+    void set_routing_ttl(std::chrono::system_clock::duration ttl);
 protected:
 
     using MyChannel = Channel<IListener *>;

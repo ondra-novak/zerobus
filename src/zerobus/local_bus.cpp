@@ -577,4 +577,10 @@ void LocalBus::defer(FunctionView<void()> fn) {
     _disp.enqueue(UserFunction(std::move(fn)));
     _disp.dispatch_if_needed();
 }
+
+void LocalBus::set_routing_ttl(std::chrono::system_clock::duration ttl) {
+    _disp.finish();
+    std::unique_lock _(_mx);
+    _routing_cache.set_ttl(ttl);
+}
 }
