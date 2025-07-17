@@ -3,6 +3,7 @@
 #include "../utils/http_utils.hpp"
 #include "../../utils/random_channel_gen.hpp"
 #include "webserver.hpp"
+#include "epoll_dispatcher.hpp"
 
 #ifdef WITH_TLS
 #include <openssl/ssl.h>
@@ -17,6 +18,11 @@
 #include <netdb.h>
 #include <string>
 #include <format>
+
+template class EpollDispatcher<void>;
+template PEpollDispatcher<void> create_multithreaded(unsigned int threads);
+template PEpollDispatcher<void> create_singlethreaded();
+
 namespace zerobus {
 
 void WsBridge::Shared::SSL_CTX_Deleter::operator ()([[maybe_unused]] SSL_CTX *  _) {
