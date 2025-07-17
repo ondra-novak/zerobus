@@ -14,7 +14,22 @@ public:
 
     Terminal(Bus bus): _bus(std::move(bus)) {}
 
-    ~Terminal() {unsubscribe_all();}
+
+    /// DTor
+    /**
+     * @note This destructor is intentionally empty.
+     *
+     * Any class inheriting from this one must call
+     * unsubscribe_all() in its own destructor.
+     * Otherwise, it may receive messages during
+     * the destruction of its member variables.
+     *
+     * Calling unsubscribe_all() here would be pointless,
+     * as virtual dispatch no longer works during base class destruction.
+     */
+    virtual ~Terminal() override {
+        // unsubscribe_all();
+    }
 
     /// Subscribes a listener to a specific channel.
     /**
@@ -80,6 +95,19 @@ public:
      * sent from other threads.
      */
     void unsubscribe_all() {_bus.unsubscribe_all(this);}
+
+    ///Creates private channel for this terminal
+    /**
+     * There are benefits of this functions
+     * - you receiver name of your private channel
+     * - futher send_message won't be blocking, because channel already exists
+     *
+     * @return new channel name for peer-to-peer messages
+     * @note returns existing channel name if already created
+     *
+     * @note function may block - it requires exclusive access
+     */
+    ChannelID create_private_channel(IListener *listener);
 
     ///Close private channel
     /**
@@ -241,6 +269,16 @@ public:
         return send_message(name, buff, cid);
     }
 
+    ///Defer function call
+    /**
+     * @param fn function to defer
+     *
+     * @see Bus::defer;
+     */
+    void defer(FunctionView<void()> fn) {
+        _bus.defer(fn);
+    }
+
 protected:
     Bus _bus;
     ChannelListStorage _storage;
@@ -256,6 +294,9 @@ class CallbackTerminal : public Terminal {
 public:
     CallbackTerminal(Bus bus, Callback &&cb)
         :Terminal(std::move(bus)), _cb(std::forward<Callback>(cb)) {}
+    virtual ~CallbackTerminal() override {
+        unsubscribe_all();
+    }
 
     virtual void on_close_group(ChannelID group_name) noexcept override {
         if constexpr(std::invocable<Callback, Terminal &, const GroupClosed &>) {

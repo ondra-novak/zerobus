@@ -127,6 +127,8 @@ public:
      * @param channel The ID of the channel to subscribe to.
      * @retval true if the subscription was successful.
      * @retval false if the channel name is invalid or reserved.
+     *
+     * @note function may block - it requires exclusive access
      */
     bool subscribe(IListener *listener, ChannelID channel);
 
@@ -142,6 +144,8 @@ public:
      * @param channel List of channels to subscribe the listener to.
      * @retval true if all channels were successfully subscribed
      * @retval false otherwise.
+     *
+     * @note function may block - it requires exclusive access
      */
     bool subscribe(IListener *listener, ChannelList channel);
 
@@ -153,6 +157,10 @@ public:
      *
      * @param listener Pointer to the listener object to be unsubscribed.
      * @param channel The ID of the channel to unsubscribe from.
+     *
+     *
+     * @note function may block - it requires exclusive access
+     *
      */
     void unsubscribe(IListener *listener, ChannelID channel);
 
@@ -160,6 +168,7 @@ public:
     /**
      * @param listener listener
      * @param channels list of channels
+     * @note function may block - it requires exclusive access
      */
     void unsubscribe(IListener *listener, ChannelList channel);
 
@@ -177,6 +186,8 @@ public:
      * @note This function blocks until all pending messages are processed and
      * delivered. During this period, the listener may still receive messages
      * sent from other threads.
+     *
+     * @note function may block - it requires exclusive access
      */
     void unsubscribe_all(IListener *listener);
 
@@ -186,8 +197,7 @@ public:
      * @return new channel name for peer-to-peer messages
      * @note returns existing channel name if already created
      *
-     * @note acquires exclusive lock
-     *
+     * @note function may block - it requires exclusive access
      */
     ChannelID create_private_channel(IListener *listener);
 
@@ -208,6 +218,8 @@ public:
      *
      * @note any message routed to this private channel after the channel is closed
      * may be returned to the sender through on_delivery_error().
+     *
+     * @note function may block - it requires exclusive access
      */
     void close_private_channel(IListener *listener);
 
@@ -236,6 +248,8 @@ public:
      * @retval false The remote listener could not be added. This may occur if the
      *               specified local listener does not own the group, the group
      *               name is reserved, or the group name is invalid.
+     *
+     * @note function may block - it requires exclusive access
      */
     bool add_to_group(IListener *owner, ChannelID group_name, ChannelID uid, ConversationID cid);
 
@@ -243,6 +257,8 @@ public:
     /**
      * @param owner pointer identifies the owner
      * @param group_name name of group to close
+     *
+     * @note function may block - it requires exclusive access
      */
     void close_group(IListener *owner, ChannelID group_name);
 
@@ -252,6 +268,8 @@ public:
      *
      * @note you don't need to call this function if unsubscribe_all() is
      * eventually used
+     *
+     * @note function may block - it requires exclusive access
      */
     void close_all_groups(IListener *owner);
 
@@ -274,7 +292,8 @@ public:
      *                 in cases where multiple conversations are active on the same channel. The
      *                 number is carried along with the message and can also be used as an arbitrary
      *                 identifier for further tracking.
-     * @param importance Specifies message importance, see MsgFlags for list of options
+     *
+     * @param flags    See MsgFlags
 
      * @retval true    The message was successfully sent. Note that this does not guarantee delivery.
      *
@@ -284,9 +303,11 @@ public:
      *
      * @note If the specified channel is a private channel that has already been closed, the function
      *       may still return true. However, the listener may asynchronously receive an error through
-     *       the `on_delivery_error()` callback.
+     *       the `Undelivered` callback.
+     *
+     * @note If the sender hasn't private channel, function may block to create one.
      */
-    bool send_message(IListener *listener, ChannelID channel, MessageContent msg, ConversationID cid = 0, MsgFlags flags = MsgFlags::priorityNormal);
+    bool send_message(IListener *sender, ChannelID channel, MessageContent msg, ConversationID cid = 0, MsgFlags flags = MsgFlags::priorityNormal);
     ///Forward message
     /**
      * Forwards a message to its intended recipient using the bus's routing system.
@@ -311,6 +332,8 @@ public:
      * @note the function doesn't perform checks for valid targets like
      * send_message(), so the function can return true even if the target
      * is known as unavailable.
+     *
+     * @note function may block - it requires exclusive access for notnull sender
      *
      */
     bool forward_message(IListener *sender, const Message &msg);
@@ -404,6 +427,8 @@ public:
      *
      * @note When notifications are enabled for multiple listeners, all of them will receive updates
      *       until notifications are explicitly disabled for each listener.
+     *
+     * @note function may block - it requires exclusive access
      */
     void channel_notify(IChannelNotifyListener *listener, bool enable);
 
@@ -445,6 +470,8 @@ public:
      *      this method to clean up the information on its side.
      *      If the sender is on the local bus, the on_delivery_error()
      *      function is called directly on the sender instance.
+     *
+     * @note function may block - it requires exclusive access
      */
     void delivery_error(const Undelivered &msg);
 
@@ -470,6 +497,8 @@ public:
      *
      * @note To maintain up-to-date routing information, this function should be invoked periodically,
      *       with an interval of at least one minute between calls.
+     *
+     * @note function may block - it requires exclusive access
      */
     void announce(IListener *lsn, ConversationID reqid, ChannelID chan = {});
 
@@ -509,6 +538,10 @@ public:
      * 2) it is executed immediately otherwise.
      *
      * @param fn function to execute. Note the function must be movable
+     *
+     * @note Calling a critical functions of the Bus instance may cause destruction
+     * of the closure prematurely. If you know, that defered function
+     * need such an action, copy the closure into stack.
      */
     void defer(FunctionView<void()> fn);
 

@@ -149,11 +149,25 @@ protected:
             AddToGroupQI>;
 
     //declare user function, calculate required space
-    using UserFunction = Function<void(),
+    using UserFunctionBase = Function<void(),
             //max occupied space
             MaxSizeOfCallableVarian<DispMsgBase>::value
                 //substract extra cost for Function itself
                 - sizeof(Function<void(),sizeof(void *)>) - sizeof(void *)>;
+
+
+    class UserFunction: public UserFunctionBase {
+    public:
+        using UserFunctionBase::UserFunctionBase;
+        void operator()() {
+            auto fntable = this->_fntable;
+            this->_fntable = nullptr;
+            //prevent reentraces during execution
+            if (fntable) {
+                fntable->call(_buff);
+            }
+        }
+    };
 
     //create new list which includes UserFunction
     using DispMsg = typename AddToCallableVariant<DispMsgBase, UserFunction>::type;
